@@ -358,3 +358,5 @@ tbody tr:hover { background: #fafcff; }
   .sales-summary-grid { grid-template-columns: 1fr; }
   .sales-chart-wrap { height: 310px; }
 }
+
+.login-security-note { margin: 12px 0 0; color: #64748b; font-size: 13px; line-height: 1.4; }

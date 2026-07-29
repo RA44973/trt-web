@@ -5,7 +5,7 @@ const SESSION_KEY = "trt_web_session";
 const PAGES = new Set(["employees", "tasks", "trt"]);
 
 const state = {
-  token: localStorage.getItem(SESSION_KEY) || "",
+  token: sessionStorage.getItem(SESSION_KEY) || "",
   user: null,
   employees: [],
   trtPoints: [],
@@ -70,13 +70,44 @@ async function api(path, options = {}) {
 function clearSession() {
   state.token = "";
   state.user = null;
+  sessionStorage.removeItem(SESSION_KEY);
   localStorage.removeItem(SESSION_KEY);
+}
+
+let loginWasEntered = false;
+let passwordWasEntered = false;
+
+function updateLoginButton() {
+  $("login-button").disabled = !(
+    loginWasEntered
+    && passwordWasEntered
+    && $("login").value.trim()
+    && $("password").value
+  );
+}
+
+function clearLoginFields() {
+  const loginInput = $("login");
+  const passwordInput = $("password");
+  loginInput.value = "";
+  passwordInput.value = "";
+  loginInput.readOnly = true;
+  passwordInput.readOnly = true;
+  loginWasEntered = false;
+  passwordWasEntered = false;
+  updateLoginButton();
+}
+
+function unlockLoginInput(input) {
+  input.readOnly = false;
 }
 
 function showLogin() {
   $("app-shell").hidden = true;
   $("login-screen").hidden = false;
-  $("password").value = "";
+  clearLoginFields();
+  window.setTimeout(clearLoginFields, 80);
+  window.setTimeout(clearLoginFields, 400);
 }
 
 function showPage(page, updateHash = true) {
@@ -123,6 +154,13 @@ async function login(event) {
   button.disabled = true;
   button.textContent = "Вход…";
 
+  if (!loginWasEntered || !passwordWasEntered) {
+    error.textContent = "Введите логин и пароль вручную.";
+    error.hidden = false;
+    button.disabled = true;
+    return;
+  }
+
   try {
     const result = await api("/auth/login", {
       method: "POST",
@@ -134,7 +172,7 @@ async function login(event) {
     });
     state.token = result.session_token;
     state.user = result.user;
-    localStorage.setItem(SESSION_KEY, state.token);
+    sessionStorage.setItem(SESSION_KEY, state.token);
     showApp();
     if (state.currentPage === "employees") await loadEmployees();
   } catch (err) {
@@ -481,9 +519,7 @@ async function loadTrtMap() {
   $("trt-map-error").hidden = true;
 
   try {
-    const response = await fetch("trt-data.json", { cache: "no-store" });
-    if (!response.ok) throw new Error(`Не удалось загрузить данные ТРТ: ${response.status}`);
-    const payload = await response.json();
+    const payload = await api("/trt-map-data");
     const points = Array.isArray(payload.points) ? payload.points : [];
     state.trtPoints = points.filter((point) => point && point.id != null);
     state.trtLoaded = true;
@@ -561,6 +597,32 @@ async function logout() {
   clearSession();
   showLogin();
 }
+
+localStorage.removeItem(SESSION_KEY);
+
+["login", "password"].forEach((id) => {
+  const input = $(id);
+  input.addEventListener("pointerdown", () => unlockLoginInput(input));
+  input.addEventListener("focus", () => unlockLoginInput(input));
+  input.addEventListener("keydown", () => {
+    if (id === "login") loginWasEntered = true;
+    else passwordWasEntered = true;
+    window.setTimeout(updateLoginButton, 0);
+  });
+  input.addEventListener("paste", () => {
+    if (id === "login") loginWasEntered = true;
+    else passwordWasEntered = true;
+    window.setTimeout(updateLoginButton, 0);
+  });
+  input.addEventListener("input", updateLoginButton);
+});
+
+window.addEventListener("pageshow", () => {
+  if (!state.token) {
+    clearLoginFields();
+    window.setTimeout(clearLoginFields, 120);
+  }
+});
 
 $("login-form").addEventListener("submit", login);
 $("logout-button").addEventListener("click", logout);
