@@ -8,6 +8,11 @@ const state = {
   token: sessionStorage.getItem(SESSION_KEY) || "",
   user: null,
   employees: [],
+  tasks: [],
+  tasksLoaded: false,
+  taskSelectedId: "",
+  media: [],
+  mediaLoaded: false,
   trtPoints: [],
   trtLoaded: false,
   trtSelectedId: "",
@@ -17,7 +22,15 @@ const state = {
 
 let trtMap = null;
 let trtMarkerLayer = null;
+let trtRegionLayer = null;
+let trtRegionsLoading = false;
 let trtSalesChart = null;
+let trtAnalyticsChart = null;
+let trtStructureChart = null;
+let trtMainView = "map";
+let trtAnalyticsTab = "dynamics";
+let trtAnalyticsSelectedFormats = new Set();
+let trtAnalyticsFormatAnchorIndex = null;
 
 const $ = (id) => document.getElementById(id);
 
@@ -215,6 +228,10 @@ function showPage(page, updateHash = true) {
     loadEmployees();
   }
 
+  if (nextPage === "tasks" && state.token) {
+    loadTasks();
+  }
+
   if (nextPage === "trt") {
     loadTrtMap();
     window.setTimeout(() => trtMap?.invalidateSize(), 80);
@@ -245,6 +262,10 @@ async function login(event) {
   }
 
   try {
+    const loginInput = getLoginInput();
+    const passwordInput = getPasswordInput();
+    if (!loginInput || !passwordInput) throw new Error("Поля входа не открыты.");
+
     const result = await api("/auth/login", {
       method: "POST",
       body: JSON.stringify({
@@ -409,8 +430,290 @@ async function saveEmployee(event) {
 }
 
 
+
+function taskCurrentEmployeeId() {
+  return String(state.user?.employee_id || state.user?.employeeId || "");
+}
+
+function taskIsDone(task) {
+  return String(task?.status || "").toLowerCase() === "done";
+}
+
+function taskIsOverdue(task) {
+  if (taskIsDone(task) || !task?.dueDate) return false;
+  const deadline = new Date(`${task.dueDate}T23:59:59`);
+  return Number.isFinite(deadline.getTime()) && deadline.getTime() < Date.now();
+}
+
+function taskStatusInfo(task) {
+  if (taskIsDone(task)) return { label: "Выполнено", className: "success" };
+  if (taskIsOverdue(task)) return { label: "Просрочено", className: "danger" };
+  return { label: "Активна", className: "account" };
+}
+
+function taskPriorityInfo(priority) {
+  const value = String(priority || "medium").toLowerCase();
+  if (value === "high") return { label: "Высокий", className: "danger" };
+  if (value === "low") return { label: "Низкий", className: "" };
+  return { label: "Средний", className: "inactive" };
+}
+
+function formatTaskDate(value) {
+  if (!value) return "Без срока";
+  const date = new Date(`${value}T00:00:00`);
+  if (!Number.isFinite(date.getTime())) return value;
+  return new Intl.DateTimeFormat("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).format(date);
+}
+
+function taskTrtPoint(task) {
+  return state.trtPoints.find((point) => String(point.id) === String(task?.trtId));
+}
+
+function taskTrtTitle(task) {
+  const point = taskTrtPoint(task);
+  return point?.client || point?.holding || task?.trtId || "—";
+}
+
+function taskTrtAddress(task) {
+  return taskTrtPoint(task)?.address || "";
+}
+
+function fillTaskAssigneeFilter() {
+  const select = $("task-assignee-filter");
+  const current = select.value;
+  const names = [...new Set(
+    state.tasks
+      .map((task) => shortPersonName(task.assignee))
+      .filter(Boolean)
+  )].sort((a, b) => a.localeCompare(b, "ru"));
+
+  select.innerHTML = `<option value="">Все исполнители</option>${names.map((name) => (
+    `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`
+  )).join("")}`;
+  if (names.includes(current)) select.value = current;
+}
+
+async function ensureTrtData() {
+  if (state.trtLoaded) return;
+  const payload = await api("/trt-map-data");
+  const points = Array.isArray(payload.points) ? payload.points : [];
+  state.trtPoints = points.filter((point) => point && point.id != null);
+  state.trtLoaded = true;
+  state.trtFitRequested = true;
+  fillTrtFilters();
+  populateAnalyticsFilters(true);
+}
+
+async function loadTasks(force = false) {
+  if (state.tasksLoaded && !force) {
+    renderTasks();
+    return;
+  }
+
+  $("tasks-loading").hidden = false;
+  $("tasks-loading").textContent = "Загрузка задач…";
+  $("tasks-empty").hidden = true;
+  $("tasks-table-body").innerHTML = "";
+  $("tasks-data-status").textContent = "Загрузка…";
+
+  try {
+    const [taskPayload] = await Promise.all([
+      api("/tasks"),
+      ensureTrtData(),
+    ]);
+    state.tasks = Array.isArray(taskPayload.tasks) ? taskPayload.tasks : [];
+    state.tasksLoaded = true;
+    fillTaskAssigneeFilter();
+    renderTasks();
+    $("tasks-data-status").textContent = `Задач: ${state.tasks.length}`;
+  } catch (error) {
+    $("tasks-loading").textContent = error.message;
+    $("tasks-data-status").textContent = "Данные недоступны";
+  }
+}
+
+function filteredTasks() {
+  const query = normalizeText($("task-search").value);
+  const scope = $("task-scope-filter").value;
+  const status = $("task-status-filter").value;
+  const assignee = $("task-assignee-filter").value;
+  const employeeId = taskCurrentEmployeeId();
+
+  return state.tasks.filter((task) => {
+    if (scope === "assigned" && String(task.assigneeId) !== employeeId) return false;
+    if (scope === "created" && String(task.createdById) !== employeeId) return false;
+
+    if (status === "active" && (taskIsDone(task) || taskIsOverdue(task))) return false;
+    if (status === "overdue" && !taskIsOverdue(task)) return false;
+    if (status === "done" && !taskIsDone(task)) return false;
+
+    if (assignee && shortPersonName(task.assignee) !== assignee) return false;
+
+    if (!query) return true;
+    const point = taskTrtPoint(task);
+    return normalizeText([
+      task.title,
+      task.description,
+      task.assignee,
+      task.createdBy,
+      point?.client,
+      point?.holding,
+      point?.address,
+      task.direction,
+    ].join(" ")).includes(query);
+  });
+}
+
+function renderTasks() {
+  const items = filteredTasks();
+  const total = state.tasks.length;
+  const done = state.tasks.filter(taskIsDone).length;
+  const overdue = state.tasks.filter(taskIsOverdue).length;
+  const active = total - done;
+
+  $("tasks-total").textContent = total;
+  $("tasks-active").textContent = active;
+  $("tasks-overdue").textContent = overdue;
+  $("tasks-done").textContent = done;
+  $("tasks-loading").hidden = true;
+  $("tasks-empty").hidden = items.length > 0;
+
+  $("tasks-table-body").innerHTML = items.map((task) => {
+    const status = taskStatusInfo(task);
+    const priority = taskPriorityInfo(task.priority);
+    const point = taskTrtPoint(task);
+    const trtName = point?.client || point?.holding || task.trtId || "—";
+    const address = point?.address || "";
+    return `
+      <tr>
+        <td>
+          <span class="task-title">${escapeHtml(task.title || "Задача")}</span>
+          ${task.description ? `<span class="task-secondary">${escapeHtml(task.description)}</span>` : ""}
+        </td>
+        <td>
+          <span class="task-trt-name">${escapeHtml(trtName)}</span>
+          ${address ? `<span class="task-secondary">${escapeHtml(address)}</span>` : ""}
+        </td>
+        <td>${escapeHtml(shortPersonName(task.assignee) || "—")}</td>
+        <td>${escapeHtml(shortPersonName(task.createdBy) || "—")}</td>
+        <td class="${taskIsOverdue(task) ? "overdue-date" : ""}">${escapeHtml(formatTaskDate(task.dueDate))}</td>
+        <td><span class="badge ${priority.className}">${escapeHtml(priority.label)}</span></td>
+        <td><span class="badge ${status.className}">${escapeHtml(status.label)}</span></td>
+        <td><button class="edit-button" type="button" data-task-view="${escapeHtml(task.id)}">Просмотр</button></td>
+      </tr>`;
+  }).join("");
+
+  document.querySelectorAll("[data-task-view]").forEach((button) => {
+    button.addEventListener("click", () => openTaskDetail(button.dataset.taskView));
+  });
+}
+
+async function ensureMediaLoaded() {
+  if (state.mediaLoaded) return;
+  const payload = await api("/media");
+  state.media = Array.isArray(payload.media) ? payload.media : [];
+  state.mediaLoaded = true;
+}
+
+function renderTaskMedia(containerId, emptyId, items) {
+  const container = $(containerId);
+  const empty = $(emptyId);
+  container.innerHTML = "";
+
+  if (!items.length) {
+    empty.hidden = false;
+    return;
+  }
+
+  empty.hidden = true;
+  container.innerHTML = items.map((item) => {
+    const href = escapeHtml(item.downloadUrl || "#");
+    const name = escapeHtml(item.name || (item.mediaKind === "video" ? "Видео" : "Фото"));
+    if (String(item.type || "").startsWith("image/")) {
+      return `<a class="task-media-item" href="${href}" target="_blank" rel="noopener">
+        <img src="${href}" alt="${name}" loading="lazy">
+        <span>${name}</span>
+      </a>`;
+    }
+    return `<a class="task-media-item task-video-item" href="${href}" target="_blank" rel="noopener">
+      <span class="task-video-icon">▶</span>
+      <span>${name}</span>
+    </a>`;
+  }).join("");
+}
+
+async function openTaskDetail(taskId) {
+  const task = state.tasks.find((item) => String(item.id) === String(taskId));
+  if (!task) return;
+
+  state.taskSelectedId = String(task.id);
+  const status = taskStatusInfo(task);
+  const priority = taskPriorityInfo(task.priority);
+  const point = taskTrtPoint(task);
+
+  $("task-detail-title").textContent = task.title || "Задача";
+  $("task-detail-trt").textContent = [point?.client || point?.holding || task.trtId, point?.address]
+    .filter(Boolean).join(" · ");
+  $("task-detail-status").textContent = status.label;
+  $("task-detail-status").className = `badge ${status.className}`;
+  $("task-detail-priority").textContent = priority.label;
+  $("task-detail-priority").className = `badge ${priority.className}`;
+  $("task-detail-assignee").textContent = shortPersonName(task.assignee) || "—";
+  $("task-detail-created-by").textContent = shortPersonName(task.createdBy) || "—";
+  $("task-detail-due").textContent = formatTaskDate(task.dueDate);
+  $("task-detail-direction").textContent = task.direction || "—";
+  $("task-detail-description").textContent = task.description || "Описание не указано.";
+  $("task-detail-result").textContent = task.completionComment || (taskIsDone(task) ? "Комментарий не указан." : "Задача ещё не выполнена.");
+  $("task-result-section").hidden = !taskIsDone(task) && !task.completionComment;
+  $("task-open-trt-button").disabled = !point;
+
+  renderTaskMedia("task-materials", "task-materials-empty", []);
+  renderTaskMedia("task-result-media", "task-result-media-empty", []);
+  $("task-detail-modal").hidden = false;
+
+  try {
+    await ensureMediaLoaded();
+    const taskMedia = state.media.filter((item) => String(item.taskId || "") === String(task.id));
+    renderTaskMedia(
+      "task-materials",
+      "task-materials-empty",
+      taskMedia.filter((item) => item.purpose === "task_material"),
+    );
+    renderTaskMedia(
+      "task-result-media",
+      "task-result-media-empty",
+      taskMedia.filter((item) => item.purpose === "task_result"),
+    );
+  } catch (error) {
+    $("task-materials-empty").textContent = `Материалы недоступны: ${error.message}`;
+    $("task-materials-empty").hidden = false;
+  }
+}
+
+function closeTaskDetail() {
+  $("task-detail-modal").hidden = true;
+}
+
+async function openSelectedTaskTrt() {
+  const task = state.tasks.find((item) => String(item.id) === state.taskSelectedId);
+  const point = taskTrtPoint(task);
+  if (!point) return;
+  showPage("trt", true);
+  setTrtMainView("map");
+  await loadTrtMap();
+  window.setTimeout(() => openTrtCard(point.id, true), 120);
+}
+
+
 function normalizeText(value) {
-  return String(value || "").trim().toLowerCase().replace(/ё/g, "е");
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/ё/g, "е");
 }
 
 function numberOrZero(value) {
@@ -419,76 +722,93 @@ function numberOrZero(value) {
 }
 
 function trtColor(size) {
-  const value = numberOrZero(size);
-  if (value > 100) return "#16a34a";
-  if (value > 50) return "#eab308";
-  return "#dc2626";
+  if (size === null || size === undefined || Number.isNaN(Number(size))) return "#7f8c8d";
+  const value = Number(size);
+  if (value < 50) return "#e74c3c";
+  if (value <= 100) return "#f1c40f";
+  return "#2ecc71";
+}
+
+function trtUnit(point) {
+  if (point?.unit) return point.unit;
+  const direction = normalizeText(point?.direction);
+  if (direction.includes("обои")) return "рулонов";
+  if (direction.includes("плитка") || direction.includes("наполь")) return "м²";
+  return "ед.";
 }
 
 function formatTrtSize(point) {
-  const value = numberOrZero(point?.size);
-  const unit = point?.unit || "";
-  return `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 1 }).format(value)}${unit ? ` ${unit}` : ""}`;
-}
-
-function formatSales(value, unit = "") {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return "—";
-  const formatted = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 1 }).format(number);
-  return `${formatted}${unit ? ` ${unit}` : ""}`;
-}
-
-function sumSales(values, months = 6) {
-  return (Array.isArray(values) ? values : [])
-    .slice(0, months)
-    .reduce((sum, value) => sum + (Number.isFinite(Number(value)) ? Number(value) : 0), 0);
+  if (point?.size === null || point?.size === undefined || Number.isNaN(Number(point.size))) return "—";
+  return `${Math.round(Number(point.size)).toLocaleString("ru-RU")} ${trtUnit(point)}`;
 }
 
 function selectedTrtPoint() {
   return state.trtPoints.find((point) => String(point.id) === String(state.trtSelectedId));
 }
 
-function populateSelect(selectId, values, emptyLabel, displayFormatter = (value) => value) {
-  const select = $(selectId);
+function sumSales(values, count = 12) {
+  return (Array.isArray(values) ? values : [])
+    .slice(0, count)
+    .reduce((sum, value) => sum + numberOrZero(value), 0);
+}
+
+function formatSales(value, unit = "") {
+  const formatted = Math.round(numberOrZero(value)).toLocaleString("ru-RU");
+  return unit ? `${formatted} ${unit}` : formatted;
+}
+
+function populateSelect(id, values, allLabel, labelFormatter = (value) => value) {
+  const select = $(id);
   const current = select.value;
-  select.innerHTML = `<option value="">${escapeHtml(emptyLabel)}</option>${values.map((value) => (
-    `<option value="${escapeHtml(value)}">${escapeHtml(displayFormatter(value))}</option>`
+  select.innerHTML = `<option value="">${escapeHtml(allLabel)}</option>${values.map((value) => (
+    `<option value="${escapeHtml(value)}">${escapeHtml(labelFormatter(value))}</option>`
   )).join("")}`;
   if (values.includes(current)) select.value = current;
 }
 
 function fillTrtFilters() {
-  const directions = [...new Set(state.trtPoints.map((point) => String(point.direction || "").trim()).filter(Boolean))]
-    .sort((a, b) => a.localeCompare(b, "ru"));
-  const managers = [...new Set(state.trtPoints.map((point) => String(point.manager || "").trim()).filter(Boolean))]
-    .sort((a, b) => shortPersonName(a).localeCompare(shortPersonName(b), "ru"));
-  const regions = [...new Set(state.trtPoints.map((point) => String(point.region || "").trim()).filter(Boolean))]
-    .sort((a, b) => a.localeCompare(b, "ru"));
+  const directions = [...new Set(
+    state.trtPoints.map((point) => String(point.direction || "").trim()).filter(Boolean)
+  )].sort((a, b) => a.localeCompare(b, "ru"));
+
+  const managers = [...new Set(
+    state.trtPoints.map((point) => String(point.manager || "").trim()).filter(Boolean)
+  )].sort((a, b) => shortPersonName(a).localeCompare(shortPersonName(b), "ru"));
 
   populateSelect("trt-direction-filter", directions, "Все направления");
   populateSelect("trt-manager-filter", managers, "Все менеджеры", shortPersonName);
-  populateSelect("trt-region-filter", regions, "Все регионы");
+  populateAnalyticsFilters(true);
 }
 
 function initTrtMap() {
   if (trtMap || typeof window.L === "undefined") return;
 
-  trtMap = L.map("trt-map", {
-    zoomControl: false,
-    attributionControl: true,
-  }).setView([55.75, 37.62], 7);
-
-  L.control.zoom({ position: "bottomright" }).addTo(trtMap);
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    maxZoom: 19,
-    attribution: "© OpenStreetMap",
+  trtMap = L.map("trt-map").setView([56.0, 40.0], 6);
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 18,
+    attribution: "© OpenStreetMap contributors",
   }).addTo(trtMap);
+  trtMap.attributionControl.setPrefix("");
 
   trtMarkerLayer = typeof L.markerClusterGroup === "function"
     ? L.markerClusterGroup({
-        showCoverageOnHover: false,
-        maxClusterRadius: 46,
+        zoomToBoundsOnClick: true,
         spiderfyOnMaxZoom: true,
+        iconCreateFunction(cluster) {
+          const markers = cluster.getAllChildMarkers();
+          const sizes = markers
+            .map((marker) => Number(marker.options.sizeValue))
+            .filter(Number.isFinite);
+          const average = sizes.length
+            ? sizes.reduce((sum, value) => sum + value, 0) / sizes.length
+            : null;
+          const color = trtColor(average);
+          return L.divIcon({
+            html: `<div class="legacy-cluster" style="background:${color}"><span>${markers.length}</span></div>`,
+            className: "",
+            iconSize: [40, 40],
+          });
+        },
       })
     : L.layerGroup();
 
@@ -496,34 +816,22 @@ function initTrtMap() {
 }
 
 function filteredTrtPoints() {
-  const query = normalizeText($("trt-map-search").value);
   const direction = $("trt-direction-filter").value;
   const manager = $("trt-manager-filter").value;
-  const region = $("trt-region-filter").value;
 
   return state.trtPoints.filter((point) => {
     if (direction && point.direction !== direction) return false;
     if (manager && point.manager !== manager) return false;
-    if (region && point.region !== region) return false;
-    if (!query) return true;
-    return normalizeText([
-      point.client,
-      point.holding,
-      point.address,
-      point.format,
-      point.manager,
-      point.region,
-    ].join(" ")).includes(query);
+    return true;
   });
 }
 
 function trtMarkerIcon(point) {
   return L.divIcon({
     className: "",
-    html: `<span class="trt-marker-dot" style="background:${trtColor(point.size)}"></span>`,
+    html: `<div class="legacy-size-marker" style="background:${trtColor(point.size)}"></div>`,
     iconSize: [18, 18],
     iconAnchor: [9, 9],
-    popupAnchor: [0, -7],
   });
 }
 
@@ -535,10 +843,11 @@ function openTrtCard(pointId, focusMap = true) {
   $("trt-map-empty").hidden = true;
   $("trt-map-card").hidden = false;
   $("trt-card-name").textContent = point.client || point.holding || "ТРТ";
-  $("trt-card-holding").textContent = point.holding || "—";
   $("trt-card-direction").textContent = point.direction || "—";
-  $("trt-card-format").textContent = point.format || "—";
   $("trt-card-manager").textContent = shortPersonName(point.manager) || "—";
+  $("trt-card-holding").textContent = point.holding || "—";
+  $("trt-card-format").textContent = point.format || "—";
+  $("trt-card-abc").textContent = point.abcCategory || "—";
   $("trt-card-region").textContent = point.region || "—";
   $("trt-card-address").textContent = point.address || "—";
 
@@ -547,14 +856,137 @@ function openTrtCard(pointId, focusMap = true) {
   badge.style.background = trtColor(point.size);
 
   const hasSales = Object.values(point.sales || {}).some((values) => (
-    Array.isArray(values) && values.some((value) => Number.isFinite(Number(value)) && Number(value) !== 0)
+    Array.isArray(values) && values.some((value) => Number.isFinite(Number(value)))
   ));
   $("trt-sales-button").disabled = !hasSales;
-  $("trt-sales-button").textContent = hasSales ? "Продажи" : "Продаж нет";
+  $("trt-sales-button").textContent = hasSales ? "Продажи" : "Продажи не найдены";
 
   if (focusMap && trtMap && Number.isFinite(Number(point.lat)) && Number.isFinite(Number(point.lon))) {
+    setTrtMainView("map");
     trtMap.setView([Number(point.lat), Number(point.lon)], Math.max(trtMap.getZoom(), 14));
   }
+}
+
+function recalculateTrtRegionStats() {
+  const stats = {};
+  state.trtPoints.forEach((point) => {
+    if (!point.sales) return;
+    const region = point.region || "Без региона";
+    if (!stats[region]) stats[region] = { count: 0, sales2025: 0, sales2026: 0 };
+    stats[region].count += 1;
+    stats[region].sales2025 += sumSales(point.sales["2025"], 6);
+    stats[region].sales2026 += sumSales(point.sales["2026"], 6);
+  });
+  Object.values(stats).forEach((item) => {
+    item.yoy = item.sales2025
+      ? ((item.sales2026 - item.sales2025) / item.sales2025) * 100
+      : null;
+  });
+  return stats;
+}
+
+function regionResultColor(yoy) {
+  if (yoy === null || !Number.isFinite(yoy)) return "#94a3b8";
+  if (yoy < -10) return "#dc2626";
+  if (yoy <= 10) return "#facc15";
+  return "#16a34a";
+}
+
+function trtRegionFeatureName(feature) {
+  const properties = feature?.properties || {};
+  return String(properties.name || properties.NAME || properties.name_en || properties.NAME_1 || "").trim();
+}
+
+function trtRegionKey(feature) {
+  const name = trtRegionFeatureName(feature).toLowerCase();
+  if (
+    name === "moscow"
+    || name === "moskva"
+    || name === "москва"
+    || name.includes("moscow city")
+    || name.includes("moscow oblast")
+    || name.includes("moskovskaya")
+    || name.includes("московская область")
+  ) return "Москва и Московская область";
+
+  if (
+    name.includes("nizhny novgorod")
+    || name.includes("nizhegorod")
+    || name.includes("нижегород")
+  ) return "Нижегородская область";
+
+  return null;
+}
+
+function trtRegionStyle(feature) {
+  const stats = recalculateTrtRegionStats();
+  const key = trtRegionKey(feature);
+  const item = key ? stats[key] : null;
+  return {
+    color: "#334155",
+    weight: 1.7,
+    fillColor: item ? regionResultColor(item.yoy) : "#e2e8f0",
+    fillOpacity: item ? 0.45 : 0.05,
+  };
+}
+
+function bindTrtRegion(feature, layer) {
+  const key = trtRegionKey(feature);
+  if (!key) return;
+  layer.bindTooltip(key);
+  layer.on({
+    mouseover(event) {
+      event.target.setStyle({ weight: 3, fillOpacity: 0.62 });
+      event.target.bringToFront();
+    },
+    mouseout(event) {
+      trtRegionLayer?.resetStyle(event.target);
+    },
+    click() {
+      const rows = state.trtPoints.filter((point) => point.region === key);
+      const coordinates = rows
+        .filter((point) => Number.isFinite(Number(point.lat)) && Number.isFinite(Number(point.lon)))
+        .map((point) => [Number(point.lat), Number(point.lon)]);
+      if (coordinates.length) trtMap.fitBounds(L.latLngBounds(coordinates).pad(0.08));
+    },
+  });
+}
+
+async function loadTrtRegions() {
+  if (trtRegionLayer || trtRegionsLoading || !trtMap) return;
+  trtRegionsLoading = true;
+  $("trt-region-load-status").textContent = "Загрузка точных границ регионов…";
+
+  try {
+    const response = await fetch(
+      "https://raw.githubusercontent.com/codeforgermany/click_that_hood/main/public/data/russia.geojson"
+    );
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const geojson = await response.json();
+    trtRegionLayer = L.geoJSON(geojson, {
+      filter: (feature) => trtRegionKey(feature) !== null,
+      style: trtRegionStyle,
+      onEachFeature: bindTrtRegion,
+    });
+    $("trt-region-load-status").textContent = "Точные границы регионов загружены";
+    updateTrtMapMode();
+  } catch (error) {
+    console.error(error);
+    $("trt-region-load-status").textContent = "Не удалось загрузить точные границы";
+  } finally {
+    trtRegionsLoading = false;
+  }
+}
+
+function updateTrtMapMode() {
+  if (!trtMap || !trtMarkerLayer) return;
+  const mode = $("trt-map-mode").value;
+
+  if (trtMap.hasLayer(trtMarkerLayer)) trtMap.removeLayer(trtMarkerLayer);
+  if (trtRegionLayer && trtMap.hasLayer(trtRegionLayer)) trtMap.removeLayer(trtRegionLayer);
+
+  if ((mode === "regions" || mode === "both") && trtRegionLayer) trtRegionLayer.addTo(trtMap);
+  if (mode === "points" || mode === "both") trtMarkerLayer.addTo(trtMap);
 }
 
 function renderTrtMap() {
@@ -570,21 +1002,22 @@ function renderTrtMap() {
     const lat = Number(point.lat);
     const lon = Number(point.lon);
     coordinates.push([lat, lon]);
-    const marker = L.marker([lat, lon], { icon: trtMarkerIcon(point) });
-    marker.bindPopup(`
-      <div class="map-popup-name">${escapeHtml(point.client || point.holding || "ТРТ")}</div>
-      <div class="map-popup-address">${escapeHtml(point.address || "Адрес не указан")}</div>
-    `);
+    const marker = L.marker([lat, lon], {
+      icon: trtMarkerIcon(point),
+      sizeValue: point.size,
+      title: point.client || point.holding || "ТРТ",
+    });
+    marker.bindTooltip(point.client || point.holding || "ТРТ");
     marker.on("click", () => openTrtCard(point.id, false));
     trtMarkerLayer.addLayer(marker);
   });
 
-  $("trt-visible-count").textContent = `Показано ТРТ: ${visible.length} из ${state.trtPoints.length}`;
-  $("trt-data-status").textContent = `Данные на 28.07.2026 · ${state.trtPoints.length} ТРТ`;
+  updateTrtMapMode();
+  $("trt-visible-count").textContent = `Показано ТРТ: ${visible.length}`;
+  $("trt-data-status").textContent = `Всего в базе: ${state.trtPoints.length}`;
 
-  if (state.trtFitRequested && visible.length > 0) {
-    const bounds = L.latLngBounds(coordinates);
-    trtMap.fitBounds(bounds.pad(0.08), { maxZoom: 13 });
+  if (state.trtFitRequested && visible.length) {
+    trtMap.fitBounds(L.latLngBounds(coordinates).pad(0.08), { maxZoom: 13 });
     state.trtFitRequested = false;
   }
 
@@ -595,6 +1028,7 @@ async function loadTrtMap() {
   if (state.trtLoaded) {
     initTrtMap();
     renderTrtMap();
+    loadTrtRegions();
     return;
   }
 
@@ -602,15 +1036,11 @@ async function loadTrtMap() {
   $("trt-map-error").hidden = true;
 
   try {
-    const payload = await api("/trt-map-data");
-    const points = Array.isArray(payload.points) ? payload.points : [];
-    state.trtPoints = points.filter((point) => point && point.id != null);
-    state.trtLoaded = true;
-    state.trtFitRequested = true;
-    fillTrtFilters();
+    await ensureTrtData();
     initTrtMap();
     if (!trtMap) throw new Error("Библиотека карты не загрузилась. Обновите страницу и проверьте интернет.");
     renderTrtMap();
+    loadTrtRegions();
   } catch (error) {
     $("trt-data-status").textContent = "Карта недоступна";
     $("trt-map-error").textContent = error.message;
@@ -618,55 +1048,575 @@ async function loadTrtMap() {
   }
 }
 
-function openTrtSales() {
-  const point = selectedTrtPoint();
-  if (!point) return;
+function setTrtMainView(view) {
+  trtMainView = view === "analytics" ? "analytics" : "map";
+  const mapView = trtMainView === "map";
 
-  const months = ["Янв", "Фев", "Мар", "Апр", "Май", "Июн", "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек"];
-  const sales2025 = Array.isArray(point.sales?.["2025"]) ? point.sales["2025"] : [];
-  const sales2026 = Array.isArray(point.sales?.["2026"]) ? point.sales["2026"] : [];
-  const ytd2025 = sumSales(sales2025, 6);
-  const ytd2026 = sumSales(sales2026, 6);
-  const yoy = ytd2025 === 0 ? null : ((ytd2026 - ytd2025) / Math.abs(ytd2025)) * 100;
+  $("view-map-button").classList.toggle("active", mapView);
+  $("view-analytics-button").classList.toggle("active", !mapView);
 
-  $("trt-sales-modal-title").textContent = point.client || point.holding || "ТРТ";
-  $("trt-sales-modal-subtitle").textContent = point.address || "";
-  $("trt-sales-ytd-2025").textContent = formatSales(ytd2025, point.unit);
-  $("trt-sales-ytd-2026").textContent = formatSales(ytd2026, point.unit);
-  $("trt-sales-yoy").textContent = yoy == null
-    ? "—"
-    : `${yoy > 0 ? "+" : ""}${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 1 }).format(yoy)}%`;
+  document.querySelectorAll(".legacy-map-only").forEach((element) => {
+    element.hidden = !mapView;
+  });
+  $("trt-analytics-sidebar").hidden = mapView;
+  $("trt-map").hidden = !mapView;
+  $("trt-analytics-view").hidden = mapView;
+  $("trt-analytics-view").setAttribute("aria-hidden", mapView ? "true" : "false");
 
-  if (trtSalesChart) trtSalesChart.destroy();
-  const canvas = $("trt-sales-chart");
-  if (typeof window.Chart === "function") {
-    trtSalesChart = new Chart(canvas, {
-      type: "bar",
-      data: {
-        labels: months,
-        datasets: [
-          { label: "2025", data: months.map((_, index) => sales2025[index] ?? null), backgroundColor: "rgba(100,116,139,.62)" },
-          { label: "2026", data: months.map((_, index) => sales2026[index] ?? null), backgroundColor: "rgba(31,94,255,.78)" },
-        ],
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        interaction: { mode: "index", intersect: false },
-        scales: { y: { beginAtZero: true } },
-        plugins: {
-          legend: { position: "bottom" },
-          tooltip: {
-            callbacks: {
-              label(context) {
-                return `${context.dataset.label}: ${formatSales(context.raw, point.unit)}`;
-              },
+  closeAnalyticsFormatMenu();
+
+  if (mapView) {
+    window.setTimeout(() => {
+      trtMap?.invalidateSize();
+      renderTrtMap();
+    }, 40);
+  } else {
+    populateAnalyticsFilters(true);
+    setTrtAnalyticsTab(trtAnalyticsTab);
+  }
+}
+
+function analyticsAvailableYears() {
+  const years = new Set();
+  state.trtPoints.forEach((point) => {
+    Object.keys(point.sales || {}).forEach((year) => {
+      if (/^\d{4}$/.test(year)) years.add(Number(year));
+    });
+  });
+  return [...years].sort((a, b) => a - b);
+}
+
+function analyticsCurrentYear() {
+  const years = analyticsAvailableYears();
+  return years.length ? years[years.length - 1] : new Date().getFullYear();
+}
+
+function analyticsLastCompleteMonthIndex() {
+  const year = analyticsCurrentYear();
+  let last = -1;
+  state.trtPoints.forEach((point) => {
+    const values = point.sales?.[String(year)];
+    if (!Array.isArray(values)) return;
+    values.forEach((value, index) => {
+      if (value !== null && value !== undefined && value !== "") last = Math.max(last, index);
+    });
+  });
+  return last >= 0 ? last : 11;
+}
+
+function analyticsMonthLabels() {
+  return ["Янв", "Фев", "Мар", "Апр", "Май", "Июн", "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек"];
+}
+
+function selectedAnalyticsFormats() {
+  return [...trtAnalyticsSelectedFormats];
+}
+
+function analyticsFormatLabel() {
+  const total = document.querySelectorAll(".legacy-multiselect-option").length;
+  const selected = selectedAnalyticsFormats();
+  if (!total) return "Нет доступных форматов";
+  if (!selected.length) return "Форматы не выбраны";
+  if (selected.length === total) return `Все форматы (${total})`;
+  if (selected.length <= 2) return selected.join(", ");
+  return `Выбрано форматов: ${selected.length}`;
+}
+
+function updateAnalyticsFormatControl() {
+  const control = $("analytics-format-control");
+  control.textContent = analyticsFormatLabel();
+  document.querySelectorAll(".legacy-multiselect-option").forEach((option) => {
+    const selected = trtAnalyticsSelectedFormats.has(option.dataset.value);
+    option.classList.toggle("selected", selected);
+    option.setAttribute("aria-selected", selected ? "true" : "false");
+  });
+}
+
+function closeAnalyticsFormatMenu() {
+  $("analytics-format-menu")?.classList.remove("open");
+}
+
+function toggleAnalyticsFormatMenu() {
+  const control = $("analytics-format-control");
+  if (!control || control.disabled) return;
+  $("analytics-format-menu").classList.toggle("open");
+}
+
+function handleAnalyticsFormatClick(index, event) {
+  const options = [...document.querySelectorAll(".legacy-multiselect-option")];
+  const value = options[index]?.dataset.value;
+  if (!value) return;
+
+  if (event.shiftKey && trtAnalyticsFormatAnchorIndex !== null) {
+    const start = Math.min(trtAnalyticsFormatAnchorIndex, index);
+    const end = Math.max(trtAnalyticsFormatAnchorIndex, index);
+    trtAnalyticsSelectedFormats.clear();
+    for (let cursor = start; cursor <= end; cursor += 1) {
+      trtAnalyticsSelectedFormats.add(options[cursor].dataset.value);
+    }
+  } else if (event.metaKey || event.ctrlKey) {
+    if (trtAnalyticsSelectedFormats.has(value)) trtAnalyticsSelectedFormats.delete(value);
+    else trtAnalyticsSelectedFormats.add(value);
+    trtAnalyticsFormatAnchorIndex = index;
+  } else {
+    trtAnalyticsSelectedFormats.clear();
+    trtAnalyticsSelectedFormats.add(value);
+    trtAnalyticsFormatAnchorIndex = index;
+  }
+
+  updateAnalyticsFormatControl();
+  renderActiveAnalyticsTab();
+}
+
+function populateAnalyticsFilters(preserveSelection = false) {
+  const directionSelect = $("analytics-direction");
+  if (!directionSelect) return;
+
+  const previousDirection = directionSelect.value;
+  const previousFormats = preserveSelection
+    ? new Set(trtAnalyticsSelectedFormats)
+    : new Set();
+  const previousCategory = preserveSelection ? $("analytics-category").value : "__all__";
+  const previousYear = $("analytics-structure-year").value;
+
+  const directions = [...new Set(
+    state.trtPoints.map((point) => String(point.direction || "").trim()).filter(Boolean)
+  )].sort((a, b) => a.localeCompare(b, "ru"));
+
+  directionSelect.innerHTML = `<option value="">Выберите направление</option>${directions.map((direction) => (
+    `<option value="${escapeHtml(direction)}">${escapeHtml(direction)}</option>`
+  )).join("")}`;
+  if (directions.includes(previousDirection)) directionSelect.value = previousDirection;
+
+  const direction = directionSelect.value;
+  const directionPoints = direction
+    ? state.trtPoints.filter((point) => point.direction === direction)
+    : [];
+
+  const formats = [...new Set(
+    directionPoints.map((point) => String(point.format || "").trim() || "Без формата")
+  )].sort((a, b) => a.localeCompare(b, "ru"));
+
+  trtAnalyticsSelectedFormats = new Set();
+  formats.forEach((format) => {
+    if (!preserveSelection || !previousFormats.size || previousFormats.has(format)) {
+      trtAnalyticsSelectedFormats.add(format);
+    }
+  });
+  if (!trtAnalyticsSelectedFormats.size && formats.length) {
+    formats.forEach((format) => trtAnalyticsSelectedFormats.add(format));
+  }
+
+  trtAnalyticsFormatAnchorIndex = null;
+  $("analytics-format-options").innerHTML = formats.map((format, index) => (
+    `<button class="legacy-multiselect-option" type="button" role="option" data-index="${index}" data-value="${escapeHtml(format)}">${escapeHtml(format)}</button>`
+  )).join("");
+
+  document.querySelectorAll(".legacy-multiselect-option").forEach((option) => {
+    option.addEventListener("click", (event) => {
+      handleAnalyticsFormatClick(Number(option.dataset.index), event);
+    });
+  });
+
+  const categories = [...new Set(
+    directionPoints.map((point) => String(point.abcCategory || "").trim()).filter(Boolean)
+  )].sort((a, b) => a.localeCompare(b, "ru"));
+
+  $("analytics-category").innerHTML = [
+    `<option value="__all__">Все категории</option>`,
+    `<option value="__none__">Без категории</option>`,
+    ...categories.map((category) => `<option value="${escapeHtml(category)}">${escapeHtml(category)}</option>`),
+  ].join("");
+  if (previousCategory === "__all__" || previousCategory === "__none__" || categories.includes(previousCategory)) {
+    $("analytics-category").value = previousCategory;
+  }
+
+  const years = analyticsAvailableYears().sort((a, b) => b - a);
+  $("analytics-structure-year").innerHTML = years.map((year) => (
+    `<option value="${year}">${year}</option>`
+  )).join("");
+  if (years.map(String).includes(previousYear)) $("analytics-structure-year").value = previousYear;
+
+  const disabled = !direction;
+  $("analytics-format-control").disabled = disabled;
+  $("analytics-category").disabled = disabled;
+  $("analytics-structure-year").disabled = disabled;
+  if (disabled) closeAnalyticsFormatMenu();
+
+  if (!$("analytics-period-end").dataset.initialized) {
+    $("analytics-period-start").value = "0";
+    $("analytics-period-end").value = String(analyticsLastCompleteMonthIndex());
+    $("analytics-period-end").dataset.initialized = "1";
+  }
+
+  updateAnalyticsFormatControl();
+}
+
+function analyticsPeriod() {
+  let start = Number($("analytics-period-start").value);
+  let end = Number($("analytics-period-end").value);
+  if (!Number.isInteger(start)) start = 0;
+  if (!Number.isInteger(end)) end = analyticsLastCompleteMonthIndex();
+  if (start > end) [start, end] = [end, start];
+  $("analytics-period-start").value = String(start);
+  $("analytics-period-end").value = String(end);
+  return { start, end };
+}
+
+function selectedAnalyticsPoints() {
+  const direction = $("analytics-direction").value;
+  const category = $("analytics-category").value;
+  const formats = selectedAnalyticsFormats();
+  if (!direction || !formats.length) return [];
+
+  return state.trtPoints.filter((point) => {
+    if (point.direction !== direction) return false;
+    const format = String(point.format || "").trim() || "Без формата";
+    if (!formats.includes(format)) return false;
+    if (category === "__none__" && point.abcCategory) return false;
+    if (category !== "__all__" && category !== "__none__" && point.abcCategory !== category) return false;
+    return true;
+  });
+}
+
+function aggregateSalesForYear(points, year) {
+  const sums = Array(12).fill(0);
+  const present = Array(12).fill(false);
+  points.forEach((point) => {
+    const values = point.sales?.[String(year)];
+    if (!Array.isArray(values)) return;
+    values.slice(0, 12).forEach((value, index) => {
+      if (value === null || value === undefined || value === "") return;
+      const number = Number(value);
+      if (!Number.isFinite(number)) return;
+      sums[index] += number;
+      present[index] = true;
+    });
+  });
+  return sums.map((value, index) => (present[index] ? value : null));
+}
+
+function analyticsPeriodLabel(year, start, end) {
+  const names = [
+    "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
+    "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
+  ];
+  return `${start === end ? names[start] : `${names[start]}–${names[end]}`} ${year}`;
+}
+
+function destroyAnalyticsCharts() {
+  if (trtAnalyticsChart) {
+    trtAnalyticsChart.destroy();
+    trtAnalyticsChart = null;
+  }
+  if (trtStructureChart) {
+    trtStructureChart.destroy();
+    trtStructureChart = null;
+  }
+}
+
+function renderAnalyticsDynamics() {
+  const content = $("analytics-report-content");
+  const direction = $("analytics-direction").value;
+  if (!direction) {
+    destroyAnalyticsCharts();
+    $("analytics-filter-status").textContent = "Выберите направление для построения отчёта.";
+    content.innerHTML = `<div class="legacy-analytics-empty">Выберите направление, чтобы построить динамику продаж.</div>`;
+    return;
+  }
+
+  const points = selectedAnalyticsPoints();
+  const salesPoints = points.filter((point) => point.sales);
+  const period = analyticsPeriod();
+  $("analytics-filter-status").textContent =
+    `ТРТ: ${points.length} · с продажами: ${salesPoints.length} · форматов: ${selectedAnalyticsFormats().length}`;
+
+  if (!salesPoints.length) {
+    destroyAnalyticsCharts();
+    content.innerHTML = `<div class="legacy-analytics-empty">По выбранным фильтрам нет ТРТ с продажами.</div>`;
+    return;
+  }
+
+  const currentYear = analyticsCurrentYear();
+  const previousYear = currentYear - 1;
+  const currentAll = aggregateSalesForYear(salesPoints, currentYear);
+  const previousAll = aggregateSalesForYear(salesPoints, previousYear);
+  const currentValues = currentAll.map((value, index) => (
+    index >= period.start && index <= period.end ? value : null
+  ));
+  const previousValues = previousAll.map((value, index) => (
+    index >= period.start && index <= period.end ? value : null
+  ));
+  const unit = trtUnit(salesPoints[0]);
+
+  content.innerHTML = `
+    <div class="legacy-main-chart-card">
+      <div class="legacy-main-chart-header">
+        <div>
+          <h3>Динамика общих продаж</h3>
+          <p>${escapeHtml(direction)} · ${escapeHtml(analyticsPeriodLabel(currentYear, period.start, period.end))} к ${escapeHtml(analyticsPeriodLabel(previousYear, period.start, period.end))}</p>
+        </div>
+        <div class="legacy-chart-meta">Единица: ${escapeHtml(unit)}</div>
+      </div>
+      <div class="legacy-main-chart-wrap"><canvas id="analytics-sales-chart"></canvas></div>
+    </div>`;
+
+  if (trtAnalyticsChart) trtAnalyticsChart.destroy();
+  trtAnalyticsChart = new Chart($("analytics-sales-chart"), {
+    type: "bar",
+    data: {
+      labels: analyticsMonthLabels(),
+      datasets: [
+        {
+          label: String(previousYear),
+          data: previousValues,
+          backgroundColor: "#b9dcff",
+          borderColor: "#7bb6ef",
+          borderWidth: 1,
+          borderRadius: 5,
+        },
+        {
+          label: String(currentYear),
+          data: currentValues,
+          backgroundColor: "#1677ff",
+          borderColor: "#0b5ed7",
+          borderWidth: 1,
+          borderRadius: 5,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 180, easing: "linear" },
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { position: "top" },
+        tooltip: {
+          callbacks: {
+            label(context) {
+              return `${context.dataset.label}: ${Math.round(context.parsed.y).toLocaleString("ru-RU")} ${unit}`;
             },
           },
         },
       },
-    });
+      scales: {
+        y: {
+          beginAtZero: true,
+          ticks: {
+            callback(value) {
+              return Math.round(value).toLocaleString("ru-RU");
+            },
+          },
+        },
+        x: { grid: { display: false } },
+      },
+    },
+  });
+}
+
+function structureGroups(points, groupBy, year, start, end) {
+  const groups = {};
+  points.forEach((point) => {
+    const values = point.sales?.[String(year)];
+    if (!Array.isArray(values)) return;
+    let total = 0;
+    for (let index = start; index <= end; index += 1) total += numberOrZero(values[index]);
+    if (total <= 0) return;
+    const key = groupBy === "category"
+      ? (String(point.abcCategory || "").trim() || "Без категории")
+      : (String(point.format || "").trim() || "Без формата");
+    groups[key] = (groups[key] || 0) + total;
+  });
+  return Object.entries(groups)
+    .map(([label, value]) => ({ label, value }))
+    .sort((a, b) => b.value - a.value);
+}
+
+function analyticsPalette(count) {
+  const colors = [
+    "#1677ff", "#12b76a", "#f79009", "#7a5af8", "#ee46bc", "#06aed4",
+    "#f04438", "#6172f3", "#36bffa", "#84adff", "#fdb022", "#32d583",
+  ];
+  return Array.from({ length: count }, (_, index) => colors[index % colors.length]);
+}
+
+function renderAnalyticsStructure() {
+  const content = $("analytics-structure-content");
+  const direction = $("analytics-direction").value;
+  if (!direction) {
+    destroyAnalyticsCharts();
+    content.innerHTML = `<div class="legacy-analytics-empty">Выберите направление, чтобы построить структуру продаж.</div>`;
+    return;
   }
+
+  const points = selectedAnalyticsPoints();
+  const salesPoints = points.filter((point) => point.sales);
+  const period = analyticsPeriod();
+  const year = Number($("analytics-structure-year").value) || analyticsCurrentYear();
+  const groupBy = $("analytics-structure-group").value;
+  const groups = structureGroups(salesPoints, groupBy, year, period.start, period.end);
+  const unit = salesPoints.length ? trtUnit(salesPoints[0]) : "ед.";
+  const total = groups.reduce((sum, item) => sum + item.value, 0);
+
+  $("analytics-filter-status").textContent =
+    `ТРТ: ${points.length} · с продажами: ${salesPoints.length} · форматов: ${selectedAnalyticsFormats().length}`;
+
+  if (!groups.length) {
+    destroyAnalyticsCharts();
+    content.innerHTML = `<div class="legacy-analytics-empty">В выбранном периоде продажи отсутствуют.</div>`;
+    return;
+  }
+
+  const groupTitle = groupBy === "category" ? "категории ABC" : "формату ТРТ";
+  content.innerHTML = `
+    <div class="legacy-main-chart-card">
+      <div class="legacy-main-chart-header">
+        <div>
+          <h3>Структура продаж по ${groupTitle}</h3>
+          <p>${escapeHtml(direction)} · ${escapeHtml(analyticsPeriodLabel(year, period.start, period.end))}</p>
+        </div>
+        <div class="legacy-chart-meta">${Math.round(total).toLocaleString("ru-RU")} ${escapeHtml(unit)}</div>
+      </div>
+      <div class="legacy-main-chart-wrap"><canvas id="analytics-structure-chart"></canvas></div>
+    </div>`;
+
+  if (trtStructureChart) trtStructureChart.destroy();
+  trtStructureChart = new Chart($("analytics-structure-chart"), {
+    type: "doughnut",
+    data: {
+      labels: groups.map((item) => item.label),
+      datasets: [{
+        data: groups.map((item) => item.value),
+        backgroundColor: analyticsPalette(groups.length),
+        borderColor: "#ffffff",
+        borderWidth: 2,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 180, easing: "linear" },
+      cutout: "55%",
+      plugins: {
+        legend: { position: "right", labels: { boxWidth: 14, padding: 14 } },
+        tooltip: {
+          callbacks: {
+            label(context) {
+              const value = numberOrZero(context.raw);
+              const share = total ? (value / total) * 100 : 0;
+              return `${context.label}: ${Math.round(value).toLocaleString("ru-RU")} ${unit} (${share.toFixed(1).replace(".", ",")}%)`;
+            },
+          },
+        },
+      },
+    },
+  });
+}
+
+function renderActiveAnalyticsTab() {
+  if (trtAnalyticsTab === "structure") renderAnalyticsStructure();
+  else renderAnalyticsDynamics();
+}
+
+function setTrtAnalyticsTab(tab) {
+  trtAnalyticsTab = tab === "structure" ? "structure" : "dynamics";
+  document.querySelectorAll(".legacy-analytics-tab").forEach((button) => {
+    button.classList.toggle("active", button.dataset.analyticsTab === trtAnalyticsTab);
+  });
+  document.querySelectorAll(".legacy-structure-only").forEach((element) => {
+    element.hidden = trtAnalyticsTab !== "structure";
+  });
+  $("analytics-report-content").hidden = trtAnalyticsTab !== "dynamics";
+  $("analytics-structure-content").hidden = trtAnalyticsTab !== "structure";
+  closeAnalyticsFormatMenu();
+  renderActiveAnalyticsTab();
+}
+
+function openTrtSales() {
+  const point = selectedTrtPoint();
+  if (!point) return;
+
+  const sales2025 = (Array.isArray(point.sales?.["2025"]) ? point.sales["2025"] : [])
+    .concat(Array(12).fill(null)).slice(0, 12);
+  const sales2026 = (Array.isArray(point.sales?.["2026"]) ? point.sales["2026"] : [])
+    .concat(Array(12).fill(null)).slice(0, 12);
+  const unit = trtUnit(point);
+  const ytd2025 = sumSales(sales2025, 6);
+  const ytd2026 = sumSales(sales2026, 6);
+  const yoy = ytd2025 ? ((ytd2026 - ytd2025) / ytd2025) * 100 : null;
+
+  $("trt-sales-modal-title").textContent = `Продажи: ${point.client || point.holding || "ТРТ"}`;
+  $("trt-sales-modal-subtitle").textContent = `Сравнение 2025 и 2026 годов, единица: ${unit}`;
+  $("trt-sales-ytd-2025").textContent = formatSales(ytd2025, unit);
+  $("trt-sales-ytd-2026").textContent = formatSales(ytd2026, unit);
+  $("trt-sales-yoy").textContent = yoy === null
+    ? "—"
+    : `${yoy >= 0 ? "+" : ""}${yoy.toFixed(1).replace(".", ",")}%`;
+
+  const yoyBox = $("trt-sales-yoy-box");
+  yoyBox.classList.remove("sales-yoy-positive", "sales-yoy-negative", "sales-yoy-neutral");
+  if (yoy === null || yoy === 0) yoyBox.classList.add("sales-yoy-neutral");
+  else if (yoy > 0) yoyBox.classList.add("sales-yoy-positive");
+  else yoyBox.classList.add("sales-yoy-negative");
+
+  if (trtSalesChart) trtSalesChart.destroy();
+  trtSalesChart = new Chart($("trt-sales-chart"), {
+    type: "bar",
+    data: {
+      labels: analyticsMonthLabels(),
+      datasets: [
+        {
+          label: "2025",
+          data: sales2025,
+          backgroundColor: "#b9dcff",
+          borderColor: "#8fc5f5",
+          borderWidth: 1,
+          borderRadius: 5,
+          maxBarThickness: 34,
+        },
+        {
+          label: "2026",
+          data: sales2026,
+          backgroundColor: "#1677ff",
+          borderColor: "#0b5ed7",
+          borderWidth: 1,
+          borderRadius: 5,
+          maxBarThickness: 34,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 180, easing: "linear" },
+      interaction: { mode: "index", intersect: false },
+      datasets: { bar: { categoryPercentage: 0.72, barPercentage: 0.86 } },
+      plugins: {
+        legend: { position: "top", align: "end" },
+        tooltip: {
+          callbacks: {
+            label(context) {
+              return `${context.dataset.label}: ${Math.round(numberOrZero(context.parsed.y)).toLocaleString("ru-RU")} ${unit}`;
+            },
+          },
+        },
+      },
+      scales: {
+        y: {
+          beginAtZero: true,
+          grace: "10%",
+          ticks: {
+            callback(value) {
+              return Math.round(Number(value)).toLocaleString("ru-RU");
+            },
+          },
+          title: { display: true, text: unit },
+        },
+        x: { title: { display: true, text: "Месяц" } },
+      },
+    },
+  });
 
   $("trt-sales-modal").hidden = false;
 }
@@ -698,13 +1648,59 @@ $("employee-form").addEventListener("submit", saveEmployee);
 $("employee-dialog-close").addEventListener("click", closeEmployeeDialog);
 $("employee-cancel-button").addEventListener("click", closeEmployeeDialog);
 
-["trt-map-search", "trt-direction-filter", "trt-manager-filter", "trt-region-filter"].forEach((id) => {
-  const eventName = id === "trt-map-search" ? "input" : "change";
-  $(id).addEventListener(eventName, () => {
+["task-search", "task-scope-filter", "task-status-filter", "task-assignee-filter"].forEach((id) => {
+  const eventName = id === "task-search" ? "input" : "change";
+  $(id).addEventListener(eventName, renderTasks);
+});
+$("task-detail-close").addEventListener("click", closeTaskDetail);
+$("task-detail-modal").addEventListener("click", (event) => {
+  if (event.target === $("task-detail-modal")) closeTaskDetail();
+});
+$("task-open-trt-button").addEventListener("click", openSelectedTaskTrt);
+
+["trt-direction-filter", "trt-manager-filter"].forEach((id) => {
+  $(id).addEventListener("change", () => {
     state.trtFitRequested = true;
     renderTrtMap();
   });
 });
+$("trt-map-mode").addEventListener("change", updateTrtMapMode);
+$("view-map-button").addEventListener("click", () => setTrtMainView("map"));
+$("view-analytics-button").addEventListener("click", () => setTrtMainView("analytics"));
+
+document.querySelectorAll(".legacy-analytics-tab").forEach((button) => {
+  button.addEventListener("click", () => setTrtAnalyticsTab(button.dataset.analyticsTab));
+});
+
+$("analytics-direction").addEventListener("change", () => {
+  populateAnalyticsFilters(false);
+  renderActiveAnalyticsTab();
+});
+$("analytics-category").addEventListener("change", renderActiveAnalyticsTab);
+$("analytics-period-start").addEventListener("change", renderActiveAnalyticsTab);
+$("analytics-period-end").addEventListener("change", renderActiveAnalyticsTab);
+$("analytics-structure-group").addEventListener("change", renderAnalyticsStructure);
+$("analytics-structure-year").addEventListener("change", renderAnalyticsStructure);
+
+$("analytics-format-control").addEventListener("click", (event) => {
+  event.stopPropagation();
+  toggleAnalyticsFormatMenu();
+});
+$("analytics-format-menu").addEventListener("click", (event) => event.stopPropagation());
+$("analytics-format-select-all").addEventListener("click", () => {
+  document.querySelectorAll(".legacy-multiselect-option").forEach((option) => {
+    trtAnalyticsSelectedFormats.add(option.dataset.value);
+  });
+  updateAnalyticsFormatControl();
+  renderActiveAnalyticsTab();
+});
+$("analytics-format-clear").addEventListener("click", () => {
+  trtAnalyticsSelectedFormats.clear();
+  updateAnalyticsFormatControl();
+  renderActiveAnalyticsTab();
+});
+document.addEventListener("click", closeAnalyticsFormatMenu);
+
 $("trt-sales-button").addEventListener("click", openTrtSales);
 $("trt-sales-modal-close").addEventListener("click", closeTrtSales);
 $("trt-sales-modal").addEventListener("click", (event) => {

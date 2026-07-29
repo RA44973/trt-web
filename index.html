@@ -19,13 +19,10 @@
   <section id="login-screen" class="login-screen">
     <div class="login-card">
       <img class="brand-logo login-logo" src="icon-192.png" alt="4Р для ТРТ">
-      <h1>Кабинет руководителя</h1>
-      <p>Управление сотрудниками, задачами и торгово-розничными точками.</p>
       <button id="open-login-form-button" class="primary-button" type="button">Ввести логин и пароль</button>
       <form id="login-form" autocomplete="off" hidden>
         <div id="login-fields"></div>
         <button id="login-button" class="primary-button" type="submit" disabled>Войти</button>
-        <p class="login-security-note">Поля создаются только после нажатия этой кнопки. Сайт не хранит логин и пароль.</p>
       </form>
       <template id="login-fields-template">
         <label>
@@ -139,87 +136,262 @@
             <p class="eyebrow">Контроль исполнения</p>
             <h1>Задачи</h1>
           </div>
+          <div id="tasks-data-status" class="page-data-status">Загрузка…</div>
         </header>
-        <section class="placeholder-card">
-          <div class="placeholder-icon">З</div>
-          <h2>Раздел подключён к меню</h2>
-          <p>Следующим этапом здесь появятся активные, выполненные и просроченные задачи сотрудников.</p>
+
+        <section class="summary-grid task-summary-grid" aria-label="Сводка по задачам">
+          <article class="summary-card">
+            <span>Всего</span>
+            <strong id="tasks-total">0</strong>
+          </article>
+          <article class="summary-card">
+            <span>Активных</span>
+            <strong id="tasks-active">0</strong>
+          </article>
+          <article class="summary-card danger-summary">
+            <span>Просрочено</span>
+            <strong id="tasks-overdue">0</strong>
+          </article>
+          <article class="summary-card">
+            <span>Выполнено</span>
+            <strong id="tasks-done">0</strong>
+          </article>
+        </section>
+
+        <section class="content-card">
+          <div class="task-toolbar">
+            <label class="search-field">
+              <span>Поиск</span>
+              <input id="task-search" type="search" placeholder="Задача, ТРТ, исполнитель">
+            </label>
+            <label class="filter-field">
+              <span>Моя роль</span>
+              <select id="task-scope-filter">
+                <option value="all">Все доступные</option>
+                <option value="assigned">Исполняю я</option>
+                <option value="created">Поставил я</option>
+              </select>
+            </label>
+            <label class="filter-field">
+              <span>Статус</span>
+              <select id="task-status-filter">
+                <option value="all">Все статусы</option>
+                <option value="active">Активные</option>
+                <option value="overdue">Просроченные</option>
+                <option value="done">Выполненные</option>
+              </select>
+            </label>
+            <label class="filter-field">
+              <span>Исполнитель</span>
+              <select id="task-assignee-filter">
+                <option value="">Все исполнители</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="table-wrap">
+            <table class="tasks-table">
+              <thead>
+                <tr>
+                  <th>Задача</th>
+                  <th>ТРТ</th>
+                  <th>Исполнитель</th>
+                  <th>Постановщик</th>
+                  <th>Срок</th>
+                  <th>Приоритет</th>
+                  <th>Статус</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="tasks-table-body"></tbody>
+            </table>
+            <div id="tasks-empty" class="empty-state" hidden>Задачи не найдены.</div>
+            <div id="tasks-loading" class="loading-state">Загрузка задач…</div>
+          </div>
         </section>
       </section>
 
-      <section id="page-trt" class="page-view trt-page" hidden>
-        <header class="page-header trt-page-header">
-          <div>
-            <p class="eyebrow">Главный объект управления</p>
-            <h1>Карта ТРТ</h1>
-          </div>
-          <div id="trt-data-status" class="map-data-status">Подготовка карты…</div>
-        </header>
 
-        <section class="trt-map-shell">
-          <aside class="trt-map-sidebar">
-            <section class="map-filter-card">
-              <label>
-                Поиск
-                <input id="trt-map-search" type="search" placeholder="ТРТ, адрес, холдинг">
-              </label>
-              <label>
-                Направление
+      <section id="page-trt" class="page-view trt-page legacy-trt-page" hidden>
+        <div class="legacy-trt-shell">
+          <aside class="legacy-trt-sidebar">
+            <h2>Анализ ТРТ</h2>
+
+            <div class="legacy-view-tabs">
+              <button id="view-map-button" class="legacy-view-button active" type="button">Карта</button>
+              <button id="view-analytics-button" class="legacy-view-button" type="button">Аналитика</button>
+            </div>
+
+            <div class="legacy-map-only">
+              <section class="legacy-card">
+                <label class="legacy-filter-label" for="trt-direction-filter">Направление</label>
                 <select id="trt-direction-filter">
                   <option value="">Все направления</option>
                 </select>
-              </label>
-              <label>
-                Менеджер
+
+                <label class="legacy-filter-label" for="trt-manager-filter" style="margin-top:12px;">Менеджер</label>
                 <select id="trt-manager-filter">
                   <option value="">Все менеджеры</option>
                 </select>
-              </label>
-              <label>
-                Регион
-                <select id="trt-region-filter">
-                  <option value="">Все регионы</option>
-                </select>
-              </label>
-              <div id="trt-visible-count" class="map-counter">Загрузка данных…</div>
-              <div class="map-legend" aria-label="Цвет точки по размеру ТРТ">
-                <span><i class="legend-dot size-low"></i>до 50</span>
-                <span><i class="legend-dot size-medium"></i>50–100</span>
-                <span><i class="legend-dot size-high"></i>свыше 100</span>
-              </div>
-            </section>
 
-            <section class="map-point-card">
-              <div id="trt-map-empty" class="map-card-hint">
-                Нажмите на точку на карте, чтобы открыть краткую карточку ТРТ.
-              </div>
-              <div id="trt-map-card" hidden>
-                <div class="map-card-heading">
-                  <div>
-                    <p class="map-card-caption">Карточка ТРТ</p>
-                    <h2 id="trt-card-name">—</h2>
-                  </div>
-                  <span id="trt-card-size-badge" class="size-badge">—</span>
+                <label class="legacy-filter-label" for="trt-map-mode" style="margin-top:12px;">Отображение карты</label>
+                <select id="trt-map-mode">
+                  <option value="points">Точки ТРТ</option>
+                  <option value="regions">Результат регионов</option>
+                  <option value="both" selected>Точки + регионы</option>
+                </select>
+
+                <div id="trt-visible-count" class="legacy-counter">Загрузка данных…</div>
+                <div id="trt-data-status" class="legacy-counter"></div>
+                <div id="trt-region-load-status" class="legacy-counter"></div>
+              </section>
+
+              <section class="legacy-card">
+                <div id="trt-map-empty" class="legacy-hint">
+                  Нажмите на конкретную точку на карте, чтобы открыть карточку ТРТ.
                 </div>
-                <dl class="map-card-fields">
-                  <div><dt>Холдинг</dt><dd id="trt-card-holding">—</dd></div>
-                  <div><dt>Направление</dt><dd id="trt-card-direction">—</dd></div>
-                  <div><dt>Формат</dt><dd id="trt-card-format">—</dd></div>
-                  <div><dt>Менеджер</dt><dd id="trt-card-manager">—</dd></div>
-                  <div><dt>Регион</dt><dd id="trt-card-region">—</dd></div>
-                  <div><dt>Адрес</dt><dd id="trt-card-address">—</dd></div>
-                </dl>
-                <button id="trt-sales-button" class="primary-button map-sales-button" type="button">Продажи</button>
+
+                <div id="trt-map-card" hidden>
+                  <h3 id="trt-card-name" class="legacy-point-name">—</h3>
+
+                  <div class="legacy-field">
+                    <div class="legacy-label">Направление</div>
+                    <div id="trt-card-direction">—</div>
+                  </div>
+
+                  <div class="legacy-field">
+                    <div class="legacy-label">Среднемесячные продажи</div>
+                    <div><span id="trt-card-size-badge" class="legacy-size-badge">—</span></div>
+                  </div>
+
+                  <div class="legacy-field">
+                    <div class="legacy-label">Менеджер</div>
+                    <div id="trt-card-manager">—</div>
+                  </div>
+
+                  <div class="legacy-field">
+                    <div class="legacy-label">Холдинг</div>
+                    <div id="trt-card-holding">—</div>
+                  </div>
+
+                  <div class="legacy-field">
+                    <div class="legacy-label">Формат ТРТ</div>
+                    <div id="trt-card-format">—</div>
+                  </div>
+
+                  <div class="legacy-field">
+                    <div class="legacy-label">Категория ABC</div>
+                    <div id="trt-card-abc">—</div>
+                  </div>
+
+                  <div class="legacy-field">
+                    <div class="legacy-label">Регион</div>
+                    <div id="trt-card-region">—</div>
+                  </div>
+
+                  <div class="legacy-field">
+                    <div class="legacy-label">Адрес</div>
+                    <div id="trt-card-address">—</div>
+                  </div>
+
+                  <button id="trt-sales-button" class="legacy-sales-button" type="button">Продажи</button>
+                </div>
+              </section>
+            </div>
+
+            <div id="trt-analytics-sidebar" class="legacy-analytics-only" hidden>
+              <div class="legacy-analytics-subnav">
+                <button class="legacy-analytics-tab active" data-analytics-tab="dynamics" type="button">Динамика</button>
+                <button class="legacy-analytics-tab" data-analytics-tab="structure" type="button">Структура</button>
               </div>
-            </section>
+
+              <section class="legacy-card legacy-analytics-card">
+                <div class="legacy-analytics-field">
+                  <label class="legacy-filter-label" for="analytics-direction">Направление</label>
+                  <select id="analytics-direction">
+                    <option value="">Выберите направление</option>
+                  </select>
+                </div>
+
+                <div class="legacy-analytics-field">
+                  <label class="legacy-filter-label">Форматы ТРТ</label>
+                  <div id="analytics-format-multiselect" class="legacy-multiselect">
+                    <button id="analytics-format-control" class="legacy-multiselect-control" type="button" disabled>
+                      Сначала выберите направление
+                    </button>
+                    <div id="analytics-format-menu" class="legacy-multiselect-menu">
+                      <div class="legacy-multiselect-actions">
+                        <button id="analytics-format-select-all" class="legacy-multiselect-action" type="button">Выбрать все</button>
+                        <button id="analytics-format-clear" class="legacy-multiselect-action" type="button">Очистить</button>
+                      </div>
+                      <div id="analytics-format-options" class="legacy-multiselect-list"></div>
+                      <div class="legacy-multiselect-hint">
+                        Обычный клик — один формат, Cmd — отдельные форматы, Shift — диапазон.
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="legacy-analytics-field">
+                  <label class="legacy-filter-label" for="analytics-category">Категория ABC</label>
+                  <select id="analytics-category">
+                    <option value="__all__">Все категории</option>
+                  </select>
+                </div>
+
+                <div class="legacy-analytics-field">
+                  <label class="legacy-filter-label">Период</label>
+                  <div class="legacy-period-grid">
+                    <select id="analytics-period-start" aria-label="Начальный месяц">
+                      <option value="0">Январь</option><option value="1">Февраль</option><option value="2">Март</option>
+                      <option value="3">Апрель</option><option value="4">Май</option><option value="5">Июнь</option>
+                      <option value="6">Июль</option><option value="7">Август</option><option value="8">Сентябрь</option>
+                      <option value="9">Октябрь</option><option value="10">Ноябрь</option><option value="11">Декабрь</option>
+                    </select>
+                    <select id="analytics-period-end" aria-label="Конечный месяц">
+                      <option value="0">Январь</option><option value="1">Февраль</option><option value="2">Март</option>
+                      <option value="3">Апрель</option><option value="4">Май</option><option value="5">Июнь</option>
+                      <option value="6">Июль</option><option value="7">Август</option><option value="8">Сентябрь</option>
+                      <option value="9">Октябрь</option><option value="10">Ноябрь</option><option value="11">Декабрь</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="legacy-analytics-field legacy-structure-only" hidden>
+                  <label class="legacy-filter-label" for="analytics-structure-group">Доли по</label>
+                  <select id="analytics-structure-group">
+                    <option value="format">Формату ТРТ</option>
+                    <option value="category">Категории ABC</option>
+                  </select>
+                </div>
+
+                <div class="legacy-analytics-field legacy-structure-only" hidden>
+                  <label class="legacy-filter-label" for="analytics-structure-year">Год структуры</label>
+                  <select id="analytics-structure-year"></select>
+                </div>
+
+                <div id="analytics-filter-status" class="legacy-counter">
+                  Выберите направление для построения отчёта.
+                </div>
+              </section>
+            </div>
           </aside>
 
-          <div class="trt-map-stage">
+          <div class="legacy-trt-main">
             <div id="trt-map" aria-label="Карта торгово-розничных точек"></div>
-            <div id="trt-map-error" class="map-error" hidden></div>
+            <section id="trt-analytics-view" class="legacy-analytics-view" hidden aria-hidden="true">
+              <div id="analytics-report-content" class="legacy-chart-host">
+                <div class="legacy-analytics-empty">Выберите направление, чтобы построить динамику продаж.</div>
+              </div>
+              <div id="analytics-structure-content" class="legacy-chart-host" hidden>
+                <div class="legacy-analytics-empty">Выберите направление, чтобы построить структуру продаж.</div>
+              </div>
+            </section>
+            <div id="trt-map-error" class="map-error legacy-map-error" hidden></div>
           </div>
-        </section>
+        </div>
       </section>
+
     </main>
   </div>
 
@@ -274,6 +446,51 @@
   </dialog>
 
 
+
+  <div id="task-detail-modal" class="task-modal-backdrop" hidden>
+    <section class="task-modal" role="dialog" aria-modal="true" aria-labelledby="task-detail-title">
+      <header class="task-modal-header">
+        <div>
+          <p class="eyebrow">Карточка задачи</p>
+          <h2 id="task-detail-title">Задача</h2>
+          <p id="task-detail-trt" class="task-modal-subtitle"></p>
+        </div>
+        <button id="task-detail-close" class="icon-button" type="button" aria-label="Закрыть">×</button>
+      </header>
+
+      <div class="task-detail-topline">
+        <span id="task-detail-status" class="badge">—</span>
+        <span id="task-detail-priority" class="badge">—</span>
+        <button id="task-open-trt-button" class="secondary-button compact-button" type="button">Открыть ТРТ</button>
+      </div>
+
+      <dl class="task-detail-grid">
+        <div><dt>Исполнитель</dt><dd id="task-detail-assignee">—</dd></div>
+        <div><dt>Постановщик</dt><dd id="task-detail-created-by">—</dd></div>
+        <div><dt>Срок</dt><dd id="task-detail-due">—</dd></div>
+        <div><dt>Направление</dt><dd id="task-detail-direction">—</dd></div>
+      </dl>
+
+      <section class="task-text-section">
+        <h3>Описание</h3>
+        <p id="task-detail-description">—</p>
+      </section>
+
+      <section class="task-text-section">
+        <h3>Материалы задачи</h3>
+        <div id="task-materials" class="task-media-grid"></div>
+        <p id="task-materials-empty" class="task-muted">Материалы не приложены.</p>
+      </section>
+
+      <section id="task-result-section" class="task-text-section">
+        <h3>Результат</h3>
+        <p id="task-detail-result">—</p>
+        <div id="task-result-media" class="task-media-grid"></div>
+        <p id="task-result-media-empty" class="task-muted">Фото и видео результата не приложены.</p>
+      </section>
+    </section>
+  </div>
+
   <div id="trt-sales-modal" class="sales-modal-backdrop" hidden>
     <section class="sales-modal" role="dialog" aria-modal="true" aria-labelledby="trt-sales-modal-title">
       <header class="sales-modal-header">
@@ -288,7 +505,9 @@
       <div class="sales-summary-grid">
         <article><span>Январь–июнь 2025</span><strong id="trt-sales-ytd-2025">—</strong></article>
         <article><span>Январь–июнь 2026</span><strong id="trt-sales-ytd-2026">—</strong></article>
-        <article><span>Изменение год к году</span><strong id="trt-sales-yoy">—</strong></article>
+        <article id="trt-sales-yoy-box" class="sales-yoy-box sales-yoy-neutral">
+          <span>Изменение год к году</span><strong id="trt-sales-yoy">—</strong>
+        </article>
       </div>
     </section>
   </div>
@@ -296,6 +515,6 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
-  <script src="app.js?v=20260729-2"></script>
+  <script src="app.js?v=20260729-4"></script>
 </body>
 </html>
