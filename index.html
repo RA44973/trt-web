@@ -8,6 +8,9 @@
   <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
   <link rel="apple-touch-icon" sizes="192x192" href="icon-192.png">
   <link rel="manifest" href="site.webmanifest">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -139,17 +142,77 @@
         </section>
       </section>
 
-      <section id="page-trt" class="page-view" hidden>
-        <header class="page-header">
+      <section id="page-trt" class="page-view trt-page" hidden>
+        <header class="page-header trt-page-header">
           <div>
             <p class="eyebrow">Главный объект управления</p>
-            <h1>ТРТ</h1>
+            <h1>Карта ТРТ</h1>
           </div>
+          <div id="trt-data-status" class="map-data-status">Подготовка карты…</div>
         </header>
-        <section class="placeholder-card">
-          <div class="placeholder-icon">Т</div>
-          <h2>Раздел подключён к меню</h2>
-          <p>Здесь будет реестр торгово-розничных точек и переход в полную карточку каждой ТРТ.</p>
+
+        <section class="trt-map-shell">
+          <aside class="trt-map-sidebar">
+            <section class="map-filter-card">
+              <label>
+                Поиск
+                <input id="trt-map-search" type="search" placeholder="ТРТ, адрес, холдинг">
+              </label>
+              <label>
+                Направление
+                <select id="trt-direction-filter">
+                  <option value="">Все направления</option>
+                </select>
+              </label>
+              <label>
+                Менеджер
+                <select id="trt-manager-filter">
+                  <option value="">Все менеджеры</option>
+                </select>
+              </label>
+              <label>
+                Регион
+                <select id="trt-region-filter">
+                  <option value="">Все регионы</option>
+                </select>
+              </label>
+              <div id="trt-visible-count" class="map-counter">Загрузка данных…</div>
+              <div class="map-legend" aria-label="Цвет точки по размеру ТРТ">
+                <span><i class="legend-dot size-low"></i>до 50</span>
+                <span><i class="legend-dot size-medium"></i>50–100</span>
+                <span><i class="legend-dot size-high"></i>свыше 100</span>
+              </div>
+            </section>
+
+            <section class="map-point-card">
+              <div id="trt-map-empty" class="map-card-hint">
+                Нажмите на точку на карте, чтобы открыть краткую карточку ТРТ.
+              </div>
+              <div id="trt-map-card" hidden>
+                <div class="map-card-heading">
+                  <div>
+                    <p class="map-card-caption">Карточка ТРТ</p>
+                    <h2 id="trt-card-name">—</h2>
+                  </div>
+                  <span id="trt-card-size-badge" class="size-badge">—</span>
+                </div>
+                <dl class="map-card-fields">
+                  <div><dt>Холдинг</dt><dd id="trt-card-holding">—</dd></div>
+                  <div><dt>Направление</dt><dd id="trt-card-direction">—</dd></div>
+                  <div><dt>Формат</dt><dd id="trt-card-format">—</dd></div>
+                  <div><dt>Менеджер</dt><dd id="trt-card-manager">—</dd></div>
+                  <div><dt>Регион</dt><dd id="trt-card-region">—</dd></div>
+                  <div><dt>Адрес</dt><dd id="trt-card-address">—</dd></div>
+                </dl>
+                <button id="trt-sales-button" class="primary-button map-sales-button" type="button">Продажи</button>
+              </div>
+            </section>
+          </aside>
+
+          <div class="trt-map-stage">
+            <div id="trt-map" aria-label="Карта торгово-розничных точек"></div>
+            <div id="trt-map-error" class="map-error" hidden></div>
+          </div>
         </section>
       </section>
     </main>
@@ -205,6 +268,29 @@
     </form>
   </dialog>
 
+
+  <div id="trt-sales-modal" class="sales-modal-backdrop" hidden>
+    <section class="sales-modal" role="dialog" aria-modal="true" aria-labelledby="trt-sales-modal-title">
+      <header class="sales-modal-header">
+        <div>
+          <p class="eyebrow">Продажи ТРТ</p>
+          <h2 id="trt-sales-modal-title">Продажи</h2>
+          <p id="trt-sales-modal-subtitle" class="sales-modal-subtitle"></p>
+        </div>
+        <button id="trt-sales-modal-close" class="icon-button sales-modal-close" type="button" aria-label="Закрыть">×</button>
+      </header>
+      <div class="sales-chart-wrap"><canvas id="trt-sales-chart"></canvas></div>
+      <div class="sales-summary-grid">
+        <article><span>Январь–июнь 2025</span><strong id="trt-sales-ytd-2025">—</strong></article>
+        <article><span>Январь–июнь 2026</span><strong id="trt-sales-ytd-2026">—</strong></article>
+        <article><span>Изменение год к году</span><strong id="trt-sales-yoy">—</strong></article>
+      </div>
+    </section>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

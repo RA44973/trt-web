@@ -8,8 +8,16 @@ const state = {
   token: localStorage.getItem(SESSION_KEY) || "",
   user: null,
   employees: [],
+  trtPoints: [],
+  trtLoaded: false,
+  trtSelectedId: "",
+  trtFitRequested: true,
   currentPage: PAGES.has(location.hash.slice(1)) ? location.hash.slice(1) : "employees",
 };
+
+let trtMap = null;
+let trtMarkerLayer = null;
+let trtSalesChart = null;
 
 const $ = (id) => document.getElementById(id);
 
@@ -91,6 +99,11 @@ function showPage(page, updateHash = true) {
 
   if (nextPage === "employees" && state.token && state.employees.length === 0) {
     loadEmployees();
+  }
+
+  if (nextPage === "trt") {
+    loadTrtMap();
+    window.setTimeout(() => trtMap?.invalidateSize(), 80);
   }
 }
 
@@ -274,6 +287,275 @@ async function saveEmployee(event) {
   }
 }
 
+
+function normalizeText(value) {
+  return String(value || "").trim().toLowerCase().replace(/ё/g, "е");
+}
+
+function numberOrZero(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function trtColor(size) {
+  const value = numberOrZero(size);
+  if (value > 100) return "#16a34a";
+  if (value > 50) return "#eab308";
+  return "#dc2626";
+}
+
+function formatTrtSize(point) {
+  const value = numberOrZero(point?.size);
+  const unit = point?.unit || "";
+  return `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 1 }).format(value)}${unit ? ` ${unit}` : ""}`;
+}
+
+function formatSales(value, unit = "") {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "—";
+  const formatted = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 1 }).format(number);
+  return `${formatted}${unit ? ` ${unit}` : ""}`;
+}
+
+function sumSales(values, months = 6) {
+  return (Array.isArray(values) ? values : [])
+    .slice(0, months)
+    .reduce((sum, value) => sum + (Number.isFinite(Number(value)) ? Number(value) : 0), 0);
+}
+
+function selectedTrtPoint() {
+  return state.trtPoints.find((point) => String(point.id) === String(state.trtSelectedId));
+}
+
+function populateSelect(selectId, values, emptyLabel, displayFormatter = (value) => value) {
+  const select = $(selectId);
+  const current = select.value;
+  select.innerHTML = `<option value="">${escapeHtml(emptyLabel)}</option>${values.map((value) => (
+    `<option value="${escapeHtml(value)}">${escapeHtml(displayFormatter(value))}</option>`
+  )).join("")}`;
+  if (values.includes(current)) select.value = current;
+}
+
+function fillTrtFilters() {
+  const directions = [...new Set(state.trtPoints.map((point) => String(point.direction || "").trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, "ru"));
+  const managers = [...new Set(state.trtPoints.map((point) => String(point.manager || "").trim()).filter(Boolean))]
+    .sort((a, b) => shortPersonName(a).localeCompare(shortPersonName(b), "ru"));
+  const regions = [...new Set(state.trtPoints.map((point) => String(point.region || "").trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, "ru"));
+
+  populateSelect("trt-direction-filter", directions, "Все направления");
+  populateSelect("trt-manager-filter", managers, "Все менеджеры", shortPersonName);
+  populateSelect("trt-region-filter", regions, "Все регионы");
+}
+
+function initTrtMap() {
+  if (trtMap || typeof window.L === "undefined") return;
+
+  trtMap = L.map("trt-map", {
+    zoomControl: false,
+    attributionControl: true,
+  }).setView([55.75, 37.62], 7);
+
+  L.control.zoom({ position: "bottomright" }).addTo(trtMap);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: "© OpenStreetMap",
+  }).addTo(trtMap);
+
+  trtMarkerLayer = typeof L.markerClusterGroup === "function"
+    ? L.markerClusterGroup({
+        showCoverageOnHover: false,
+        maxClusterRadius: 46,
+        spiderfyOnMaxZoom: true,
+      })
+    : L.layerGroup();
+
+  trtMarkerLayer.addTo(trtMap);
+}
+
+function filteredTrtPoints() {
+  const query = normalizeText($("trt-map-search").value);
+  const direction = $("trt-direction-filter").value;
+  const manager = $("trt-manager-filter").value;
+  const region = $("trt-region-filter").value;
+
+  return state.trtPoints.filter((point) => {
+    if (direction && point.direction !== direction) return false;
+    if (manager && point.manager !== manager) return false;
+    if (region && point.region !== region) return false;
+    if (!query) return true;
+    return normalizeText([
+      point.client,
+      point.holding,
+      point.address,
+      point.format,
+      point.manager,
+      point.region,
+    ].join(" ")).includes(query);
+  });
+}
+
+function trtMarkerIcon(point) {
+  return L.divIcon({
+    className: "",
+    html: `<span class="trt-marker-dot" style="background:${trtColor(point.size)}"></span>`,
+    iconSize: [18, 18],
+    iconAnchor: [9, 9],
+    popupAnchor: [0, -7],
+  });
+}
+
+function openTrtCard(pointId, focusMap = true) {
+  const point = state.trtPoints.find((item) => String(item.id) === String(pointId));
+  if (!point) return;
+
+  state.trtSelectedId = String(point.id);
+  $("trt-map-empty").hidden = true;
+  $("trt-map-card").hidden = false;
+  $("trt-card-name").textContent = point.client || point.holding || "ТРТ";
+  $("trt-card-holding").textContent = point.holding || "—";
+  $("trt-card-direction").textContent = point.direction || "—";
+  $("trt-card-format").textContent = point.format || "—";
+  $("trt-card-manager").textContent = shortPersonName(point.manager) || "—";
+  $("trt-card-region").textContent = point.region || "—";
+  $("trt-card-address").textContent = point.address || "—";
+
+  const badge = $("trt-card-size-badge");
+  badge.textContent = formatTrtSize(point);
+  badge.style.background = trtColor(point.size);
+
+  const hasSales = Object.values(point.sales || {}).some((values) => (
+    Array.isArray(values) && values.some((value) => Number.isFinite(Number(value)) && Number(value) !== 0)
+  ));
+  $("trt-sales-button").disabled = !hasSales;
+  $("trt-sales-button").textContent = hasSales ? "Продажи" : "Продаж нет";
+
+  if (focusMap && trtMap && Number.isFinite(Number(point.lat)) && Number.isFinite(Number(point.lon))) {
+    trtMap.setView([Number(point.lat), Number(point.lon)], Math.max(trtMap.getZoom(), 14));
+  }
+}
+
+function renderTrtMap() {
+  if (!state.trtLoaded || !trtMap || !trtMarkerLayer) return;
+  const visible = filteredTrtPoints().filter((point) => (
+    Number.isFinite(Number(point.lat)) && Number.isFinite(Number(point.lon))
+  ));
+
+  trtMarkerLayer.clearLayers();
+  const coordinates = [];
+
+  visible.forEach((point) => {
+    const lat = Number(point.lat);
+    const lon = Number(point.lon);
+    coordinates.push([lat, lon]);
+    const marker = L.marker([lat, lon], { icon: trtMarkerIcon(point) });
+    marker.bindPopup(`
+      <div class="map-popup-name">${escapeHtml(point.client || point.holding || "ТРТ")}</div>
+      <div class="map-popup-address">${escapeHtml(point.address || "Адрес не указан")}</div>
+    `);
+    marker.on("click", () => openTrtCard(point.id, false));
+    trtMarkerLayer.addLayer(marker);
+  });
+
+  $("trt-visible-count").textContent = `Показано ТРТ: ${visible.length} из ${state.trtPoints.length}`;
+  $("trt-data-status").textContent = `Данные на 28.07.2026 · ${state.trtPoints.length} ТРТ`;
+
+  if (state.trtFitRequested && visible.length > 0) {
+    const bounds = L.latLngBounds(coordinates);
+    trtMap.fitBounds(bounds.pad(0.08), { maxZoom: 13 });
+    state.trtFitRequested = false;
+  }
+
+  window.setTimeout(() => trtMap.invalidateSize(), 30);
+}
+
+async function loadTrtMap() {
+  if (state.trtLoaded) {
+    initTrtMap();
+    renderTrtMap();
+    return;
+  }
+
+  $("trt-data-status").textContent = "Загрузка карты…";
+  $("trt-map-error").hidden = true;
+
+  try {
+    const response = await fetch("trt-data.json", { cache: "no-store" });
+    if (!response.ok) throw new Error(`Не удалось загрузить данные ТРТ: ${response.status}`);
+    const payload = await response.json();
+    const points = Array.isArray(payload.points) ? payload.points : [];
+    state.trtPoints = points.filter((point) => point && point.id != null);
+    state.trtLoaded = true;
+    state.trtFitRequested = true;
+    fillTrtFilters();
+    initTrtMap();
+    if (!trtMap) throw new Error("Библиотека карты не загрузилась. Обновите страницу и проверьте интернет.");
+    renderTrtMap();
+  } catch (error) {
+    $("trt-data-status").textContent = "Карта недоступна";
+    $("trt-map-error").textContent = error.message;
+    $("trt-map-error").hidden = false;
+  }
+}
+
+function openTrtSales() {
+  const point = selectedTrtPoint();
+  if (!point) return;
+
+  const months = ["Янв", "Фев", "Мар", "Апр", "Май", "Июн", "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек"];
+  const sales2025 = Array.isArray(point.sales?.["2025"]) ? point.sales["2025"] : [];
+  const sales2026 = Array.isArray(point.sales?.["2026"]) ? point.sales["2026"] : [];
+  const ytd2025 = sumSales(sales2025, 6);
+  const ytd2026 = sumSales(sales2026, 6);
+  const yoy = ytd2025 === 0 ? null : ((ytd2026 - ytd2025) / Math.abs(ytd2025)) * 100;
+
+  $("trt-sales-modal-title").textContent = point.client || point.holding || "ТРТ";
+  $("trt-sales-modal-subtitle").textContent = point.address || "";
+  $("trt-sales-ytd-2025").textContent = formatSales(ytd2025, point.unit);
+  $("trt-sales-ytd-2026").textContent = formatSales(ytd2026, point.unit);
+  $("trt-sales-yoy").textContent = yoy == null
+    ? "—"
+    : `${yoy > 0 ? "+" : ""}${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 1 }).format(yoy)}%`;
+
+  if (trtSalesChart) trtSalesChart.destroy();
+  const canvas = $("trt-sales-chart");
+  if (typeof window.Chart === "function") {
+    trtSalesChart = new Chart(canvas, {
+      type: "bar",
+      data: {
+        labels: months,
+        datasets: [
+          { label: "2025", data: months.map((_, index) => sales2025[index] ?? null), backgroundColor: "rgba(100,116,139,.62)" },
+          { label: "2026", data: months.map((_, index) => sales2026[index] ?? null), backgroundColor: "rgba(31,94,255,.78)" },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: "index", intersect: false },
+        scales: { y: { beginAtZero: true } },
+        plugins: {
+          legend: { position: "bottom" },
+          tooltip: {
+            callbacks: {
+              label(context) {
+                return `${context.dataset.label}: ${formatSales(context.raw, point.unit)}`;
+              },
+            },
+          },
+        },
+      },
+    });
+  }
+
+  $("trt-sales-modal").hidden = false;
+}
+
+function closeTrtSales() {
+  $("trt-sales-modal").hidden = true;
+}
+
 async function logout() {
   try { await api("/auth/logout", { method: "POST", body: "{}" }); } catch { /* Локальная сессия очищается в любом случае. */ }
   clearSession();
@@ -288,6 +570,19 @@ $("add-employee-button").addEventListener("click", () => openEmployeeDialog());
 $("employee-form").addEventListener("submit", saveEmployee);
 $("employee-dialog-close").addEventListener("click", closeEmployeeDialog);
 $("employee-cancel-button").addEventListener("click", closeEmployeeDialog);
+
+["trt-map-search", "trt-direction-filter", "trt-manager-filter", "trt-region-filter"].forEach((id) => {
+  const eventName = id === "trt-map-search" ? "input" : "change";
+  $(id).addEventListener(eventName, () => {
+    state.trtFitRequested = true;
+    renderTrtMap();
+  });
+});
+$("trt-sales-button").addEventListener("click", openTrtSales);
+$("trt-sales-modal-close").addEventListener("click", closeTrtSales);
+$("trt-sales-modal").addEventListener("click", (event) => {
+  if (event.target === $("trt-sales-modal")) closeTrtSales();
+});
 
 document.querySelectorAll("[data-page]").forEach((button) => {
   button.addEventListener("click", () => showPage(button.dataset.page, true));
