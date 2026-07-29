@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111827">
+  <title>ТРТ — кабинет руководителя</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="toast" class="toast" hidden></div>
+
+  <section id="login-screen" class="login-screen">
+    <div class="login-card">
+      <div class="brand-mark">ТРТ</div>
+      <h1>Кабинет руководителя</h1>
+      <p>Управление сотрудниками, задачами и торгово-розничными точками.</p>
+      <form id="login-form">
+        <label>
+          Логин
+          <input id="login" name="login" autocomplete="username" required>
+        </label>
+        <label>
+          Пароль
+          <input id="password" name="password" type="password" autocomplete="current-password" required>
+        </label>
+        <button id="login-button" class="primary-button" type="submit">Войти</button>
+      </form>
+      <div id="login-error" class="form-error" hidden></div>
+    </div>
+  </section>
+
+  <div id="app-shell" class="app-shell" hidden>
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <div class="brand-mark small">ТРТ</div>
+        <div>
+          <strong>4Р для ТРТ</strong>
+          <span>Кабинет руководителя</span>
+        </div>
+      </div>
+
+      <nav class="main-nav" aria-label="Основная навигация">
+        <button class="nav-item active" type="button" data-page="employees">
+          <span class="nav-icon">С</span>
+          Сотрудники
+        </button>
+        <button class="nav-item disabled" type="button" disabled>
+          <span class="nav-icon">З</span>
+          Задачи
+          <span class="soon">скоро</span>
+        </button>
+        <button class="nav-item disabled" type="button" disabled>
+          <span class="nav-icon">Т</span>
+          ТРТ
+          <span class="soon">скоро</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-user">
+        <span id="sidebar-user-name">—</span>
+        <button id="logout-button" class="text-button" type="button">Выйти</button>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <header class="page-header">
+        <div>
+          <p class="eyebrow">Организационная структура</p>
+          <h1>Сотрудники</h1>
+          <p class="page-description">Полные ФИО хранятся в базе. В мобильном приложении отображаются только фамилия и имя.</p>
+        </div>
+        <button id="add-employee-button" class="primary-button" type="button">+ Сотрудник</button>
+      </header>
+
+      <section class="summary-grid" aria-label="Сводка">
+        <article class="summary-card">
+          <span>Всего</span>
+          <strong id="employees-total">0</strong>
+        </article>
+        <article class="summary-card">
+          <span>Активных</span>
+          <strong id="employees-active">0</strong>
+        </article>
+        <article class="summary-card">
+          <span>С доступом в систему</span>
+          <strong id="employees-accounts">0</strong>
+        </article>
+      </section>
+
+      <section class="content-card">
+        <div class="table-toolbar">
+          <label class="search-field">
+            <span>Поиск</span>
+            <input id="employee-search" type="search" placeholder="ФИО, должность, руководитель">
+          </label>
+          <label class="filter-field">
+            <span>Статус</span>
+            <select id="employee-status-filter">
+              <option value="all">Все</option>
+              <option value="active">Активные</option>
+              <option value="inactive">Отключённые</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Сотрудник</th>
+                <th>Должность</th>
+                <th>Руководитель</th>
+                <th>Доступ</th>
+                <th>Статус</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="employees-table-body"></tbody>
+          </table>
+          <div id="employees-empty" class="empty-state" hidden>Сотрудники не найдены.</div>
+          <div id="employees-loading" class="loading-state">Загрузка сотрудников…</div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="employee-dialog" class="employee-dialog">
+    <form id="employee-form" method="dialog">
+      <div class="dialog-header">
+        <div>
+          <p class="eyebrow">Карточка сотрудника</p>
+          <h2 id="employee-dialog-title">Новый сотрудник</h2>
+        </div>
+        <button id="employee-dialog-close" class="icon-button" type="button" aria-label="Закрыть">×</button>
+      </div>
+
+      <input id="employee-id" type="hidden">
+
+      <div class="form-grid">
+        <label class="full-width">
+          Полное ФИО
+          <input id="employee-full-name" required placeholder="Фамилия Имя Отчество">
+          <small>В мобильном приложении отчество будет скрыто автоматически.</small>
+        </label>
+        <label>
+          Должность
+          <input id="employee-position" required placeholder="Например, менеджер">
+        </label>
+        <label>
+          Роль в системе
+          <select id="employee-role">
+            <option value="employee">Сотрудник</option>
+            <option value="manager">Руководитель</option>
+            <option value="admin">Администратор</option>
+          </select>
+        </label>
+        <label class="full-width">
+          Непосредственный руководитель
+          <select id="employee-manager">
+            <option value="">Нет руководителя</option>
+          </select>
+        </label>
+        <label class="status-toggle full-width">
+          <input id="employee-active" type="checkbox" checked>
+          <span>Сотрудник активен</span>
+        </label>
+      </div>
+
+      <div id="employee-form-error" class="form-error" hidden></div>
+
+      <div class="dialog-actions">
+        <button id="employee-cancel-button" class="secondary-button" type="button">Отмена</button>
+        <button id="employee-save-button" class="primary-button" type="submit">Сохранить</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>
