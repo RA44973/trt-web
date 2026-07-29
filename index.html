@@ -21,18 +21,22 @@
       <img class="brand-logo login-logo" src="icon-192.png" alt="4Р для ТРТ">
       <h1>Кабинет руководителя</h1>
       <p>Управление сотрудниками, задачами и торгово-розничными точками.</p>
-      <form id="login-form" autocomplete="off">
+      <button id="open-login-form-button" class="primary-button" type="button">Ввести логин и пароль</button>
+      <form id="login-form" autocomplete="off" hidden>
+        <div id="login-fields"></div>
+        <button id="login-button" class="primary-button" type="submit" disabled>Войти</button>
+        <p class="login-security-note">Поля создаются только после нажатия этой кнопки. Сайт не хранит логин и пароль.</p>
+      </form>
+      <template id="login-fields-template">
         <label>
           Логин
-          <input id="login" name="trt_user_entry" autocomplete="off" autocapitalize="none" spellcheck="false" readonly required>
+          <input data-login-field autocomplete="off" autocapitalize="none" spellcheck="false" readonly required>
         </label>
         <label>
           Пароль
-          <input id="password" name="trt_secret_entry" type="password" autocomplete="new-password" readonly required>
+          <input data-password-field type="password" autocomplete="off" readonly required>
         </label>
-        <button id="login-button" class="primary-button" type="submit" disabled>Войти</button>
-        <p class="login-security-note">Введите логин и пароль вручную. Сайт их не сохраняет.</p>
-      </form>
+      </template>
       <div id="login-error" class="form-error" hidden></div>
     </div>
   </section>
@@ -292,6 +296,6 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
-  <script src="app.js"></script>
+  <script src="app.js?v=20260729-2"></script>
 </body>
 </html>

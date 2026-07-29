@@ -76,38 +76,121 @@ function clearSession() {
 
 let loginWasEntered = false;
 let passwordWasEntered = false;
+let autofillGuardTimer = null;
+
+function getLoginInput() {
+  return document.querySelector("[data-login-field]");
+}
+
+function getPasswordInput() {
+  return document.querySelector("[data-password-field]");
+}
 
 function updateLoginButton() {
-  $("login-button").disabled = !(
-    loginWasEntered
+  const loginInput = getLoginInput();
+  const passwordInput = getPasswordInput();
+  const button = $("login-button");
+  if (!button) return;
+  button.disabled = !(
+    loginInput
+    && passwordInput
+    && loginWasEntered
     && passwordWasEntered
-    && $("login").value.trim()
-    && $("password").value
+    && loginInput.value.trim()
+    && passwordInput.value
   );
 }
 
-function clearLoginFields() {
-  const loginInput = $("login");
-  const passwordInput = $("password");
+function stopAutofillGuard() {
+  if (autofillGuardTimer) {
+    window.clearInterval(autofillGuardTimer);
+    autofillGuardTimer = null;
+  }
+}
+
+function protectFieldFromAutofill(input, kind) {
+  const markManual = () => {
+    if (kind === "login") loginWasEntered = true;
+    else passwordWasEntered = true;
+    input.readOnly = false;
+    window.setTimeout(updateLoginButton, 0);
+  };
+
+  input.addEventListener("pointerdown", () => {
+    input.readOnly = false;
+    if (input.value && !(kind === "login" ? loginWasEntered : passwordWasEntered)) {
+      input.value = "";
+    }
+  });
+  input.addEventListener("focus", () => {
+    input.readOnly = false;
+    if (input.value && !(kind === "login" ? loginWasEntered : passwordWasEntered)) {
+      input.value = "";
+    }
+  });
+  input.addEventListener("keydown", markManual);
+  input.addEventListener("paste", markManual);
+  input.addEventListener("input", () => {
+    const manual = kind === "login" ? loginWasEntered : passwordWasEntered;
+    if (!manual) input.value = "";
+    updateLoginButton();
+  });
+}
+
+function openLoginForm() {
+  const form = $("login-form");
+  const fields = $("login-fields");
+  const template = $("login-fields-template");
+  const openButton = $("open-login-form-button");
+
+  fields.replaceChildren(template.content.cloneNode(true));
+  const loginInput = getLoginInput();
+  const passwordInput = getPasswordInput();
+  const suffix = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  loginInput.id = `user_${suffix}`;
+  loginInput.name = `user_${suffix}`;
+  passwordInput.id = `secret_${suffix}`;
+  passwordInput.name = `secret_${suffix}`;
   loginInput.value = "";
   passwordInput.value = "";
   loginInput.readOnly = true;
   passwordInput.readOnly = true;
   loginWasEntered = false;
   passwordWasEntered = false;
+
+  protectFieldFromAutofill(loginInput, "login");
+  protectFieldFromAutofill(passwordInput, "password");
+
+  form.hidden = false;
+  openButton.hidden = true;
   updateLoginButton();
+
+  stopAutofillGuard();
+  let checks = 0;
+  autofillGuardTimer = window.setInterval(() => {
+    checks += 1;
+    if (!loginWasEntered && loginInput.value) loginInput.value = "";
+    if (!passwordWasEntered && passwordInput.value) passwordInput.value = "";
+    updateLoginButton();
+    if (checks >= 40 || (loginWasEntered && passwordWasEntered)) stopAutofillGuard();
+  }, 100);
 }
 
-function unlockLoginInput(input) {
-  input.readOnly = false;
+function resetLoginForm() {
+  stopAutofillGuard();
+  $("login-fields").replaceChildren();
+  $("login-form").hidden = true;
+  $("open-login-form-button").hidden = false;
+  $("login-button").disabled = true;
+  loginWasEntered = false;
+  passwordWasEntered = false;
+  $("login-error").hidden = true;
 }
 
 function showLogin() {
   $("app-shell").hidden = true;
   $("login-screen").hidden = false;
-  clearLoginFields();
-  window.setTimeout(clearLoginFields, 80);
-  window.setTimeout(clearLoginFields, 400);
+  resetLoginForm();
 }
 
 function showPage(page, updateHash = true) {
@@ -165,8 +248,8 @@ async function login(event) {
     const result = await api("/auth/login", {
       method: "POST",
       body: JSON.stringify({
-        login: $("login").value.trim(),
-        password: $("password").value,
+        login: loginInput.value.trim(),
+        password: passwordInput.value,
         device_name: "ТРТ веб-кабинет",
       }),
     });
@@ -600,29 +683,11 @@ async function logout() {
 
 localStorage.removeItem(SESSION_KEY);
 
-["login", "password"].forEach((id) => {
-  const input = $(id);
-  input.addEventListener("pointerdown", () => unlockLoginInput(input));
-  input.addEventListener("focus", () => unlockLoginInput(input));
-  input.addEventListener("keydown", () => {
-    if (id === "login") loginWasEntered = true;
-    else passwordWasEntered = true;
-    window.setTimeout(updateLoginButton, 0);
-  });
-  input.addEventListener("paste", () => {
-    if (id === "login") loginWasEntered = true;
-    else passwordWasEntered = true;
-    window.setTimeout(updateLoginButton, 0);
-  });
-  input.addEventListener("input", updateLoginButton);
+window.addEventListener("pageshow", () => {
+  if (!state.token) resetLoginForm();
 });
 
-window.addEventListener("pageshow", () => {
-  if (!state.token) {
-    clearLoginFields();
-    window.setTimeout(clearLoginFields, 120);
-  }
-});
+$("open-login-form-button").addEventListener("click", openLoginForm);
 
 $("login-form").addEventListener("submit", login);
 $("logout-button").addEventListener("click", logout);
