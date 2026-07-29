@@ -174,3 +174,37 @@ tbody tr:hover { background: #fafcff; }
   .form-grid { grid-template-columns: 1fr; }
   .full-width { grid-column: auto; }
 }
+
+/* Обновление навигации и фирменной иконки */
+.brand-logo { display: block; object-fit: cover; border-radius: 14px; }
+.login-logo { width: 64px; height: 64px; box-shadow: 0 10px 25px rgba(15, 37, 92, .18); }
+.sidebar-logo { width: 42px; height: 42px; flex: 0 0 42px; border-radius: 12px; }
+.nav-item:not(.active):hover { color: #fff; background: rgba(255,255,255,.06); }
+.nav-item:focus-visible { outline: 2px solid #7da2ff; outline-offset: 2px; }
+.page-view { min-width: 0; }
+.placeholder-card {
+  min-height: 360px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  padding: 50px 24px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  text-align: center;
+}
+.placeholder-card h2 { margin: 4px 0 0; font-size: 24px; }
+.placeholder-card p { max-width: 620px; margin: 0; color: var(--muted); line-height: 1.55; }
+.placeholder-icon {
+  width: 58px;
+  height: 58px;
+  display: grid;
+  place-items: center;
+  border-radius: 16px;
+  color: #fff;
+  background: var(--primary);
+  font-size: 20px;
+  font-weight: 800;
+}

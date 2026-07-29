@@ -4,7 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#111827">
-  <title>ТРТ — кабинет руководителя</title>
+  <title>4Р для ТРТ — кабинет руководителя</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+  <link rel="apple-touch-icon" sizes="192x192" href="icon-192.png">
+  <link rel="manifest" href="site.webmanifest">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -12,7 +15,7 @@
 
   <section id="login-screen" class="login-screen">
     <div class="login-card">
-      <div class="brand-mark">ТРТ</div>
+      <img class="brand-logo login-logo" src="icon-192.png" alt="4Р для ТРТ">
       <h1>Кабинет руководителя</h1>
       <p>Управление сотрудниками, задачами и торгово-розничными точками.</p>
       <form id="login-form">
@@ -33,7 +36,7 @@
   <div id="app-shell" class="app-shell" hidden>
     <aside class="sidebar">
       <div class="sidebar-brand">
-        <div class="brand-mark small">ТРТ</div>
+        <img class="brand-logo sidebar-logo" src="icon-192.png" alt="">
         <div>
           <strong>4Р для ТРТ</strong>
           <span>Кабинет руководителя</span>
@@ -45,15 +48,13 @@
           <span class="nav-icon">С</span>
           Сотрудники
         </button>
-        <button class="nav-item disabled" type="button" disabled>
+        <button class="nav-item" type="button" data-page="tasks">
           <span class="nav-icon">З</span>
           Задачи
-          <span class="soon">скоро</span>
         </button>
-        <button class="nav-item disabled" type="button" disabled>
+        <button class="nav-item" type="button" data-page="trt">
           <span class="nav-icon">Т</span>
           ТРТ
-          <span class="soon">скоро</span>
         </button>
       </nav>
 
@@ -64,63 +65,92 @@
     </aside>
 
     <main class="main-content">
-      <header class="page-header">
-        <div>
-          <p class="eyebrow">Организационная структура</p>
-          <h1>Сотрудники</h1>
-          <p class="page-description">Полные ФИО хранятся в базе. В мобильном приложении отображаются только фамилия и имя.</p>
-        </div>
-        <button id="add-employee-button" class="primary-button" type="button">+ Сотрудник</button>
-      </header>
+      <section id="page-employees" class="page-view">
+        <header class="page-header">
+          <div>
+            <p class="eyebrow">Организационная структура</p>
+            <h1>Сотрудники</h1>
+          </div>
+          <button id="add-employee-button" class="primary-button" type="button">+ Сотрудник</button>
+        </header>
 
-      <section class="summary-grid" aria-label="Сводка">
-        <article class="summary-card">
-          <span>Всего</span>
-          <strong id="employees-total">0</strong>
-        </article>
-        <article class="summary-card">
-          <span>Активных</span>
-          <strong id="employees-active">0</strong>
-        </article>
-        <article class="summary-card">
-          <span>С доступом в систему</span>
-          <strong id="employees-accounts">0</strong>
-        </article>
+        <section class="summary-grid" aria-label="Сводка">
+          <article class="summary-card">
+            <span>Всего</span>
+            <strong id="employees-total">0</strong>
+          </article>
+          <article class="summary-card">
+            <span>Активных</span>
+            <strong id="employees-active">0</strong>
+          </article>
+          <article class="summary-card">
+            <span>С доступом в систему</span>
+            <strong id="employees-accounts">0</strong>
+          </article>
+        </section>
+
+        <section class="content-card">
+          <div class="table-toolbar">
+            <label class="search-field">
+              <span>Поиск</span>
+              <input id="employee-search" type="search" placeholder="Фамилия, имя, должность, руководитель">
+            </label>
+            <label class="filter-field">
+              <span>Статус</span>
+              <select id="employee-status-filter">
+                <option value="all">Все</option>
+                <option value="active">Активные</option>
+                <option value="inactive">Отключённые</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Сотрудник</th>
+                  <th>Должность</th>
+                  <th>Руководитель</th>
+                  <th>Доступ</th>
+                  <th>Статус</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="employees-table-body"></tbody>
+            </table>
+            <div id="employees-empty" class="empty-state" hidden>Сотрудники не найдены.</div>
+            <div id="employees-loading" class="loading-state">Загрузка сотрудников…</div>
+          </div>
+        </section>
       </section>
 
-      <section class="content-card">
-        <div class="table-toolbar">
-          <label class="search-field">
-            <span>Поиск</span>
-            <input id="employee-search" type="search" placeholder="ФИО, должность, руководитель">
-          </label>
-          <label class="filter-field">
-            <span>Статус</span>
-            <select id="employee-status-filter">
-              <option value="all">Все</option>
-              <option value="active">Активные</option>
-              <option value="inactive">Отключённые</option>
-            </select>
-          </label>
-        </div>
+      <section id="page-tasks" class="page-view" hidden>
+        <header class="page-header">
+          <div>
+            <p class="eyebrow">Контроль исполнения</p>
+            <h1>Задачи</h1>
+          </div>
+        </header>
+        <section class="placeholder-card">
+          <div class="placeholder-icon">З</div>
+          <h2>Раздел подключён к меню</h2>
+          <p>Следующим этапом здесь появятся активные, выполненные и просроченные задачи сотрудников.</p>
+        </section>
+      </section>
 
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Сотрудник</th>
-                <th>Должность</th>
-                <th>Руководитель</th>
-                <th>Доступ</th>
-                <th>Статус</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody id="employees-table-body"></tbody>
-          </table>
-          <div id="employees-empty" class="empty-state" hidden>Сотрудники не найдены.</div>
-          <div id="employees-loading" class="loading-state">Загрузка сотрудников…</div>
-        </div>
+      <section id="page-trt" class="page-view" hidden>
+        <header class="page-header">
+          <div>
+            <p class="eyebrow">Главный объект управления</p>
+            <h1>ТРТ</h1>
+          </div>
+        </header>
+        <section class="placeholder-card">
+          <div class="placeholder-icon">Т</div>
+          <h2>Раздел подключён к меню</h2>
+          <p>Здесь будет реестр торгово-розничных точек и переход в полную карточку каждой ТРТ.</p>
+        </section>
       </section>
     </main>
   </div>
@@ -141,7 +171,6 @@
         <label class="full-width">
           Полное ФИО
           <input id="employee-full-name" required placeholder="Фамилия Имя Отчество">
-          <small>В мобильном приложении отчество будет скрыто автоматически.</small>
         </label>
         <label>
           Должность
