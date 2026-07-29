@@ -5,7 +5,7 @@ const SESSION_KEY = "trt_web_session";
 const PAGES = new Set(["employees", "tasks", "trt"]);
 
 const state = {
-  token: sessionStorage.getItem(SESSION_KEY) || "",
+  token: localStorage.getItem(SESSION_KEY) || sessionStorage.getItem(SESSION_KEY) || "",
   user: null,
   employees: [],
   tasks: [],
@@ -276,7 +276,16 @@ async function login(event) {
     });
     state.token = result.session_token;
     state.user = result.user;
-    sessionStorage.setItem(SESSION_KEY, state.token);
+
+    const rememberOnDevice = Boolean($("remember-device")?.checked);
+    sessionStorage.removeItem(SESSION_KEY);
+    localStorage.removeItem(SESSION_KEY);
+    if (rememberOnDevice) {
+      localStorage.setItem(SESSION_KEY, state.token);
+    } else {
+      sessionStorage.setItem(SESSION_KEY, state.token);
+    }
+
     showApp();
     if (state.currentPage === "employees") await loadEmployees();
   } catch (err) {
@@ -1631,7 +1640,6 @@ async function logout() {
   showLogin();
 }
 
-localStorage.removeItem(SESSION_KEY);
 
 window.addEventListener("pageshow", () => {
   if (!state.token) resetLoginForm();
