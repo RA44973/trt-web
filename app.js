@@ -2,7 +2,10 @@
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
 const SESSION_KEY = "trt_web_session";
-const PAGES = new Set(["employees", "tasks", "trt"]);
+const TRT_MAP_VIEW_KEY = "trt_web_map_view";
+const TRT_MAP_DEFAULT_CENTER = [55.7558, 37.6173];
+const TRT_MAP_DEFAULT_ZOOM = 10;
+const PAGES = new Set(["employees", "tasks", "visits", "trt"]);
 
 const state = {
   token: localStorage.getItem(SESSION_KEY) || sessionStorage.getItem(SESSION_KEY) || "",
@@ -11,6 +14,9 @@ const state = {
   tasks: [],
   tasksLoaded: false,
   taskSelectedId: "",
+  visits: [],
+  visitsLoaded: false,
+  visitSelectedId: "",
   media: [],
   mediaLoaded: false,
   mediaPreviewUrls: new Map(),
@@ -87,6 +93,16 @@ function clearSession() {
   state.user = null;
   sessionStorage.removeItem(SESSION_KEY);
   localStorage.removeItem(SESSION_KEY);
+  sessionStorage.removeItem(TRT_MAP_VIEW_KEY);
+
+  if (trtMap) {
+    trtMap.off();
+    trtMap.remove();
+    trtMap = null;
+    trtMarkerLayer = null;
+    trtRegionLayer = null;
+    trtRegionsLoading = false;
+  }
 }
 
 let loginWasEntered = false;
@@ -232,6 +248,10 @@ function showPage(page, updateHash = true) {
 
   if (nextPage === "tasks" && state.token) {
     loadTasks();
+  }
+
+  if (nextPage === "visits" && state.token) {
+    loadVisits(true);
   }
 
   if (nextPage === "trt") {
@@ -514,7 +534,7 @@ async function ensureTrtData() {
   const points = Array.isArray(payload.points) ? payload.points : [];
   state.trtPoints = points.filter((point) => point && point.id != null);
   state.trtLoaded = true;
-  state.trtFitRequested = true;
+  state.trtFitRequested = false;
   fillTrtFilters();
   populateAnalyticsFilters(true);
 }
@@ -623,8 +643,224 @@ function renderTasks() {
   });
 }
 
-async function ensureMediaLoaded() {
-  if (state.mediaLoaded) return;
+
+function visitPoint(visit) {
+  return state.trtPoints.find((point) => String(point.id) === String(visit?.trtId));
+}
+
+function visitPointTitle(visit) {
+  const point = visitPoint(visit);
+  return point?.client || point?.holding || visit?.trtId || "—";
+}
+
+function visitEmployeeName(visit) {
+  return shortPersonName(visit?.employee || visit?.employeeName || visit?.employeeId) || "—";
+}
+
+function visitMediaItems(visitId) {
+  return state.media.filter((item) => String(item.visitId || "") === String(visitId || ""));
+}
+
+function visitDate(visit) {
+  const raw = visit?.completedAt || visit?.createdAt || visit?.startedAt;
+  const date = raw ? new Date(raw) : null;
+  return date && !Number.isNaN(date.getTime()) ? date : null;
+}
+
+function visitLocalDateKey(visit) {
+  const date = visitDate(visit);
+  if (!date) return "";
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function formatVisitDateTime(visit) {
+  const date = visitDate(visit);
+  if (!date) return "—";
+  return new Intl.DateTimeFormat("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function formatVisitDistance(visit) {
+  const meters = Number(visit?.distanceMeters);
+  if (!Number.isFinite(meters)) return "—";
+  if (meters < 1000) return `${Math.round(meters)} м`;
+  return `${(meters / 1000).toFixed(1).replace(".", ",")} км`;
+}
+
+function fillVisitFilters() {
+  const employeeSelect = $("visit-employee-filter");
+  const directionSelect = $("visit-direction-filter");
+  const employeeCurrent = employeeSelect.value;
+  const directionCurrent = directionSelect.value;
+
+  const employees = [...new Set(state.visits.map(visitEmployeeName).filter((value) => value && value !== "—"))]
+    .sort((a, b) => a.localeCompare(b, "ru"));
+  const directions = [...new Set(state.visits.map((visit) => String(visitPoint(visit)?.direction || "").trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, "ru"));
+
+  employeeSelect.innerHTML = `<option value="">Все сотрудники</option>${employees.map((value) => (
+    `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`
+  )).join("")}`;
+  directionSelect.innerHTML = `<option value="">Все направления</option>${directions.map((value) => (
+    `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`
+  )).join("")}`;
+
+  if (employees.includes(employeeCurrent)) employeeSelect.value = employeeCurrent;
+  if (directions.includes(directionCurrent)) directionSelect.value = directionCurrent;
+}
+
+async function loadVisits(force = false) {
+  if (state.visitsLoaded && !force) {
+    renderVisits();
+    return;
+  }
+
+  $("visits-loading").hidden = false;
+  $("visits-loading").textContent = "Загрузка визитов…";
+  $("visits-empty").hidden = true;
+  $("visits-table-body").innerHTML = "";
+  $("visits-data-status").textContent = "Загрузка…";
+
+  try {
+    const [payload] = await Promise.all([
+      api("/visits"),
+      ensureTrtData(),
+      ensureMediaLoaded(true),
+    ]);
+    state.visits = Array.isArray(payload.visits) ? payload.visits : [];
+    state.visitsLoaded = true;
+    fillVisitFilters();
+    renderVisits();
+    $("visits-data-status").textContent = `Визитов: ${state.visits.length}`;
+  } catch (error) {
+    $("visits-loading").textContent = error.message;
+    $("visits-data-status").textContent = "Данные недоступны";
+  }
+}
+
+function filteredVisits() {
+  const query = normalizeText($("visit-search").value);
+  const employee = $("visit-employee-filter").value;
+  const direction = $("visit-direction-filter").value;
+  const dateFrom = $("visit-date-from").value;
+  const dateTo = $("visit-date-to").value;
+
+  return state.visits.filter((visit) => {
+    const point = visitPoint(visit);
+    const employeeName = visitEmployeeName(visit);
+    const visitDirection = String(point?.direction || "");
+    const dateKey = visitLocalDateKey(visit);
+
+    if (employee && employeeName !== employee) return false;
+    if (direction && visitDirection !== direction) return false;
+    if (dateFrom && (!dateKey || dateKey < dateFrom)) return false;
+    if (dateTo && (!dateKey || dateKey > dateTo)) return false;
+
+    if (!query) return true;
+    return normalizeText([
+      employeeName,
+      point?.client,
+      point?.holding,
+      point?.address,
+      point?.direction,
+      visit.result,
+      visit.comment,
+      visit.nextStep,
+    ].join(" ")).includes(query);
+  });
+}
+
+function renderVisits() {
+  const items = filteredVisits();
+  const now = Date.now();
+  const thirtyDaysAgo = now - 30 * 24 * 60 * 60 * 1000;
+
+  $("visits-total").textContent = state.visits.length;
+  $("visits-last-30").textContent = state.visits.filter((visit) => {
+    const date = visitDate(visit);
+    return date && date.getTime() >= thirtyDaysAgo;
+  }).length;
+  $("visits-with-media").textContent = state.visits.filter((visit) => visitMediaItems(visit.id).length > 0).length;
+  $("visits-with-next-step").textContent = state.visits.filter((visit) => String(visit.nextStep || "").trim()).length;
+
+  $("visits-loading").hidden = true;
+  $("visits-empty").hidden = items.length > 0;
+
+  $("visits-table-body").innerHTML = items.map((visit) => {
+    const point = visitPoint(visit);
+    const mediaCount = visitMediaItems(visit.id).length;
+    const result = String(visit.result || visit.comment || "—").trim();
+    return `
+      <tr>
+        <td class="visit-date-cell">${escapeHtml(formatVisitDateTime(visit))}</td>
+        <td>
+          <span class="task-trt-name">${escapeHtml(visitPointTitle(visit))}</span>
+          ${point?.address ? `<span class="task-secondary">${escapeHtml(point.address)}</span>` : ""}
+        </td>
+        <td>${escapeHtml(visitEmployeeName(visit))}</td>
+        <td>${escapeHtml(point?.direction || "—")}</td>
+        <td><span class="visit-result-preview">${escapeHtml(result)}</span></td>
+        <td>${mediaCount ? `<span class="badge badge-neutral">${mediaCount}</span>` : "—"}</td>
+        <td><button class="edit-button" type="button" data-visit-view="${escapeHtml(visit.id)}">Просмотр</button></td>
+      </tr>`;
+  }).join("");
+
+  document.querySelectorAll("[data-visit-view]").forEach((button) => {
+    button.addEventListener("click", () => openVisitDetail(button.dataset.visitView));
+  });
+}
+
+async function openVisitDetail(visitId) {
+  const visit = state.visits.find((item) => String(item.id) === String(visitId));
+  if (!visit) return;
+
+  state.visitSelectedId = String(visit.id);
+  const point = visitPoint(visit);
+  const mediaItems = visitMediaItems(visit.id);
+
+  $("visit-detail-title").textContent = `Визит · ${formatVisitDateTime(visit)}`;
+  $("visit-detail-trt").textContent = [visitPointTitle(visit), point?.address].filter(Boolean).join(" · ");
+  $("visit-detail-employee").textContent = visitEmployeeName(visit);
+  $("visit-detail-date").textContent = formatVisitDateTime(visit);
+  $("visit-detail-direction").textContent = point?.direction || "—";
+  $("visit-detail-distance").textContent = formatVisitDistance(visit);
+  $("visit-detail-result").textContent = visit.result || "—";
+  $("visit-detail-comment").textContent = visit.comment || "—";
+  $("visit-detail-next-step").textContent = visit.nextStep || "—";
+  $("visit-open-trt-button").disabled = !point;
+
+  renderTaskMedia("visit-media", "visit-media-empty", mediaItems);
+  $("visit-detail-modal").hidden = false;
+}
+
+function closeVisitDetail() {
+  $("visit-detail-modal").hidden = true;
+  state.visitSelectedId = "";
+}
+
+async function openSelectedVisitTrt() {
+  const visit = state.visits.find((item) => String(item.id) === String(state.visitSelectedId));
+  const point = visitPoint(visit);
+  if (!point) return;
+
+  closeVisitDetail();
+  showPage("trt", true);
+  await ensureTrtData();
+  initTrtMap();
+  setTrtMainView("map");
+  openTrtCard(point.id, true);
+}
+
+async function ensureMediaLoaded(force = false) {
+  if (state.mediaLoaded && !force) return;
   const payload = await api("/media");
   state.media = Array.isArray(payload.media) ? payload.media : [];
   state.mediaLoaded = true;
@@ -882,10 +1118,42 @@ function fillTrtFilters() {
   populateAnalyticsFilters(true);
 }
 
+function readTrtMapView() {
+  try {
+    const raw = sessionStorage.getItem(TRT_MAP_VIEW_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    const lat = Number(parsed.lat);
+    const lng = Number(parsed.lng);
+    const zoom = Number(parsed.zoom);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || !Number.isFinite(zoom)) return null;
+    return { center: [lat, lng], zoom };
+  } catch {
+    return null;
+  }
+}
+
+function saveTrtMapView() {
+  if (!trtMap) return;
+  const center = trtMap.getCenter();
+  const zoom = trtMap.getZoom();
+  if (!center || !Number.isFinite(zoom)) return;
+  sessionStorage.setItem(TRT_MAP_VIEW_KEY, JSON.stringify({
+    lat: center.lat,
+    lng: center.lng,
+    zoom,
+  }));
+}
+
 function initTrtMap() {
   if (trtMap || typeof window.L === "undefined") return;
 
-  trtMap = L.map("trt-map").setView([56.0, 40.0], 6);
+  const savedView = readTrtMapView();
+  trtMap = L.map("trt-map").setView(
+    savedView?.center || TRT_MAP_DEFAULT_CENTER,
+    savedView?.zoom ?? TRT_MAP_DEFAULT_ZOOM
+  );
+  trtMap.on("moveend zoomend", saveTrtMapView);
   L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 18,
     attribution: "© OpenStreetMap contributors",
@@ -1762,6 +2030,16 @@ $("media-preview-close").addEventListener("click", closeMediaPreview);
 $("media-preview-modal").addEventListener("click", (event) => {
   if (event.target === $("media-preview-modal")) closeMediaPreview();
 });
+
+
+["visit-search", "visit-employee-filter", "visit-direction-filter", "visit-date-from", "visit-date-to"].forEach((id) => {
+  $(id).addEventListener(id === "visit-search" ? "input" : "change", renderVisits);
+});
+$("visit-detail-close").addEventListener("click", closeVisitDetail);
+$("visit-detail-modal").addEventListener("click", (event) => {
+  if (event.target === $("visit-detail-modal")) closeVisitDetail();
+});
+$("visit-open-trt-button").addEventListener("click", openSelectedVisitTrt);
 
 function preserveTrtMapView(action) {
   if (!trtMap) {

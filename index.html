@@ -61,6 +61,10 @@
           <span class="nav-icon">З</span>
           Задачи
         </button>
+        <button class="nav-item" type="button" data-page="visits">
+          <span class="nav-icon">В</span>
+          Визиты
+        </button>
         <button class="nav-item" type="button" data-page="trt">
           <span class="nav-icon">Т</span>
           ТРТ
@@ -215,6 +219,84 @@
         </section>
       </section>
 
+
+
+      <section id="page-visits" class="page-view" hidden>
+        <header class="page-header">
+          <div>
+            <p class="eyebrow">История работы в ТРТ</p>
+            <h1>Визиты</h1>
+          </div>
+          <div id="visits-data-status" class="page-data-status">Загрузка…</div>
+        </header>
+
+        <section class="summary-grid visit-summary-grid" aria-label="Сводка по визитам">
+          <article class="summary-card">
+            <span>Всего</span>
+            <strong id="visits-total">0</strong>
+          </article>
+          <article class="summary-card">
+            <span>За 30 дней</span>
+            <strong id="visits-last-30">0</strong>
+          </article>
+          <article class="summary-card">
+            <span>С материалами</span>
+            <strong id="visits-with-media">0</strong>
+          </article>
+          <article class="summary-card">
+            <span>Со следующим шагом</span>
+            <strong id="visits-with-next-step">0</strong>
+          </article>
+        </section>
+
+        <section class="content-card">
+          <div class="visit-toolbar">
+            <label class="search-field visit-search-field">
+              <span>Поиск</span>
+              <input id="visit-search" type="search" placeholder="ТРТ, сотрудник, результат, комментарий">
+            </label>
+            <label class="filter-field">
+              <span>Сотрудник</span>
+              <select id="visit-employee-filter">
+                <option value="">Все сотрудники</option>
+              </select>
+            </label>
+            <label class="filter-field">
+              <span>Направление</span>
+              <select id="visit-direction-filter">
+                <option value="">Все направления</option>
+              </select>
+            </label>
+            <label class="filter-field">
+              <span>Дата с</span>
+              <input id="visit-date-from" type="date">
+            </label>
+            <label class="filter-field">
+              <span>Дата по</span>
+              <input id="visit-date-to" type="date">
+            </label>
+          </div>
+
+          <div class="table-wrap">
+            <table class="visits-table">
+              <thead>
+                <tr>
+                  <th>Дата и время</th>
+                  <th>ТРТ</th>
+                  <th>Сотрудник</th>
+                  <th>Направление</th>
+                  <th>Результат</th>
+                  <th>Материалы</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="visits-table-body"></tbody>
+            </table>
+            <div id="visits-empty" class="empty-state" hidden>Визиты не найдены.</div>
+            <div id="visits-loading" class="loading-state">Загрузка визитов…</div>
+          </div>
+        </section>
+      </section>
 
       <section id="page-trt" class="page-view trt-page legacy-trt-page" hidden>
         <div class="legacy-trt-shell">
@@ -496,6 +578,53 @@
   </div>
 
 
+
+  <div id="visit-detail-modal" class="task-modal-backdrop" hidden>
+    <section class="task-modal visit-modal" role="dialog" aria-modal="true" aria-labelledby="visit-detail-title">
+      <header class="task-modal-header">
+        <div>
+          <p class="eyebrow">Карточка визита</p>
+          <h2 id="visit-detail-title">Визит</h2>
+          <p id="visit-detail-trt" class="task-modal-subtitle"></p>
+        </div>
+        <button id="visit-detail-close" class="icon-button" type="button" aria-label="Закрыть">×</button>
+      </header>
+
+      <div class="task-detail-topline">
+        <span id="visit-detail-status" class="badge success">Выполнен</span>
+        <button id="visit-open-trt-button" class="secondary-button compact-button" type="button">Открыть ТРТ</button>
+      </div>
+
+      <dl class="task-detail-grid visit-detail-grid">
+        <div><dt>Сотрудник</dt><dd id="visit-detail-employee">—</dd></div>
+        <div><dt>Дата и время</dt><dd id="visit-detail-date">—</dd></div>
+        <div><dt>Направление</dt><dd id="visit-detail-direction">—</dd></div>
+        <div><dt>Расстояние до ТРТ</dt><dd id="visit-detail-distance">—</dd></div>
+      </dl>
+
+      <section class="task-text-section">
+        <h3>Результат визита</h3>
+        <p id="visit-detail-result">—</p>
+      </section>
+
+      <section class="task-text-section">
+        <h3>Комментарий</h3>
+        <p id="visit-detail-comment">—</p>
+      </section>
+
+      <section class="task-text-section">
+        <h3>Следующий шаг</h3>
+        <p id="visit-detail-next-step">—</p>
+      </section>
+
+      <section class="task-text-section">
+        <h3>Фото и видео</h3>
+        <div id="visit-media" class="task-media-grid"></div>
+        <p id="visit-media-empty" class="task-muted">Фото и видео не приложены.</p>
+      </section>
+    </section>
+  </div>
+
   <div id="media-preview-modal" class="media-preview-backdrop" hidden>
     <section class="media-preview-dialog" role="dialog" aria-modal="true" aria-labelledby="media-preview-title">
       <header class="media-preview-header">
@@ -536,6 +665,6 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
-  <script src="app.js?v=20260730-photos-1"></script>
+  <script src="app.js?v=20260730-visits-map-session-1"></script>
 </body>
 </html>
