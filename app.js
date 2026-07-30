@@ -788,7 +788,7 @@ function renderTrtFourP(point) {
     <span>Местоположение ТРТ <b>${fourPScoreText(assessment.place?.locationScore)}</b></span>
     <span>Местоположение ВОГ <b>${fourPScoreText(assessment.place?.vogPlacementScore)}</b></span>
     <span>Ассортимент <b>${Number(product.skuCount || 0).toLocaleString("ru-RU")} SKU · ${fourPScoreText(product.assortmentScore)}</b></span>
-    <span>Доля ВОГ <b>${product.vogSkuCount == null ? "—" : Number(product.vogSkuCount).toLocaleString("ru-RU")} SKU · ${String(product.vogSharePercent ?? 0).replace(".", ",")}% · ${fourPScoreText(product.vogShareScore)}</b></span>
+    <span>SKU от ВОГ в ассортименте ТРТ <b>${product.vogSkuCount == null ? "—" : Number(product.vogSkuCount).toLocaleString("ru-RU")} SKU · ${String(product.vogSharePercent ?? 0).replace(".", ",")}% · ${fourPScoreText(product.vogShareScore)}</b></span>
     <span>Коммерческие условия <b>${escapeHtml(commercial)}</b></span>
     <span>Мотивация <b>${promotion.sellerCount == null ? fourPScoreText(promotion.sellerMotivationScore) : `${promotion.vogClubParticipants ?? 0}/${promotion.sellerCount} · ${fourPScoreText(promotion.sellerMotivationScore)}`}</b></span>
     <span>Качество выставки ВОГ <b>${fourPScoreText(promotion.consumerPromoScore)}</b></span>`;
@@ -852,6 +852,23 @@ async function loadVisits(force = false) {
   }
 }
 
+function visitResultText(visit) {
+  const values = [];
+  const source = Array.isArray(visit?.results)
+    ? visit.results
+    : String(visit?.result || '').split(/\s*[•;]\s*/);
+
+  source.forEach(item => {
+    const value = String(item || '').trim();
+    if (value && !values.includes(value)) values.push(value);
+  });
+
+  const other = String(visit?.otherResult || '').trim();
+  if (other && !values.includes(other)) values.push(other);
+
+  return values.join(' • ') || String(visit?.result || '').trim() || '—';
+}
+
 function filteredVisits() {
   const query = normalizeText($("visit-search").value);
   const employee = $("visit-employee-filter").value;
@@ -877,7 +894,7 @@ function filteredVisits() {
       point?.holding,
       point?.address,
       point?.direction,
-      visit.result,
+      visitResultText(visit),
       visit.comment,
       visit.nextStep,
     ].join(" ")).includes(query);
@@ -903,7 +920,7 @@ function renderVisits() {
   $("visits-table-body").innerHTML = items.map((visit) => {
     const point = visitPoint(visit);
     const mediaCount = visitMediaItems(visit.id).length;
-    const result = String(visit.result || visit.comment || "—").trim();
+    const result = visitResultText(visit) || String(visit.comment || "—").trim();
     return `
       <tr>
         <td class="visit-date-cell">${escapeHtml(formatVisitDateTime(visit))}</td>
@@ -919,9 +936,6 @@ function renderVisits() {
       </tr>`;
   }).join("");
 
-  document.querySelectorAll("[data-visit-view]").forEach((button) => {
-    button.addEventListener("click", () => openVisitDetail(button.dataset.visitView));
-  });
 }
 
 async function openVisitDetail(visitId) {
@@ -931,6 +945,13 @@ async function openVisitDetail(visitId) {
   state.visitSelectedId = String(visit.id);
   const point = visitPoint(visit);
   const mediaItems = visitMediaItems(visit.id);
+  const modal = $("visit-detail-modal");
+
+  // Открываем окно до построения внутренних блоков: даже ошибка превью
+  // или старой оценки 4P не должна блокировать просмотр визита.
+  modal.hidden = false;
+  modal.classList.add("open");
+  document.body.style.overflow = "hidden";
 
   $("visit-detail-title").textContent = `Визит · ${formatVisitDateTime(visit)}`;
   $("visit-detail-trt").textContent = [visitPointTitle(visit), point?.address].filter(Boolean).join(" · ");
@@ -938,18 +959,33 @@ async function openVisitDetail(visitId) {
   $("visit-detail-date").textContent = formatVisitDateTime(visit);
   $("visit-detail-direction").textContent = point?.direction || "—";
   $("visit-detail-distance").textContent = formatVisitDistance(visit);
-  $("visit-detail-result").textContent = visit.result || "—";
+  $("visit-detail-result").textContent = visitResultText(visit);
   $("visit-detail-comment").textContent = visit.comment || "—";
   $("visit-detail-next-step").textContent = visit.nextStep || "—";
   $("visit-open-trt-button").disabled = !point;
-  renderVisitFourP(visit);
 
-  renderTaskMedia("visit-media", "visit-media-empty", mediaItems);
-  $("visit-detail-modal").hidden = false;
+  try {
+    renderVisitFourP(visit);
+  } catch (error) {
+    console.error("Не удалось показать рейтинг визита", error);
+    $("visit-fourp-section").hidden = true;
+  }
+
+  try {
+    renderTaskMedia("visit-media", "visit-media-empty", mediaItems);
+  } catch (error) {
+    console.error("Не удалось показать материалы визита", error);
+    $("visit-media").innerHTML = "";
+    $("visit-media-empty").hidden = false;
+    $("visit-media-empty").textContent = "Материалы временно недоступны.";
+  }
 }
 
 function closeVisitDetail() {
-  $("visit-detail-modal").hidden = true;
+  const modal = $("visit-detail-modal");
+  modal.hidden = true;
+  modal.classList.remove("open");
+  document.body.style.overflow = "";
   state.visitSelectedId = "";
 }
 
@@ -2159,11 +2195,18 @@ $("media-preview-modal").addEventListener("click", (event) => {
 ["visit-search", "visit-employee-filter", "visit-direction-filter", "visit-date-from", "visit-date-to"].forEach((id) => {
   $(id).addEventListener(id === "visit-search" ? "input" : "change", renderVisits);
 });
+$("visits-table-body").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-visit-view]");
+  if (button) openVisitDetail(button.dataset.visitView);
+});
 $("visit-detail-close").addEventListener("click", closeVisitDetail);
 $("visit-detail-modal").addEventListener("click", (event) => {
   if (event.target === $("visit-detail-modal")) closeVisitDetail();
 });
 $("visit-open-trt-button").addEventListener("click", openSelectedVisitTrt);
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !$("visit-detail-modal").hidden) closeVisitDetail();
+});
 
 function preserveTrtMapView(action) {
   if (!trtMap) {
