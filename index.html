@@ -495,6 +495,23 @@
     </section>
   </div>
 
+
+  <div id="media-preview-modal" class="media-preview-backdrop" hidden>
+    <section class="media-preview-dialog" role="dialog" aria-modal="true" aria-labelledby="media-preview-title">
+      <header class="media-preview-header">
+        <h2 id="media-preview-title">Фото</h2>
+        <button id="media-preview-close" class="icon-button" type="button" aria-label="Закрыть">×</button>
+      </header>
+      <div class="media-preview-body">
+        <p id="media-preview-loading" class="media-preview-loading">Загрузка превью…</p>
+        <img id="media-preview-image" alt="Просмотр фотографии" hidden>
+      </div>
+      <footer class="media-preview-actions">
+        <a id="media-preview-original" class="secondary-button" href="#" target="_blank" rel="noopener" hidden>Открыть оригинал</a>
+      </footer>
+    </section>
+  </div>
+
   <div id="trt-sales-modal" class="sales-modal-backdrop" hidden>
     <section class="sales-modal" role="dialog" aria-modal="true" aria-labelledby="trt-sales-modal-title">
       <header class="sales-modal-header">
@@ -519,6 +536,6 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
-  <script src="app.js?v=20260729-4"></script>
+  <script src="app.js?v=20260730-photos-1"></script>
 </body>
 </html>

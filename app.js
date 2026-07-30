@@ -13,6 +13,8 @@ const state = {
   taskSelectedId: "",
   media: [],
   mediaLoaded: false,
+  mediaPreviewUrls: new Map(),
+  mediaPreviewRequests: new Map(),
   trtPoints: [],
   trtLoaded: false,
   trtSelectedId: "",
@@ -628,6 +630,53 @@ async function ensureMediaLoaded() {
   state.mediaLoaded = true;
 }
 
+async function ensureMediaPreview(item) {
+  const cacheKey = `${item.id}:${item.etag || ""}`;
+  if (state.mediaPreviewUrls.has(cacheKey)) {
+    return state.mediaPreviewUrls.get(cacheKey);
+  }
+  if (state.mediaPreviewRequests.has(cacheKey)) {
+    return state.mediaPreviewRequests.get(cacheKey);
+  }
+
+  const request = api("/media/thumbnail-url", {
+    method: "POST",
+    body: JSON.stringify({ mediaId: item.id }),
+  }).then((result) => {
+    const value = {
+      thumbnailUrl: result.thumbnailUrl || item.downloadUrl || "",
+      downloadUrl: result.downloadUrl || item.downloadUrl || "",
+      fallbackOriginal: Boolean(result.fallbackOriginal),
+    };
+    state.mediaPreviewUrls.set(cacheKey, value);
+    state.mediaPreviewRequests.delete(cacheKey);
+    return value;
+  }).catch((error) => {
+    state.mediaPreviewRequests.delete(cacheKey);
+    throw error;
+  });
+
+  state.mediaPreviewRequests.set(cacheKey, request);
+  return request;
+}
+
+async function hydrateTaskMediaImage(button, item) {
+  const img = button.querySelector("img");
+  const status = button.querySelector(".task-media-loading");
+  try {
+    const preview = await ensureMediaPreview(item);
+    if (!preview.thumbnailUrl) throw new Error("Превью недоступно.");
+    img.src = preview.thumbnailUrl;
+    img.hidden = false;
+    status.hidden = true;
+    button.dataset.ready = "1";
+  } catch (error) {
+    status.textContent = "Открыть фото";
+    status.classList.add("task-media-load-error");
+    button.dataset.ready = "0";
+  }
+}
+
 function renderTaskMedia(containerId, emptyId, items) {
   const container = $(containerId);
   const empty = $(emptyId);
@@ -641,18 +690,62 @@ function renderTaskMedia(containerId, emptyId, items) {
   empty.hidden = true;
   container.innerHTML = items.map((item) => {
     const href = escapeHtml(item.downloadUrl || "#");
+    const mediaId = escapeHtml(item.id || "");
     const name = escapeHtml(item.name || (item.mediaKind === "video" ? "Видео" : "Фото"));
     if (String(item.type || "").startsWith("image/")) {
-      return `<a class="task-media-item" href="${href}" target="_blank" rel="noopener">
-        <img src="${href}" alt="${name}" loading="lazy">
+      return `<button class="task-media-item task-image-item" type="button" data-media-preview="${mediaId}" aria-label="Открыть ${name}">
+        <span class="task-media-image-box">
+          <img alt="${name}" loading="lazy" decoding="async" hidden>
+          <span class="task-media-loading">Загрузка превью…</span>
+        </span>
         <span>${name}</span>
-      </a>`;
+      </button>`;
     }
     return `<a class="task-media-item task-video-item" href="${href}" target="_blank" rel="noopener">
       <span class="task-video-icon">▶</span>
       <span>${name}</span>
     </a>`;
   }).join("");
+
+  container.querySelectorAll("[data-media-preview]").forEach((button) => {
+    const item = state.media.find((media) => String(media.id) === String(button.dataset.mediaPreview));
+    if (!item) return;
+    hydrateTaskMediaImage(button, item);
+    button.addEventListener("click", () => openMediaPreview(item));
+  });
+}
+
+async function openMediaPreview(item) {
+  const modal = $("media-preview-modal");
+  const image = $("media-preview-image");
+  const loading = $("media-preview-loading");
+  const original = $("media-preview-original");
+
+  $("media-preview-title").textContent = item.name || "Фото";
+  image.hidden = true;
+  image.removeAttribute("src");
+  loading.hidden = false;
+  loading.textContent = "Загрузка превью…";
+  original.hidden = true;
+  modal.hidden = false;
+
+  try {
+    const preview = await ensureMediaPreview(item);
+    image.src = preview.thumbnailUrl;
+    image.hidden = false;
+    loading.hidden = true;
+    original.href = preview.downloadUrl || item.downloadUrl || "#";
+    original.hidden = !original.href || original.href.endsWith("#");
+  } catch (error) {
+    loading.textContent = `Не удалось открыть фото: ${error.message}`;
+    original.href = item.downloadUrl || "#";
+    original.hidden = !item.downloadUrl;
+  }
+}
+
+function closeMediaPreview() {
+  $("media-preview-modal").hidden = true;
+  $("media-preview-image").removeAttribute("src");
 }
 
 async function openTaskDetail(taskId) {
@@ -1665,14 +1758,37 @@ $("task-detail-modal").addEventListener("click", (event) => {
   if (event.target === $("task-detail-modal")) closeTaskDetail();
 });
 $("task-open-trt-button").addEventListener("click", openSelectedTaskTrt);
+$("media-preview-close").addEventListener("click", closeMediaPreview);
+$("media-preview-modal").addEventListener("click", (event) => {
+  if (event.target === $("media-preview-modal")) closeMediaPreview();
+});
+
+function preserveTrtMapView(action) {
+  if (!trtMap) {
+    action();
+    return;
+  }
+
+  const center = trtMap.getCenter();
+  const zoom = trtMap.getZoom();
+
+  action();
+
+  if (center && Number.isFinite(zoom)) {
+    trtMap.setView(center, zoom, { animate: false });
+  }
+}
 
 ["trt-direction-filter", "trt-manager-filter"].forEach((id) => {
   $(id).addEventListener("change", () => {
-    state.trtFitRequested = true;
-    renderTrtMap();
+    state.trtFitRequested = false;
+    preserveTrtMapView(renderTrtMap);
   });
 });
-$("trt-map-mode").addEventListener("change", updateTrtMapMode);
+
+$("trt-map-mode").addEventListener("change", () => {
+  preserveTrtMapView(updateTrtMapMode);
+});
 $("view-map-button").addEventListener("click", () => setTrtMainView("map"));
 $("view-analytics-button").addEventListener("click", () => setTrtMainView("analytics"));
 
