@@ -699,7 +699,27 @@ function formatVisitDistance(visit) {
 function fourPAssessment(visit) {
   const value = visit?.fourP;
   if (!value || typeof value !== "object" || !value.complete) return null;
-  return value;
+  const product = value.product || {};
+  const promotion = value.promotion || {};
+  return {
+    ...value,
+    product: {
+      ...product,
+      vogSkuCount: product.vogSkuCount ?? null,
+    },
+    promotion: {
+      ...promotion,
+      commercialTermsScore: promotion.commercialTermsScore ?? promotion.ownerIncentiveScore ?? null,
+      commercialTermsStatus: promotion.commercialTermsStatus || (
+        promotion.commercialTermsScore != null || promotion.ownerIncentiveScore != null
+          ? "Получено из системы"
+          : "Ожидает данных КУ"
+      ),
+      sellerCount: promotion.sellerCount ?? null,
+      vogClubParticipants: promotion.vogClubParticipants ?? null,
+      sellerParticipationPercent: promotion.sellerParticipationPercent ?? null,
+    },
+  };
 }
 
 function fourPScoreText(value) {
@@ -721,20 +741,6 @@ function latestFourPVisit(pointId) {
     ))[0] || null;
 }
 
-function renderFourPScoreGrid(assessment, prefix) {
-  const values = {
-    place: fourPScoreText(assessment?.place?.score),
-    product: fourPScoreText(assessment?.product?.score),
-    promotion: fourPScoreText(assessment?.promotion?.score),
-    total: fourPScoreText(assessment?.totalScore),
-  };
-
-  $(`${prefix}-place`).textContent = values.place;
-  $(`${prefix}-product`).textContent = values.product;
-  $(`${prefix}-promotion`).textContent = values.promotion;
-  $(`${prefix}-total`).textContent = values.total;
-}
-
 function renderVisitFourP(visit) {
   const assessment = fourPAssessment(visit);
   const section = $("visit-fourp-section");
@@ -744,20 +750,20 @@ function renderVisitFourP(visit) {
   section.hidden = false;
   empty.hidden = Boolean(assessment);
   content.hidden = !assessment;
-
+  $("visit-fourp-total").textContent = fourPScoreText(assessment?.totalScore);
   if (!assessment) return;
 
-  renderFourPScoreGrid(assessment, "visit-fourp");
-  $("visit-fourp-location").textContent = assessment.place?.locationScore ?? "—";
-  $("visit-fourp-placement").textContent = assessment.place?.vogPlacementScore ?? "—";
-  $("visit-fourp-sku").textContent = Number(assessment.product?.skuCount || 0).toLocaleString("ru-RU");
-  $("visit-fourp-share").textContent = `${String(assessment.product?.vogSharePercent ?? "—").replace(".", ",")}%`;
-  $("visit-fourp-outdated").textContent = assessment.product?.outdatedSamples ? "Есть" : "Нет";
-  $("visit-fourp-owner").textContent = assessment.promotion?.ownerIncentiveScore ?? "—";
-  $("visit-fourp-seller").textContent = assessment.promotion?.sellerMotivationScore ?? "—";
-  $("visit-fourp-consumer").textContent = assessment.promotion?.consumerPromoScore ?? "—";
-  $("visit-fourp-price").textContent = assessment.price?.status || "Нет данных / не оценивается";
-  $("visit-fourp-comment").textContent = assessment.comment || "—";
+  const product = assessment.product || {};
+  const promotion = assessment.promotion || {};
+  $("visit-fourp-location").textContent = fourPScoreText(assessment.place?.locationScore);
+  $("visit-fourp-placement").textContent = fourPScoreText(assessment.place?.vogPlacementScore);
+  $("visit-fourp-sku").textContent = `${Number(product.skuCount || 0).toLocaleString("ru-RU")} SKU · оценка ${fourPScoreText(product.assortmentScore)}`;
+  $("visit-fourp-share").textContent = `${product.vogSkuCount == null ? "—" : Number(product.vogSkuCount).toLocaleString("ru-RU")} SKU · ${String(product.vogSharePercent ?? 0).replace(".", ",")}% · оценка ${fourPScoreText(product.vogShareScore)}`;
+  $("visit-fourp-commercial").textContent = promotion.commercialTermsScore == null
+    ? (promotion.commercialTermsStatus || "Ожидает данных КУ")
+    : fourPScoreText(promotion.commercialTermsScore);
+  $("visit-fourp-motivation").textContent = `${promotion.sellerCount == null ? "оценка " + fourPScoreText(promotion.sellerMotivationScore) : `${promotion.vogClubParticipants ?? 0}/${promotion.sellerCount} продавцов · ${String(promotion.sellerParticipationPercent ?? 0).replace(".", ",")}% · оценка ${fourPScoreText(promotion.sellerMotivationScore)}`}`;
+  $("visit-fourp-display").textContent = fourPScoreText(promotion.consumerPromoScore);
 }
 
 function renderTrtFourP(point) {
@@ -771,17 +777,21 @@ function renderTrtFourP(point) {
   empty.hidden = Boolean(assessment);
   content.hidden = !assessment;
   $("trt-fourp-total").textContent = fourPScoreText(assessment?.totalScore);
-
   if (!assessment) return;
 
-  $("trt-fourp-place").textContent = fourPScoreText(assessment.place?.score);
-  $("trt-fourp-product").textContent = fourPScoreText(assessment.product?.score);
-  $("trt-fourp-promotion").textContent = fourPScoreText(assessment.promotion?.score);
+  const product = assessment.product || {};
+  const promotion = assessment.promotion || {};
+  const commercial = promotion.commercialTermsScore == null
+    ? (promotion.commercialTermsStatus || "Ожидает данных КУ")
+    : fourPScoreText(promotion.commercialTermsScore);
   $("trt-fourp-details").innerHTML = `
-    <span>SKU: <b>${Number(assessment.product?.skuCount || 0).toLocaleString("ru-RU")}</b></span>
-    <span>Доля ВОГ: <b>${escapeHtml(String(assessment.product?.vogSharePercent ?? "—").replace(".", ","))}%</b></span>
-    <span>Устаревшие образцы: <b>${assessment.product?.outdatedSamples ? "есть" : "нет"}</b></span>
-    <span>Price: <b>${escapeHtml(assessment.price?.status || "Нет данных / не оценивается")}</b></span>`;
+    <span>Местоположение ТРТ <b>${fourPScoreText(assessment.place?.locationScore)}</b></span>
+    <span>Местоположение ВОГ <b>${fourPScoreText(assessment.place?.vogPlacementScore)}</b></span>
+    <span>Ассортимент <b>${Number(product.skuCount || 0).toLocaleString("ru-RU")} SKU · ${fourPScoreText(product.assortmentScore)}</b></span>
+    <span>Доля ВОГ <b>${product.vogSkuCount == null ? "—" : Number(product.vogSkuCount).toLocaleString("ru-RU")} SKU · ${String(product.vogSharePercent ?? 0).replace(".", ",")}% · ${fourPScoreText(product.vogShareScore)}</b></span>
+    <span>Коммерческие условия <b>${escapeHtml(commercial)}</b></span>
+    <span>Мотивация <b>${promotion.sellerCount == null ? fourPScoreText(promotion.sellerMotivationScore) : `${promotion.vogClubParticipants ?? 0}/${promotion.sellerCount} · ${fourPScoreText(promotion.sellerMotivationScore)}`}</b></span>
+    <span>Качество выставки ВОГ <b>${fourPScoreText(promotion.consumerPromoScore)}</b></span>`;
   $("trt-fourp-date").textContent = `Последняя оценка: ${formatVisitDateTime(visit)}`;
 }
 

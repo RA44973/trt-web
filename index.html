@@ -11,7 +11,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
-  <link rel="stylesheet" href="styles.css?v=20260730-fourp-1">
+  <link rel="stylesheet" href="styles.css?v=20260730-fourp-redesign-2">
 </head>
 <body>
   <div id="toast" class="toast" hidden></div>
@@ -382,19 +382,11 @@
 
                   <section id="trt-fourp-card" class="trt-fourp-card" hidden>
                     <div class="trt-fourp-head">
-                      <div>
-                        <div class="legacy-label">Рейтинг ТРТ по 4P</div>
-                        <div class="trt-fourp-price">Price: не оценивается</div>
-                      </div>
-                      <strong id="trt-fourp-total" class="trt-fourp-total">—</strong>
+                      <div class="legacy-label">Рейтинг ТРТ</div>
+                      <strong id="trt-fourp-total" class="trt-fourp-total">0,0</strong>
                     </div>
-                    <p id="trt-fourp-empty" class="legacy-hint">Оценка 4P ещё не выполнена.</p>
+                    <p id="trt-fourp-empty" class="legacy-hint">Рейтинг ещё не заполнен.</p>
                     <div id="trt-fourp-content" hidden>
-                      <div class="trt-fourp-grid">
-                        <div><span>Place</span><b id="trt-fourp-place">—</b></div>
-                        <div><span>Product</span><b id="trt-fourp-product">—</b></div>
-                        <div><span>Promotion</span><b id="trt-fourp-promotion">—</b></div>
-                      </div>
                       <div id="trt-fourp-details" class="trt-fourp-details"></div>
                       <div id="trt-fourp-date" class="legacy-counter"></div>
                     </div>
@@ -633,35 +625,20 @@
       </section>
 
       <section id="visit-fourp-section" class="task-text-section visit-fourp-section" hidden>
-        <h3>Оценка ТРТ по 4P</h3>
-        <p id="visit-fourp-empty" class="task-muted">В этом визите оценка 4P не заполнялась.</p>
+        <div class="visit-fourp-title-row">
+          <h3>Рейтинг ТРТ</h3>
+          <strong id="visit-fourp-total" class="visit-fourp-total">0,0</strong>
+        </div>
+        <p id="visit-fourp-empty" class="task-muted">В этом визите рейтинг ТРТ не заполнялся.</p>
         <div id="visit-fourp-content" hidden>
-          <div class="visit-fourp-score-grid">
-            <article><span>Place</span><strong id="visit-fourp-place">—</strong></article>
-            <article><span>Product</span><strong id="visit-fourp-product">—</strong></article>
-            <article><span>Promotion</span><strong id="visit-fourp-promotion">—</strong></article>
-            <article class="total"><span>Итог</span><strong id="visit-fourp-total">—</strong></article>
-          </div>
-
           <div class="visit-fourp-detail-grid">
-            <div><span>Расположение ТРТ</span><b id="visit-fourp-location">—</b></div>
-            <div><span>Размещение ВОГ</span><b id="visit-fourp-placement">—</b></div>
-            <div><span>Количество SKU</span><b id="visit-fourp-sku">—</b></div>
-            <div><span>Доля ВОГ</span><b id="visit-fourp-share">—</b></div>
-            <div><span>Устаревшие образцы</span><b id="visit-fourp-outdated">—</b></div>
-            <div><span>Мотивация владельца</span><b id="visit-fourp-owner">—</b></div>
-            <div><span>Мотивация продавцов</span><b id="visit-fourp-seller">—</b></div>
-            <div><span>Бренд-зона</span><b id="visit-fourp-consumer">—</b></div>
-          </div>
-
-          <div class="visit-fourp-price-row">
-            <span>Price</span>
-            <b id="visit-fourp-price">Нет данных / не оценивается</b>
-          </div>
-
-          <div class="visit-fourp-comment">
-            <span>Комментарий к 4P</span>
-            <p id="visit-fourp-comment">—</p>
+            <div><span>Местоположение ТРТ</span><b id="visit-fourp-location">—</b></div>
+            <div><span>Местоположение ВОГ внутри ТРТ</span><b id="visit-fourp-placement">—</b></div>
+            <div><span>Общее количество SKU</span><b id="visit-fourp-sku">—</b></div>
+            <div><span>Доля ВОГ в ассортименте</span><b id="visit-fourp-share">—</b></div>
+            <div><span>Коммерческие условия</span><b id="visit-fourp-commercial">—</b></div>
+            <div><span>Мотивация</span><b id="visit-fourp-motivation">—</b></div>
+            <div><span>Качество выставки ВОГ</span><b id="visit-fourp-display">—</b></div>
           </div>
         </div>
       </section>
@@ -714,6 +691,6 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
-  <script src="app.js?v=20260730-fourp-1"></script>
+  <script src="app.js?v=20260730-fourp-redesign-2"></script>
 </body>
 </html>

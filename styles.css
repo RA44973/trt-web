@@ -1383,3 +1383,52 @@ body:has(#page-trt:not([hidden])) .main-content {
     grid-template-columns: 1fr;
   }
 }
+
+
+/* Рейтинг ТРТ v2 */
+.trt-fourp-head,
+.visit-fourp-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+.trt-fourp-total,
+.visit-fourp-total {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 58px;
+  min-height: 38px;
+  padding: 0 10px;
+  border-radius: 9px;
+  color: #31582b;
+  background: #cfe6bf;
+  font-size: 19px;
+  font-weight: 900;
+}
+.trt-fourp-details {
+  display: grid;
+  gap: 0;
+  margin-top: 10px;
+}
+.trt-fourp-details span {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid #eaecf0;
+  color: #667085;
+  font-size: 12px;
+  line-height: 1.35;
+}
+.trt-fourp-details span:last-child { border-bottom: 0; }
+.trt-fourp-details b { color: #17202a; text-align: right; }
+.visit-fourp-title-row h3 { margin: 0; }
+.visit-fourp-detail-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+@media (max-width: 760px) {
+  .visit-fourp-detail-grid { grid-template-columns: 1fr; }
+}
