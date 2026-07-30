@@ -219,6 +219,7 @@ function resetLoginForm() {
 }
 
 function showLogin() {
+  $("session-bootstrap").hidden = true;
   $("app-shell").hidden = true;
   $("login-screen").hidden = false;
   resetLoginForm();
@@ -261,6 +262,7 @@ function showPage(page, updateHash = true) {
 }
 
 function showApp() {
+  $("session-bootstrap").hidden = true;
   $("login-screen").hidden = true;
   $("app-shell").hidden = false;
   $("sidebar-user-name").textContent = shortPersonName(state.user?.full_name || state.user?.fullName) || "—";

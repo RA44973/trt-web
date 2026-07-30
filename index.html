@@ -11,12 +11,16 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
-  <link rel="stylesheet" href="styles.css?v=20260730-fourp-redesign-2">
+  <link rel="stylesheet" href="styles.css?v=20260730-auth-no-flash-1">
 </head>
 <body>
   <div id="toast" class="toast" hidden></div>
+  <section id="session-bootstrap" class="session-bootstrap" aria-label="Проверка сессии">
+    <img src="icon-192.png" alt="">
+    <span class="session-bootstrap-spinner"></span>
+  </section>
 
-  <section id="login-screen" class="login-screen">
+  <section id="login-screen" class="login-screen" hidden>
     <div class="login-card">
       <img class="brand-logo login-logo" src="icon-192.png" alt="4Р для ТРТ">
       <button id="open-login-form-button" class="primary-button" type="button">Ввести логин и пароль</button>

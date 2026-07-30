@@ -1432,3 +1432,15 @@ body:has(#page-trt:not([hidden])) .main-content {
 @media (max-width: 760px) {
   .visit-fourp-detail-grid { grid-template-columns: 1fr; }
 }
+
+
+/* Проверка сохранённой сессии без показа формы входа. */
+.session-bootstrap {
+  position: fixed; inset: 0; z-index: 9999; display: flex; align-items: center;
+  justify-content: center; flex-direction: column; gap: 18px; background: #f5f7fa;
+}
+.session-bootstrap[hidden] { display: none; }
+.session-bootstrap img { width: 76px; height: 76px; border-radius: 20px; }
+.session-bootstrap-spinner { width: 34px; height: 34px; border: 4px solid #dbe7df;
+  border-top-color: #176b4d; border-radius: 50%; animation: sessionSpin .8s linear infinite; }
+@keyframes sessionSpin { to { transform: rotate(360deg); } }
