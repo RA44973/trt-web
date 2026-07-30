@@ -1097,26 +1097,48 @@ body:has(#page-trt:not([hidden])) .main-content {
 }
 
 
-/* Раздел «Визиты» */
-.visit-summary-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+/* Раздел «Визиты»: единая компоновка для Mac и Windows */
+#visits-page {
+  container-type: inline-size;
+}
+
+.visit-summary-grid {
+  grid-template-columns: repeat(4, minmax(130px, 1fr));
+}
+
 .visit-toolbar {
   display: grid;
-  grid-template-columns: minmax(260px, 1.5fr) repeat(4, minmax(150px, .75fr));
+  grid-template-columns:
+    minmax(210px, 1.6fr)
+    minmax(125px, .78fr)
+    minmax(125px, .78fr)
+    minmax(120px, .72fr)
+    minmax(120px, .72fr);
   gap: 12px;
   align-items: end;
   margin-bottom: 16px;
 }
-.visit-toolbar input[type="date"] {
+
+.visit-toolbar > * {
+  min-width: 0;
+}
+
+.visit-toolbar input,
+.visit-toolbar select {
   width: 100%;
+  box-sizing: border-box;
+}
+
+.visit-toolbar input[type="date"] {
   min-height: 42px;
-  padding: 0 11px;
+  padding: 0 9px;
   border: 1px solid var(--border);
   border-radius: 9px;
   color: var(--text);
   background: #fff;
   font: inherit;
-  box-sizing: border-box;
 }
+
 .visits-table { min-width: 1080px; }
 .visits-table th:nth-child(1) { width: 150px; }
 .visits-table th:nth-child(2) { width: 280px; }
@@ -1137,15 +1159,33 @@ body:has(#page-trt:not([hidden])) .main-content {
 .visit-detail-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .badge-neutral { background: #f2f4f7; color: #475467; }
 
-@media (max-width: 1180px) {
-  .visit-toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .visit-search-field { grid-column: 1 / -1; }
-  .visit-detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+/* Переход к двум колонкам только когда рабочая область действительно узкая. */
+@container (max-width: 730px) {
+  .visit-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .visit-toolbar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .visit-search-field {
+    grid-column: 1 / -1;
+  }
+
+  .visit-detail-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
-@media (max-width: 720px) {
-  .visit-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .visit-toolbar { grid-template-columns: 1fr; }
-  .visit-search-field { grid-column: auto; }
-  .visit-detail-grid { grid-template-columns: 1fr; }
+@container (max-width: 470px) {
+  .visit-summary-grid,
+  .visit-toolbar,
+  .visit-detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .visit-search-field {
+    grid-column: auto;
+  }
 }
