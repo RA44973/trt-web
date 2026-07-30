@@ -695,6 +695,104 @@ function formatVisitDistance(visit) {
   return `${(meters / 1000).toFixed(1).replace(".", ",")} км`;
 }
 
+
+function fourPAssessment(visit) {
+  const value = visit?.fourP;
+  if (!value || typeof value !== "object" || !value.complete) return null;
+  return value;
+}
+
+function fourPScoreText(value) {
+  const number = Number(value);
+  return Number.isFinite(number)
+    ? number.toFixed(1).replace(".", ",")
+    : "—";
+}
+
+function latestFourPVisit(pointId) {
+  return state.visits
+    .filter((visit) => (
+      String(visit.trtId) === String(pointId)
+      && fourPAssessment(visit)
+    ))
+    .sort((a, b) => (
+      String(b.completedAt || b.createdAt || "")
+        .localeCompare(String(a.completedAt || a.createdAt || ""))
+    ))[0] || null;
+}
+
+function renderFourPScoreGrid(assessment, prefix) {
+  const values = {
+    place: fourPScoreText(assessment?.place?.score),
+    product: fourPScoreText(assessment?.product?.score),
+    promotion: fourPScoreText(assessment?.promotion?.score),
+    total: fourPScoreText(assessment?.totalScore),
+  };
+
+  $(`${prefix}-place`).textContent = values.place;
+  $(`${prefix}-product`).textContent = values.product;
+  $(`${prefix}-promotion`).textContent = values.promotion;
+  $(`${prefix}-total`).textContent = values.total;
+}
+
+function renderVisitFourP(visit) {
+  const assessment = fourPAssessment(visit);
+  const section = $("visit-fourp-section");
+  const empty = $("visit-fourp-empty");
+  const content = $("visit-fourp-content");
+
+  section.hidden = false;
+  empty.hidden = Boolean(assessment);
+  content.hidden = !assessment;
+
+  if (!assessment) return;
+
+  renderFourPScoreGrid(assessment, "visit-fourp");
+  $("visit-fourp-location").textContent = assessment.place?.locationScore ?? "—";
+  $("visit-fourp-placement").textContent = assessment.place?.vogPlacementScore ?? "—";
+  $("visit-fourp-sku").textContent = Number(assessment.product?.skuCount || 0).toLocaleString("ru-RU");
+  $("visit-fourp-share").textContent = `${String(assessment.product?.vogSharePercent ?? "—").replace(".", ",")}%`;
+  $("visit-fourp-outdated").textContent = assessment.product?.outdatedSamples ? "Есть" : "Нет";
+  $("visit-fourp-owner").textContent = assessment.promotion?.ownerIncentiveScore ?? "—";
+  $("visit-fourp-seller").textContent = assessment.promotion?.sellerMotivationScore ?? "—";
+  $("visit-fourp-consumer").textContent = assessment.promotion?.consumerPromoScore ?? "—";
+  $("visit-fourp-price").textContent = assessment.price?.status || "Нет данных / не оценивается";
+  $("visit-fourp-comment").textContent = assessment.comment || "—";
+}
+
+function renderTrtFourP(point) {
+  const visit = latestFourPVisit(point?.id);
+  const assessment = fourPAssessment(visit);
+  const section = $("trt-fourp-card");
+  const empty = $("trt-fourp-empty");
+  const content = $("trt-fourp-content");
+
+  section.hidden = false;
+  empty.hidden = Boolean(assessment);
+  content.hidden = !assessment;
+  $("trt-fourp-total").textContent = fourPScoreText(assessment?.totalScore);
+
+  if (!assessment) return;
+
+  $("trt-fourp-place").textContent = fourPScoreText(assessment.place?.score);
+  $("trt-fourp-product").textContent = fourPScoreText(assessment.product?.score);
+  $("trt-fourp-promotion").textContent = fourPScoreText(assessment.promotion?.score);
+  $("trt-fourp-details").innerHTML = `
+    <span>SKU: <b>${Number(assessment.product?.skuCount || 0).toLocaleString("ru-RU")}</b></span>
+    <span>Доля ВОГ: <b>${escapeHtml(String(assessment.product?.vogSharePercent ?? "—").replace(".", ","))}%</b></span>
+    <span>Устаревшие образцы: <b>${assessment.product?.outdatedSamples ? "есть" : "нет"}</b></span>
+    <span>Price: <b>${escapeHtml(assessment.price?.status || "Нет данных / не оценивается")}</b></span>`;
+  $("trt-fourp-date").textContent = `Последняя оценка: ${formatVisitDateTime(visit)}`;
+}
+
+async function ensureVisitsData(force = false) {
+  if (state.visitsLoaded && !force) return state.visits;
+  const payload = await api("/visits");
+  state.visits = Array.isArray(payload.visits) ? payload.visits : [];
+  state.visitsLoaded = true;
+  return state.visits;
+}
+
 function fillVisitFilters() {
   const employeeSelect = $("visit-employee-filter");
   const directionSelect = $("visit-direction-filter");
@@ -730,13 +828,11 @@ async function loadVisits(force = false) {
   $("visits-data-status").textContent = "Загрузка…";
 
   try {
-    const [payload] = await Promise.all([
-      api("/visits"),
+    await Promise.all([
+      ensureVisitsData(force),
       ensureTrtData(),
       ensureMediaLoaded(true),
     ]);
-    state.visits = Array.isArray(payload.visits) ? payload.visits : [];
-    state.visitsLoaded = true;
     fillVisitFilters();
     renderVisits();
     $("visits-data-status").textContent = `Визитов: ${state.visits.length}`;
@@ -836,6 +932,7 @@ async function openVisitDetail(visitId) {
   $("visit-detail-comment").textContent = visit.comment || "—";
   $("visit-detail-next-step").textContent = visit.nextStep || "—";
   $("visit-open-trt-button").disabled = !point;
+  renderVisitFourP(visit);
 
   renderTaskMedia("visit-media", "visit-media-empty", mediaItems);
   $("visit-detail-modal").hidden = false;
@@ -1220,6 +1317,7 @@ function openTrtCard(pointId, focusMap = true) {
   $("trt-card-abc").textContent = point.abcCategory || "—";
   $("trt-card-region").textContent = point.region || "—";
   $("trt-card-address").textContent = point.address || "—";
+  renderTrtFourP(point);
 
   const badge = $("trt-card-size-badge");
   badge.textContent = formatTrtSize(point);
@@ -1396,9 +1494,20 @@ function renderTrtMap() {
 
 async function loadTrtMap() {
   if (state.trtLoaded) {
+    if (!state.visitsLoaded) {
+      try {
+        await ensureVisitsData(false);
+      } catch (visitError) {
+        console.warn("Не удалось загрузить оценки 4P для карточек ТРТ", visitError);
+      }
+    }
     initTrtMap();
     renderTrtMap();
     loadTrtRegions();
+    if (state.trtSelectedId) {
+      const selected = selectedTrtPoint();
+      if (selected) renderTrtFourP(selected);
+    }
     return;
   }
 
@@ -1407,6 +1516,11 @@ async function loadTrtMap() {
 
   try {
     await ensureTrtData();
+    try {
+      await ensureVisitsData(false);
+    } catch (visitError) {
+      console.warn("Не удалось загрузить оценки 4P для карточек ТРТ", visitError);
+    }
     initTrtMap();
     if (!trtMap) throw new Error("Библиотека карты не загрузилась. Обновите страницу и проверьте интернет.");
     renderTrtMap();

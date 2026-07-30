@@ -1189,3 +1189,197 @@ body:has(#page-trt:not([hidden])) .main-content {
     grid-column: auto;
   }
 }
+
+
+/* 4P: карточка ТРТ и карточка визита */
+.trt-fourp-card {
+  margin: 14px 0 12px;
+  padding: 12px;
+  border: 1px solid #d0d5dd;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.trt-fourp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.trt-fourp-price {
+  margin-top: 3px;
+  color: #98a2b3;
+  font-size: 11px;
+}
+
+.trt-fourp-total {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 52px;
+  height: 36px;
+  padding: 0 10px;
+  border-radius: 18px;
+  background: #176b4d;
+  color: #fff;
+  font-size: 18px;
+  font-weight: 850;
+}
+
+.trt-fourp-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.trt-fourp-grid > div {
+  min-width: 0;
+  padding: 8px 4px;
+  border: 1px solid #e4e7ec;
+  border-radius: 9px;
+  background: #fff;
+  text-align: center;
+}
+
+.trt-fourp-grid span {
+  display: block;
+  color: #667085;
+  font-size: 10px;
+}
+
+.trt-fourp-grid b {
+  display: block;
+  margin-top: 3px;
+  color: #101828;
+  font-size: 16px;
+}
+
+.trt-fourp-details {
+  display: grid;
+  gap: 4px;
+  margin-top: 10px;
+  color: #475467;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.visit-fourp-score-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.visit-fourp-score-grid article {
+  min-width: 0;
+  padding: 12px 8px;
+  border: 1px solid #e4e7ec;
+  border-radius: 12px;
+  background: #f8fafc;
+  text-align: center;
+}
+
+.visit-fourp-score-grid article.total {
+  border-color: #176b4d;
+  background: #176b4d;
+}
+
+.visit-fourp-score-grid span {
+  display: block;
+  color: #667085;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.visit-fourp-score-grid strong {
+  display: block;
+  margin-top: 5px;
+  color: #101828;
+  font-size: 22px;
+}
+
+.visit-fourp-score-grid article.total span,
+.visit-fourp-score-grid article.total strong {
+  color: #fff;
+}
+
+.visit-fourp-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.visit-fourp-detail-grid > div {
+  min-width: 0;
+  padding: 11px 12px;
+  border: 1px solid #eaecf0;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.visit-fourp-detail-grid span,
+.visit-fourp-price-row span,
+.visit-fourp-comment > span {
+  display: block;
+  color: #667085;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+}
+
+.visit-fourp-detail-grid b {
+  display: block;
+  margin-top: 5px;
+  color: #101828;
+  font-size: 15px;
+}
+
+.visit-fourp-price-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 11px 12px;
+  border-radius: 10px;
+  background: #f2f4f7;
+}
+
+.visit-fourp-price-row b {
+  color: #475467;
+  font-size: 13px;
+}
+
+.visit-fourp-comment {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid #eaecf0;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.visit-fourp-comment p {
+  margin: 7px 0 0;
+  color: #344054;
+  line-height: 1.5;
+}
+
+@media (max-width: 900px) {
+  .visit-fourp-detail-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 620px) {
+  .visit-fourp-score-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .visit-fourp-detail-grid {
+    grid-template-columns: 1fr;
+  }
+}
