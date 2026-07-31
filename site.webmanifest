@@ -1,12 +1,20 @@
 {
-  "name": "4Р для ТРТ",
-  "short_name": "4Р ТРТ",
+  "name": "VOG Мобильный помощник",
+  "short_name": "VOG Помощник",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#f3f5f8",
   "theme_color": "#111827",
   "icons": [
-    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
   ]
 }

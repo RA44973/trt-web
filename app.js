@@ -335,7 +335,7 @@ async function login(event) {
       body: JSON.stringify({
         login: loginInput.value.trim(),
         password: passwordInput.value,
-        device_name: "ТРТ веб-кабинет",
+        device_name: "VOG Мобильный помощник · веб-кабинет",
       }),
     });
     resetProtectedState();
