@@ -25,7 +25,7 @@ const state = {
   trtLoaded: false,
   trtSelectedId: "",
   trtFitRequested: true,
-  currentPage: PAGES.has(location.hash.slice(1)) ? location.hash.slice(1) : "employees",
+  currentPage: PAGES.has(location.hash.slice(1)) ? location.hash.slice(1) : "trt",
 };
 
 let trtMap = null;
@@ -249,7 +249,8 @@ function showLogin() {
 }
 
 function showPage(page, updateHash = true) {
-  const nextPage = PAGES.has(page) ? page : "employees";
+  let nextPage = PAGES.has(page) ? page : "trt";
+  if (nextPage === "employees" && !isGeneralDirector()) nextPage = "trt";
   state.currentPage = nextPage;
 
   document.querySelectorAll(".page-view").forEach((section) => {
@@ -289,8 +290,19 @@ function showApp() {
   $("login-screen").hidden = true;
   $("app-shell").hidden = false;
   $("sidebar-user-name").textContent = shortPersonName(state.user?.full_name || state.user?.fullName) || "—";
-  $("add-employee-button").hidden = true;
-  $("add-employee-button").title = "Структура сотрудников загружается из справочника";
+
+  const employeesNav = document.querySelector('[data-page="employees"]');
+  const employeesPage = $("page-employees");
+  const gdAdmin = isGeneralDirector();
+  if (employeesNav) employeesNav.hidden = !gdAdmin;
+  if (employeesPage && !gdAdmin) employeesPage.hidden = true;
+
+  $("add-employee-button").hidden = !gdAdmin;
+  $("add-employee-button").title = gdAdmin
+    ? "Добавить сотрудника и создать ему учётную запись"
+    : "Раздел доступен только ГД";
+
+  if (!gdAdmin && state.currentPage === "employees") state.currentPage = "trt";
   showPage(state.currentPage, true);
 }
 
@@ -364,6 +376,12 @@ async function restoreSession() {
 }
 
 async function loadEmployees() {
+  if (!isGeneralDirector()) {
+    state.employees = [];
+    if (state.currentPage === "employees") showPage("trt", true);
+    return;
+  }
+
   $("employees-loading").hidden = false;
   $("employees-loading").textContent = "Загрузка сотрудников…";
   $("employees-empty").hidden = true;
@@ -402,7 +420,6 @@ function filteredEmployees() {
 
 function renderEmployees() {
   const items = filteredEmployees();
-  const canEditStructure = false;
 
   $("employees-total").textContent = state.employees.length;
   $("employees-active").textContent = state.employees.filter((x) => x.isActive).length;
@@ -413,10 +430,16 @@ function renderEmployees() {
   $("employees-table-body").innerHTML = items.map((item) => {
     const displayName = shortPersonName(item.displayName || item.fullName) || "—";
     const managerName = shortPersonName(item.managerName) || "—";
+    const roleLabel = item.roleLabel || item.position || item.role || "—";
+    const position = item.position && item.position !== roleLabel ? item.position : "";
     return `
       <tr>
         <td><span class="employee-name">${escapeHtml(displayName)}</span></td>
-        <td>${escapeHtml(item.position)}</td>
+        <td class="employee-role-cell">
+          <strong>${escapeHtml(roleLabel)}</strong>
+          ${position ? `<span>${escapeHtml(position)}</span>` : ""}
+        </td>
+        <td>${escapeHtml(item.direction || "—")}</td>
         <td>${escapeHtml(managerName)}</td>
         <td>${item.hasAccount
           ? `<span class="badge account">${escapeHtml(item.login || "Есть доступ")}</span>`
@@ -426,38 +449,78 @@ function renderEmployees() {
           ? `<span class="badge success">Активен</span>`
           : `<span class="badge inactive">Отключён</span>`}
         </td>
-        <td>${canEditStructure ? `<button class="edit-button" type="button" data-edit-id="${escapeHtml(item.employeeId)}">Изменить</button>` : ""}</td>
       </tr>`;
   }).join("");
+}
 
-  document.querySelectorAll("[data-edit-id]").forEach((button) => {
-    button.addEventListener("click", () => openEmployeeDialog(button.dataset.editId));
+
+function employeeRoleCode(item) {
+  return String(item?.role || "").toUpperCase();
+}
+
+function eligibleEmployeeManagers() {
+  const role = $("employee-role").value;
+  const direction = $("employee-direction").value;
+
+  return state.employees.filter((item) => {
+    if (!item.isActive) return false;
+    const managerRole = employeeRoleCode(item);
+    const managerDirection = String(item.direction || "");
+
+    if (role === "KD") return managerRole === "GD";
+    if (role === "RRO") {
+      if (!["GD", "KD"].includes(managerRole)) return false;
+    } else if (role === "MANAGER") {
+      if (!["GD", "KD", "RRO"].includes(managerRole)) return false;
+    }
+
+    if (managerRole === "GD") return true;
+    return !direction || managerDirection === direction;
   });
 }
 
-function fillManagerOptions(currentEmployeeId = "", selectedManagerId = "") {
-  const options = state.employees
-    .filter((item) => item.employeeId !== currentEmployeeId && item.isActive)
+function fillManagerOptions(selectedManagerId = "") {
+  const options = eligibleEmployeeManagers()
     .map((item) => {
       const name = shortPersonName(item.displayName || item.fullName);
-      return `<option value="${escapeHtml(item.employeeId)}">${escapeHtml(name)} — ${escapeHtml(item.position)}</option>`;
+      const role = item.roleLabel || item.position || item.role;
+      const direction = item.direction ? ` · ${item.direction}` : "";
+      return `<option value="${escapeHtml(item.employeeId)}">${escapeHtml(name)} — ${escapeHtml(role)}${escapeHtml(direction)}</option>`;
     })
     .join("");
-  $("employee-manager").innerHTML = `<option value="">Нет руководителя</option>${options}`;
-  $("employee-manager").value = selectedManagerId || "";
+
+  $("employee-manager").innerHTML = `<option value="">Выберите руководителя</option>${options}`;
+  if ([...$("employee-manager").options].some((option) => option.value === selectedManagerId)) {
+    $("employee-manager").value = selectedManagerId;
+  }
 }
 
-function openEmployeeDialog(employeeId = "") {
-  const item = state.employees.find((employee) => employee.employeeId === employeeId);
+function generateTemporaryPassword(length = 12) {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#";
+  const bytes = new Uint32Array(length);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (value) => alphabet[value % alphabet.length]).join("");
+}
+
+function setGeneratedEmployeePassword() {
+  const password = generateTemporaryPassword();
+  $("employee-password").value = password;
+  $("employee-password-confirm").value = password;
+  $("employee-password").focus();
+  $("employee-password").select();
+}
+
+function openEmployeeDialog() {
+  $("employee-form").reset();
   $("employee-form-error").hidden = true;
-  $("employee-id").value = item?.employeeId || "";
-  $("employee-full-name").value = item?.fullName || "";
-  $("employee-position").value = item?.position || "";
-  $("employee-role").value = item?.role || "employee";
-  $("employee-active").checked = item?.isActive ?? true;
-  $("employee-dialog-title").textContent = item ? shortPersonName(item.displayName || item.fullName) : "Новый сотрудник";
-  fillManagerOptions(item?.employeeId || "", item?.managerId || "");
+  $("employee-dialog-title").textContent = "Новый сотрудник";
+  $("employee-role").value = "MANAGER";
+  $("employee-direction").value = "";
+  $("employee-active").checked = true;
+  fillManagerOptions();
+  setGeneratedEmployeePassword();
   $("employee-dialog").showModal();
+  $("employee-full-name").focus();
 }
 
 function closeEmployeeDialog() {
@@ -468,31 +531,47 @@ async function saveEmployee(event) {
   event.preventDefault();
   const error = $("employee-form-error");
   const button = $("employee-save-button");
+  const password = $("employee-password").value;
+  const passwordConfirm = $("employee-password-confirm").value;
+
   error.hidden = true;
+
+  if (password !== passwordConfirm) {
+    error.textContent = "Пароли не совпадают.";
+    error.hidden = false;
+    return;
+  }
+
   button.disabled = true;
-  button.textContent = "Сохранение…";
+  button.textContent = "Добавление…";
 
   try {
-    await api("/employees", {
+    const result = await api("/employees", {
       method: "POST",
       body: JSON.stringify({
-        employeeId: $("employee-id").value,
         fullName: $("employee-full-name").value.trim(),
-        position: $("employee-position").value.trim(),
-        managerId: $("employee-manager").value,
         role: $("employee-role").value,
+        direction: $("employee-direction").value,
+        managerId: $("employee-manager").value,
+        email: $("employee-email").value.trim(),
+        password,
         isActive: $("employee-active").checked,
       }),
     });
+    const createdEmployee = result.employee;
     closeEmployeeDialog();
-    showToast("Карточка сотрудника сохранена.");
-    await loadEmployees();
+    if (createdEmployee) {
+      state.employees.push(createdEmployee);
+      renderEmployees();
+    }
+    showToast(`Сотрудник добавлен. Логин: ${createdEmployee?.login || $("employee-email").value.trim()}`);
+    window.setTimeout(() => loadEmployees(), 1300);
   } catch (err) {
     error.textContent = err.message;
     error.hidden = false;
   } finally {
     button.disabled = false;
-    button.textContent = "Сохранить";
+    button.textContent = "Добавить сотрудника";
   }
 }
 
@@ -2208,10 +2287,13 @@ $("login-form").addEventListener("submit", login);
 $("logout-button").addEventListener("click", logout);
 $("employee-search").addEventListener("input", renderEmployees);
 $("employee-status-filter").addEventListener("change", renderEmployees);
-$("add-employee-button").addEventListener("click", () => openEmployeeDialog());
+$("add-employee-button").addEventListener("click", openEmployeeDialog);
 $("employee-form").addEventListener("submit", saveEmployee);
 $("employee-dialog-close").addEventListener("click", closeEmployeeDialog);
 $("employee-cancel-button").addEventListener("click", closeEmployeeDialog);
+$("employee-generate-password").addEventListener("click", setGeneratedEmployeePassword);
+$("employee-role").addEventListener("change", () => fillManagerOptions());
+$("employee-direction").addEventListener("change", () => fillManagerOptions());
 
 ["task-search", "task-scope-filter", "task-status-filter", "task-assignee-filter"].forEach((id) => {
   const eventName = id === "task-search" ? "input" : "change";

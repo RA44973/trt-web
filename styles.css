@@ -156,6 +156,12 @@ tbody tr:hover { background: #fafcff; }
 .status-toggle { display: flex; grid-column: 1 / -1; flex-direction: row; align-items: center; gap: 10px; border: 1px solid var(--border); border-radius: 11px; padding: 12px; }
 .status-toggle input { width: auto; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 24px; }
+
+.password-create-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+.compact-button { min-height: 44px; padding-inline: 12px; white-space: nowrap; }
+.employee-form-note { margin: 15px 0 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
+.employee-role-cell strong { display: block; color: #101828; font-size: 14px; }
+.employee-role-cell span { display: block; margin-top: 3px; color: var(--muted); font-size: 12px; }
 .form-error { margin-top: 14px; border-radius: 10px; padding: 10px 12px; color: var(--danger); background: #fef3f2; font-size: 13px; }
 .toast { position: fixed; z-index: 1000; right: 22px; bottom: 22px; max-width: 380px; border-radius: 12px; padding: 13px 16px; color: #fff; background: #101828; box-shadow: 0 18px 48px rgba(16,24,40,.24); }
 
@@ -172,6 +178,7 @@ tbody tr:hover { background: #fafcff; }
   .summary-grid { grid-template-columns: 1fr; }
   .table-toolbar { grid-template-columns: 1fr; }
   .form-grid { grid-template-columns: 1fr; }
+  .password-create-row { grid-template-columns: 1fr; }
   .full-width { grid-column: auto; }
 }
 

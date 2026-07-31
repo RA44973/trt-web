@@ -11,7 +11,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
-  <link rel="stylesheet" href="styles.css?v=20260730-auth-no-flash-1">
+  <link rel="stylesheet" href="styles.css?v=20260731-employee-create-1">
 </head>
 <body>
   <div id="toast" class="toast" hidden></div>
@@ -127,11 +127,11 @@
               <thead>
                 <tr>
                   <th>Сотрудник</th>
-                  <th>Должность</th>
+                  <th>Роль</th>
+                  <th>Направление</th>
                   <th>Руководитель</th>
                   <th>Доступ</th>
                   <th>Статус</th>
-                  <th></th>
                 </tr>
               </thead>
               <tbody id="employees-table-body"></tbody>
@@ -498,55 +498,82 @@
   </div>
 
   <dialog id="employee-dialog" class="employee-dialog">
-    <form id="employee-form" method="dialog">
+    <form id="employee-form" method="dialog" autocomplete="off">
       <div class="dialog-header">
         <div>
-          <p class="eyebrow">Карточка сотрудника</p>
+          <p class="eyebrow">Администрирование</p>
           <h2 id="employee-dialog-title">Новый сотрудник</h2>
         </div>
         <button id="employee-dialog-close" class="icon-button" type="button" aria-label="Закрыть">×</button>
       </div>
 
-      <input id="employee-id" type="hidden">
-
       <div class="form-grid">
         <label class="full-width">
           Полное ФИО
-          <input id="employee-full-name" required placeholder="Фамилия Имя Отчество">
+          <input id="employee-full-name" required maxlength="300" placeholder="Фамилия Имя Отчество" autocomplete="off">
         </label>
+
         <label>
-          Должность
-          <input id="employee-position" required placeholder="Например, менеджер">
-        </label>
-        <label>
-          Роль в системе
-          <select id="employee-role">
-            <option value="employee">Сотрудник</option>
-            <option value="manager">Руководитель</option>
-            <option value="admin">Администратор</option>
+          Роль
+          <select id="employee-role" required>
+            <option value="MANAGER">Менеджер</option>
+            <option value="RRO">Руководитель регионального отдела</option>
+            <option value="KD">Коммерческий директор</option>
           </select>
         </label>
+
+        <label>
+          Направление
+          <select id="employee-direction" required>
+            <option value="">Выберите направление</option>
+            <option value="Плитка">Плитка</option>
+            <option value="Обои">Обои</option>
+          </select>
+        </label>
+
         <label class="full-width">
           Непосредственный руководитель
-          <select id="employee-manager">
-            <option value="">Нет руководителя</option>
+          <select id="employee-manager" required>
+            <option value="">Выберите руководителя</option>
           </select>
         </label>
+
+        <label class="full-width">
+          Корпоративная почта — логин сотрудника
+          <input id="employee-email" type="email" required maxlength="200" placeholder="name@vogtrade.ru" autocomplete="off">
+        </label>
+
+        <label>
+          Временный пароль
+          <div class="password-create-row">
+            <input id="employee-password" type="text" required minlength="8" maxlength="128" autocomplete="new-password">
+            <button id="employee-generate-password" class="secondary-button compact-button" type="button">Сгенерировать</button>
+          </div>
+        </label>
+
+        <label>
+          Повторите пароль
+          <input id="employee-password-confirm" type="text" required minlength="8" maxlength="128" autocomplete="new-password">
+        </label>
+
         <label class="status-toggle full-width">
           <input id="employee-active" type="checkbox" checked>
-          <span>Сотрудник активен</span>
+          <span>Сотрудник и его учётная запись активны</span>
         </label>
       </div>
+
+      <p class="employee-form-note">
+        После сохранения сотрудник сможет войти в МП и на сайт по корпоративной почте и указанному временному паролю.
+      </p>
 
       <div id="employee-form-error" class="form-error" hidden></div>
 
       <div class="dialog-actions">
         <button id="employee-cancel-button" class="secondary-button" type="button">Отмена</button>
-        <button id="employee-save-button" class="primary-button" type="submit">Сохранить</button>
+        <button id="employee-save-button" class="primary-button" type="submit">Добавить сотрудника</button>
       </div>
     </form>
   </dialog>
-
 
 
   <div id="task-detail-modal" class="task-modal-backdrop" hidden>
@@ -700,6 +727,6 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
-  <script src="app.js?v=20260731-role-access-1"></script>
+  <script src="app.js?v=20260731-employee-create-1"></script>
 </body>
 </html>
