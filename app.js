@@ -453,8 +453,68 @@ function renderEmployees() {
           ? `<span class="badge success">Активен</span>`
           : `<span class="badge inactive">Отключён</span>`}
         </td>
+        <td class="employee-action-cell">
+          <button
+            class="secondary-button compact-button employee-invite-button"
+            type="button"
+            data-invite-employee-id="${escapeHtml(item.employeeId)}"
+            ${(!item.isActive || !item.hasAccount) ? "disabled" : ""}
+            title="${!item.hasAccount
+              ? "Сначала создайте учётную запись"
+              : (!item.isActive ? "Сотрудник отключён" : "Отправить приглашение и новый временный пароль")}">
+            Пригласить
+          </button>
+        </td>
       </tr>`;
   }).join("");
+}
+
+
+
+async function inviteEmployee(employeeId, button) {
+  const employee = state.employees.find(
+    (item) => String(item.employeeId) === String(employeeId)
+  );
+
+  if (!employee) {
+    showToast("Сотрудник не найден.");
+    return;
+  }
+
+  const name = shortPersonName(employee.displayName || employee.fullName) || "сотрудника";
+  const confirmed = window.confirm(
+    `Отправить приглашение для «${name}»?\n\n` +
+    "Будет создан новый временный пароль. Старый пароль перестанет работать."
+  );
+
+  if (!confirmed) return;
+
+  const originalText = button.textContent;
+  button.disabled = true;
+  button.textContent = "Отправка…";
+
+  try {
+    const result = await api("/employees", {
+      method: "POST",
+      body: JSON.stringify({
+        operation: "invite",
+        employeeId,
+      }),
+    });
+
+    const prefix = result.testMode
+      ? "Тестовое приглашение"
+      : "Приглашение";
+
+    showToast(
+      `${prefix} отправлено на ${result.recipient}. Новый временный пароль находится в письме.`
+    );
+  } catch (error) {
+    showToast(error.message || "Не удалось отправить приглашение.");
+  } finally {
+    button.disabled = false;
+    button.textContent = originalText;
+  }
 }
 
 
@@ -2320,6 +2380,12 @@ $("logout-button").addEventListener("click", logout);
 $("employee-search").addEventListener("input", renderEmployees);
 $("employee-status-filter").addEventListener("change", renderEmployees);
 $("add-employee-button").addEventListener("click", openEmployeeDialog);
+
+$("employees-table-body").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-invite-employee-id]");
+  if (!button) return;
+  inviteEmployee(button.dataset.inviteEmployeeId, button);
+});
 $("employee-form").addEventListener("submit", saveEmployee);
 $("employee-dialog-close").addEventListener("click", closeEmployeeDialog);
 $("employee-cancel-button").addEventListener("click", closeEmployeeDialog);
