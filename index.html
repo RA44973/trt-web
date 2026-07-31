@@ -11,7 +11,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
-  <link rel="stylesheet" href="styles.css?v=20260731-employee-create-1">
+  <link rel="stylesheet" href="styles.css?v=20260731-gd-non-admin-1">
 </head>
 <body>
   <div id="toast" class="toast" hidden></div>
@@ -519,6 +519,7 @@
             <option value="MANAGER">Менеджер</option>
             <option value="RRO">Руководитель регионального отдела</option>
             <option value="KD">Коммерческий директор</option>
+            <option value="GD">Генеральный директор — без прав администратора</option>
           </select>
         </label>
 
@@ -562,6 +563,9 @@
         </label>
       </div>
 
+      <p id="employee-admin-note" class="employee-form-note" hidden>
+        Роль ГД предоставляет доступ ко всем рабочим материалам, но не даёт доступа к сотрудникам, ролям и учётным записям. Единственным администратором остаётся текущий Админ ГД.
+      </p>
       <p class="employee-form-note">
         После сохранения сотрудник сможет войти в МП и на сайт по корпоративной почте и указанному временному паролю.
       </p>
@@ -727,6 +731,6 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
-  <script src="app.js?v=20260731-employee-create-1"></script>
+  <script src="app.js?v=20260731-gd-non-admin-1"></script>
 </body>
 </html>

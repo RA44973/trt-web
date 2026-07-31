@@ -92,6 +92,10 @@ function isGeneralDirector() {
   return String(state.user?.role || "").toUpperCase() === "GD";
 }
 
+function isSystemAdmin() {
+  return state.user?.is_admin === true || state.user?.isAdmin === true;
+}
+
 async function api(path, options = {}) {
   const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
   if (state.token) headers.Authorization = `Bearer ${state.token}`;
@@ -250,7 +254,7 @@ function showLogin() {
 
 function showPage(page, updateHash = true) {
   let nextPage = PAGES.has(page) ? page : "trt";
-  if (nextPage === "employees" && !isGeneralDirector()) nextPage = "trt";
+  if (nextPage === "employees" && !isSystemAdmin()) nextPage = "trt";
   state.currentPage = nextPage;
 
   document.querySelectorAll(".page-view").forEach((section) => {
@@ -293,14 +297,14 @@ function showApp() {
 
   const employeesNav = document.querySelector('[data-page="employees"]');
   const employeesPage = $("page-employees");
-  const gdAdmin = isGeneralDirector();
+  const gdAdmin = isSystemAdmin();
   if (employeesNav) employeesNav.hidden = !gdAdmin;
   if (employeesPage && !gdAdmin) employeesPage.hidden = true;
 
   $("add-employee-button").hidden = !gdAdmin;
   $("add-employee-button").title = gdAdmin
     ? "Добавить сотрудника и создать ему учётную запись"
-    : "Раздел доступен только ГД";
+    : "Раздел доступен только администратору";
 
   if (!gdAdmin && state.currentPage === "employees") state.currentPage = "trt";
   showPage(state.currentPage, true);
@@ -376,7 +380,7 @@ async function restoreSession() {
 }
 
 async function loadEmployees() {
-  if (!isGeneralDirector()) {
+  if (!isSystemAdmin()) {
     state.employees = [];
     if (state.currentPage === "employees") showPage("trt", true);
     return;
@@ -462,6 +466,8 @@ function eligibleEmployeeManagers() {
   const role = $("employee-role").value;
   const direction = $("employee-direction").value;
 
+  if (role === "GD") return [];
+
   return state.employees.filter((item) => {
     if (!item.isActive) return false;
     const managerRole = employeeRoleCode(item);
@@ -479,7 +485,30 @@ function eligibleEmployeeManagers() {
   });
 }
 
+function applyEmployeeRoleRules() {
+  const role = $("employee-role").value;
+  const isGd = role === "GD";
+  const direction = $("employee-direction");
+  const manager = $("employee-manager");
+  const note = $("employee-admin-note");
+
+  direction.required = !isGd;
+  direction.disabled = isGd;
+  manager.required = !isGd;
+  manager.disabled = isGd;
+
+  if (isGd) {
+    direction.value = "";
+    manager.value = "";
+  }
+
+  if (note) {
+    note.hidden = !isGd;
+  }
+}
+
 function fillManagerOptions(selectedManagerId = "") {
+  applyEmployeeRoleRules();
   const options = eligibleEmployeeManagers()
     .map((item) => {
       const name = shortPersonName(item.displayName || item.fullName);
@@ -489,7 +518,10 @@ function fillManagerOptions(selectedManagerId = "") {
     })
     .join("");
 
-  $("employee-manager").innerHTML = `<option value="">Выберите руководителя</option>${options}`;
+  const role = $("employee-role").value;
+  $("employee-manager").innerHTML = role === "GD"
+    ? `<option value="">Руководитель не требуется</option>`
+    : `<option value="">Выберите руководителя</option>${options}`;
   if ([...$("employee-manager").options].some((option) => option.value === selectedManagerId)) {
     $("employee-manager").value = selectedManagerId;
   }
