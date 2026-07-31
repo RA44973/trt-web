@@ -70,6 +70,28 @@ function showToast(message) {
   }, 3200);
 }
 
+function resetProtectedState() {
+  state.employees = [];
+  state.tasks = [];
+  state.tasksLoaded = false;
+  state.taskSelectedId = "";
+  state.visits = [];
+  state.visitsLoaded = false;
+  state.visitSelectedId = "";
+  state.media = [];
+  state.mediaLoaded = false;
+  state.mediaPreviewUrls.clear();
+  state.mediaPreviewRequests.clear();
+  state.trtPoints = [];
+  state.trtLoaded = false;
+  state.trtSelectedId = "";
+  state.trtFitRequested = true;
+}
+
+function isGeneralDirector() {
+  return String(state.user?.role || "").toUpperCase() === "GD";
+}
+
 async function api(path, options = {}) {
   const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
   if (state.token) headers.Authorization = `Bearer ${state.token}`;
@@ -94,6 +116,7 @@ function clearSession() {
   sessionStorage.removeItem(SESSION_KEY);
   localStorage.removeItem(SESSION_KEY);
   sessionStorage.removeItem(TRT_MAP_VIEW_KEY);
+  resetProtectedState();
 
   if (trtMap) {
     trtMap.off();
@@ -266,7 +289,8 @@ function showApp() {
   $("login-screen").hidden = true;
   $("app-shell").hidden = false;
   $("sidebar-user-name").textContent = shortPersonName(state.user?.full_name || state.user?.fullName) || "—";
-  $("add-employee-button").hidden = String(state.user?.role || "").toLowerCase() !== "admin";
+  $("add-employee-button").hidden = true;
+  $("add-employee-button").title = "Структура сотрудников загружается из справочника";
   showPage(state.currentPage, true);
 }
 
@@ -298,6 +322,7 @@ async function login(event) {
         device_name: "ТРТ веб-кабинет",
       }),
     });
+    resetProtectedState();
     state.token = result.session_token;
     state.user = result.user;
 
@@ -361,14 +386,23 @@ function filteredEmployees() {
     if (status === "active" && !item.isActive) return false;
     if (status === "inactive" && item.isActive) return false;
     if (!query) return true;
-    return [item.fullName, item.displayName, item.position, item.managerName, item.login]
-      .join(" ").toLowerCase().includes(query);
+    return [
+      item.fullName,
+      item.displayName,
+      item.position,
+      item.role,
+      item.roleLabel,
+      item.direction,
+      item.managerName,
+      item.login,
+      item.email,
+    ].join(" ").toLowerCase().includes(query);
   });
 }
 
 function renderEmployees() {
   const items = filteredEmployees();
-  const isAdmin = String(state.user?.role || "").toLowerCase() === "admin";
+  const canEditStructure = false;
 
   $("employees-total").textContent = state.employees.length;
   $("employees-active").textContent = state.employees.filter((x) => x.isActive).length;
@@ -392,7 +426,7 @@ function renderEmployees() {
           ? `<span class="badge success">Активен</span>`
           : `<span class="badge inactive">Отключён</span>`}
         </td>
-        <td>${isAdmin ? `<button class="edit-button" type="button" data-edit-id="${escapeHtml(item.employeeId)}">Изменить</button>` : ""}</td>
+        <td>${canEditStructure ? `<button class="edit-button" type="button" data-edit-id="${escapeHtml(item.employeeId)}">Изменить</button>` : ""}</td>
       </tr>`;
   }).join("");
 
