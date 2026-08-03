@@ -5,7 +5,7 @@ const SESSION_KEY = "trt_web_session";
 const TRT_MAP_VIEW_KEY = "trt_web_map_view";
 const TRT_MAP_DEFAULT_CENTER = [55.7558, 37.6173];
 const TRT_MAP_DEFAULT_ZOOM = 10;
-const PAGES = new Set(["employees", "tasks", "visits", "trt"]);
+const PAGES = new Set(["employees", "sales-import", "tasks", "visits", "trt"]);
 
 const state = {
   token: localStorage.getItem(SESSION_KEY) || sessionStorage.getItem(SESSION_KEY) || "",
@@ -94,6 +94,34 @@ function isGeneralDirector() {
 
 function isSystemAdmin() {
   return state.user?.is_admin === true || state.user?.isAdmin === true;
+}
+
+
+function setNavGroupExpanded(groupName, expanded) {
+  const button = document.querySelector(`[data-nav-group="${groupName}"]`);
+  const submenu = document.querySelector(`[data-nav-submenu="${groupName}"]`);
+  if (!button || !submenu) return;
+  button.setAttribute("aria-expanded", expanded ? "true" : "false");
+  submenu.hidden = !expanded;
+}
+
+function syncSidebarNavigation(page) {
+  const isTrt = page === "trt";
+  const isSettings = page === "employees" || page === "sales-import";
+  if (isTrt) setNavGroupExpanded("trt", true);
+  if (isSettings) setNavGroupExpanded("settings", true);
+
+  document.querySelectorAll("[data-nav-group]").forEach((button) => {
+    const group = button.dataset.navGroup;
+    const active = (group === "trt" && isTrt) || (group === "settings" && isSettings);
+    button.classList.toggle("active", active);
+  });
+  document.querySelectorAll(".nav-subitem").forEach((button) => {
+    let active = button.dataset.page === page;
+    if (button.dataset.trtView) active = active && button.dataset.trtView === trtMainView;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-current", active ? "page" : "false");
+  });
 }
 
 async function api(path, options = {}) {
@@ -254,7 +282,7 @@ function showLogin() {
 
 function showPage(page, updateHash = true) {
   let nextPage = PAGES.has(page) ? page : "trt";
-  if (nextPage === "employees" && !isSystemAdmin()) nextPage = "trt";
+  if (["employees", "sales-import"].includes(nextPage) && !isSystemAdmin()) nextPage = "trt";
   state.currentPage = nextPage;
 
   document.querySelectorAll(".page-view").forEach((section) => {
@@ -262,10 +290,11 @@ function showPage(page, updateHash = true) {
   });
 
   document.querySelectorAll("[data-page]").forEach((button) => {
-    const active = button.dataset.page === nextPage;
+    const active = button.dataset.page === nextPage && !button.dataset.trtView;
     button.classList.toggle("active", active);
     button.setAttribute("aria-current", active ? "page" : "false");
   });
+  syncSidebarNavigation(nextPage);
 
   if (updateHash && location.hash !== `#${nextPage}`) {
     history.replaceState(null, "", `#${nextPage}`);
@@ -273,6 +302,9 @@ function showPage(page, updateHash = true) {
 
   if (nextPage === "employees" && state.token && state.employees.length === 0) {
     loadEmployees();
+  }
+  if (nextPage === "sales-import") {
+    initializeSalesImportPeriod();
   }
 
   if (nextPage === "tasks" && state.token) {
@@ -295,18 +327,20 @@ function showApp() {
   $("app-shell").hidden = false;
   $("sidebar-user-name").textContent = shortPersonName(state.user?.full_name || state.user?.fullName) || "—";
 
-  const employeesNav = document.querySelector('[data-page="employees"]');
+  const settingsNavGroup = $("settings-nav-group");
   const employeesPage = $("page-employees");
+  const salesImportPage = $("page-sales-import");
   const gdAdmin = isSystemAdmin();
-  if (employeesNav) employeesNav.hidden = !gdAdmin;
+  if (settingsNavGroup) settingsNavGroup.hidden = !gdAdmin;
   if (employeesPage && !gdAdmin) employeesPage.hidden = true;
+  if (salesImportPage && !gdAdmin) salesImportPage.hidden = true;
 
   $("add-employee-button").hidden = !gdAdmin;
   $("add-employee-button").title = gdAdmin
     ? "Добавить сотрудника и создать ему учётную запись"
     : "Раздел доступен только администратору";
 
-  if (!gdAdmin && state.currentPage === "employees") state.currentPage = "trt";
+  if (!gdAdmin && ["employees", "sales-import"].includes(state.currentPage)) state.currentPage = "trt";
   showPage(state.currentPage, true);
 }
 
@@ -458,10 +492,10 @@ function renderEmployees() {
             class="secondary-button compact-button employee-invite-button"
             type="button"
             data-invite-employee-id="${escapeHtml(item.employeeId)}"
-            ${(!item.isActive || !item.hasAccount) ? "disabled" : ""}
-            title="${!item.hasAccount
-              ? "Сначала создайте учётную запись"
-              : (!item.isActive ? "Сотрудник отключён" : "Отправить приглашение и новый временный пароль")}">
+            ${!item.isActive ? "disabled" : ""}
+            title="${!item.isActive
+              ? "Сотрудник отключён"
+              : (item.hasAccount ? "Отправить приглашение и новый временный пароль" : "Создать учётную запись и отправить приглашение")}">
             Пригласить
           </button>
         </td>
@@ -1791,6 +1825,7 @@ function setTrtMainView(view) {
 
   $("view-map-button").classList.toggle("active", mapView);
   $("view-analytics-button").classList.toggle("active", !mapView);
+  syncSidebarNavigation("trt");
 
   document.querySelectorAll(".legacy-map-only").forEach((element) => {
     element.hidden = !mapView;
@@ -2362,6 +2397,226 @@ function closeTrtSales() {
   $("trt-sales-modal").hidden = true;
 }
 
+
+const SALES_IMPORT_MONTHS = [
+  "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
+  "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
+];
+const SALES_IMPORT_REQUIRED_HEADERS = {
+  direction: "направление деятельности",
+  manager: "менеджер",
+  client: "клиент",
+  location: "торговая точка. местоположение",
+  quantity: "количество",
+};
+let salesImportSourceRows = [];
+let salesImportPreview = null;
+let salesImportFileName = "";
+
+function normalizeSalesHeader(value) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/\s+/g, " ");
+}
+
+function initializeSalesImportPeriod() {
+  const yearSelect = $("sales-import-year");
+  if (!yearSelect || yearSelect.options.length) return;
+  const now = new Date();
+  const previous = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const firstYear = Math.min(2025, previous.getFullYear());
+  const lastYear = Math.max(previous.getFullYear() + 1, now.getFullYear());
+  for (let year = lastYear; year >= firstYear; year -= 1) {
+    const option = document.createElement("option");
+    option.value = String(year);
+    option.textContent = String(year);
+    yearSelect.append(option);
+  }
+  yearSelect.value = String(previous.getFullYear());
+  $("sales-import-month").value = String(previous.getMonth() + 1);
+}
+
+function resetSalesImport(clearFile = true) {
+  salesImportSourceRows = [];
+  salesImportPreview = null;
+  salesImportFileName = "";
+  $("sales-import-result").hidden = true;
+  $("sales-import-error").hidden = true;
+  $("sales-import-progress").hidden = true;
+  $("sales-import-commit-button").disabled = true;
+  if (clearFile) $("sales-import-file").value = "";
+  updateSalesImportPreviewButton();
+}
+
+function updateSalesImportPreviewButton() {
+  const button = $("sales-import-preview-button");
+  const file = $("sales-import-file")?.files?.[0];
+  button.disabled = !file || !isSystemAdmin();
+}
+
+function parseSalesQuantity(value) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  const normalized = String(value ?? "")
+    .trim()
+    .replace(/\s+/g, "")
+    .replace(",", ".");
+  if (!normalized) return null;
+  const number = Number(normalized);
+  return Number.isFinite(number) ? number : null;
+}
+
+async function readSalesImportFile(file) {
+  if (!window.XLSX) throw new Error("Модуль чтения Excel не загрузился. Обновите страницу и повторите попытку.");
+  const buffer = await file.arrayBuffer();
+  const workbook = XLSX.read(buffer, { type: "array", cellDates: false });
+  const sheetName = workbook.SheetNames[0];
+  if (!sheetName) throw new Error("В Excel-файле нет листов.");
+  const rawRows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], {
+    defval: "",
+    raw: true,
+  });
+  if (!rawRows.length) throw new Error("На первом листе нет строк с данными.");
+
+  const originalHeaders = Object.keys(rawRows[0]);
+  const normalizedToOriginal = new Map(
+    originalHeaders.map((header) => [normalizeSalesHeader(header), header])
+  );
+  const missing = Object.values(SALES_IMPORT_REQUIRED_HEADERS)
+    .filter((required) => !normalizedToOriginal.has(required));
+  if (missing.length) {
+    throw new Error(`Не найдены обязательные столбцы: ${missing.join(", ")}.`);
+  }
+
+  return rawRows.map((row, index) => ({
+    rowNumber: index + 2,
+    direction: String(row[normalizedToOriginal.get(SALES_IMPORT_REQUIRED_HEADERS.direction)] ?? "").trim(),
+    manager: String(row[normalizedToOriginal.get(SALES_IMPORT_REQUIRED_HEADERS.manager)] ?? "").trim(),
+    client: String(row[normalizedToOriginal.get(SALES_IMPORT_REQUIRED_HEADERS.client)] ?? "").trim(),
+    location: String(row[normalizedToOriginal.get(SALES_IMPORT_REQUIRED_HEADERS.location)] ?? "").trim(),
+    quantity: parseSalesQuantity(row[normalizedToOriginal.get(SALES_IMPORT_REQUIRED_HEADERS.quantity)]),
+  }));
+}
+
+function salesImportStatusBadge(row) {
+  const status = String(row.status || "").toLowerCase();
+  if (status === "matched") return `<span class="badge success">Найдено</span>`;
+  if (status === "ambiguous") return `<span class="badge warning">Несколько ТРТ</span>`;
+  if (status === "invalid") return `<span class="badge danger">Ошибка</span>`;
+  return `<span class="badge inactive">ТРТ не найдена</span>`;
+}
+
+function renderSalesImportPreview(payload) {
+  salesImportPreview = payload;
+  const summary = payload.summary || {};
+  $("sales-import-total-rows").textContent = Number(summary.totalRows || 0).toLocaleString("ru-RU");
+  $("sales-import-matched-rows").textContent = Number(summary.matchedRows || 0).toLocaleString("ru-RU");
+  $("sales-import-unmatched-rows").textContent = Number(summary.unmatchedRows || 0).toLocaleString("ru-RU");
+  $("sales-import-invalid-rows").textContent = Number(summary.invalidRows || 0).toLocaleString("ru-RU");
+  $("sales-import-total-quantity").textContent = Number(summary.totalQuantity || 0).toLocaleString("ru-RU");
+
+  const warning = $("sales-import-period-warning");
+  warning.hidden = !payload.periodExists;
+  warning.textContent = payload.periodExists
+    ? `Продажи за ${payload.periodLabel || "выбранный период"} уже загружены. При подтверждении старые данные за месяц будут полностью заменены.`
+    : "";
+
+  const totals = Array.isArray(payload.totalsByDirection) ? payload.totalsByDirection : [];
+  $("sales-import-direction-totals").innerHTML = totals.map((item) => (
+    `<article><span>${escapeHtml(item.direction || "Без направления")}</span><strong>${Number(item.quantity || 0).toLocaleString("ru-RU")}</strong></article>`
+  )).join("");
+
+  const rows = Array.isArray(payload.rows) ? payload.rows : [];
+  $("sales-import-table-body").innerHTML = rows.map((row) => `
+    <tr class="sales-import-row-${escapeHtml(row.status || "unmatched")}">
+      <td>${escapeHtml(row.rowNumber)}</td>
+      <td>${escapeHtml(row.direction || "—")}</td>
+      <td>${escapeHtml(shortPersonName(row.manager) || "—")}</td>
+      <td>${escapeHtml(row.client || "—")}</td>
+      <td><strong>${escapeHtml(row.location || "—")}</strong>${row.message ? `<small>${escapeHtml(row.message)}</small>` : ""}</td>
+      <td>${row.quantity === null || row.quantity === undefined ? "—" : escapeHtml(Number(row.quantity).toLocaleString("ru-RU"))}</td>
+      <td>${salesImportStatusBadge(row)}</td>
+    </tr>`).join("");
+
+  $("sales-import-result").hidden = false;
+  $("sales-import-commit-button").disabled = Number(summary.matchedRows || 0) === 0;
+}
+
+async function previewSalesImport() {
+  if (!isSystemAdmin()) return;
+  const file = $("sales-import-file").files?.[0];
+  if (!file) return;
+  const error = $("sales-import-error");
+  const progress = $("sales-import-progress");
+  error.hidden = true;
+  $("sales-import-result").hidden = true;
+  progress.hidden = false;
+  $("sales-import-preview-button").disabled = true;
+  try {
+    salesImportSourceRows = await readSalesImportFile(file);
+    salesImportFileName = file.name;
+    const payload = await api("/admin/sales-import", {
+      method: "POST",
+      body: JSON.stringify({
+        operation: "preview",
+        year: Number($("sales-import-year").value),
+        month: Number($("sales-import-month").value),
+        fileName: file.name,
+        rows: salesImportSourceRows,
+      }),
+    });
+    renderSalesImportPreview(payload);
+  } catch (err) {
+    error.textContent = err.message;
+    error.hidden = false;
+  } finally {
+    progress.hidden = true;
+    updateSalesImportPreviewButton();
+  }
+}
+
+async function commitSalesImport() {
+  if (!isSystemAdmin() || !salesImportPreview || !salesImportSourceRows.length) return;
+  const year = Number($("sales-import-year").value);
+  const month = Number($("sales-import-month").value);
+  const period = `${SALES_IMPORT_MONTHS[month - 1]} ${year}`;
+  const replace = Boolean(salesImportPreview.periodExists);
+  const question = replace
+    ? `Заменить все ранее загруженные продажи за ${period}?`
+    : `Загрузить проверенные продажи за ${period}?`;
+  if (!window.confirm(question)) return;
+
+  const button = $("sales-import-commit-button");
+  const error = $("sales-import-error");
+  error.hidden = true;
+  button.disabled = true;
+  button.textContent = replace ? "Замена данных…" : "Загрузка…";
+  try {
+    const result = await api("/admin/sales-import", {
+      method: "POST",
+      body: JSON.stringify({
+        operation: "commit",
+        year,
+        month,
+        fileName: salesImportFileName,
+        replace,
+        rows: salesImportSourceRows,
+      }),
+    });
+    state.trtLoaded = false;
+    state.trtPoints = [];
+    showToast(result.message || `Продажи за ${period} загружены.`);
+    resetSalesImport(true);
+  } catch (err) {
+    error.textContent = err.message;
+    error.hidden = false;
+    button.disabled = false;
+  } finally {
+    button.textContent = "Загрузить продажи";
+  }
+}
+
 async function logout() {
   try { await api("/auth/logout", { method: "POST", body: "{}" }); } catch { /* Локальная сессия очищается в любом случае. */ }
   clearSession();
@@ -2492,9 +2747,29 @@ $("trt-sales-modal").addEventListener("click", (event) => {
   if (event.target === $("trt-sales-modal")) closeTrtSales();
 });
 
-document.querySelectorAll("[data-page]").forEach((button) => {
-  button.addEventListener("click", () => showPage(button.dataset.page, true));
+document.querySelectorAll("[data-nav-group]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const submenu = document.querySelector(`[data-nav-submenu="${button.dataset.navGroup}"]`);
+    setNavGroupExpanded(button.dataset.navGroup, submenu?.hidden !== false);
+  });
 });
+
+document.querySelectorAll("[data-page]").forEach((button) => {
+  button.addEventListener("click", () => {
+    showPage(button.dataset.page, true);
+    if (button.dataset.trtView) setTrtMainView(button.dataset.trtView);
+  });
+});
+
+$("sales-import-file").addEventListener("change", () => {
+  resetSalesImport(false);
+  updateSalesImportPreviewButton();
+});
+$("sales-import-year").addEventListener("change", () => resetSalesImport(false));
+$("sales-import-month").addEventListener("change", () => resetSalesImport(false));
+$("sales-import-preview-button").addEventListener("click", previewSalesImport);
+$("sales-import-reset-button").addEventListener("click", () => resetSalesImport(true));
+$("sales-import-commit-button").addEventListener("click", commitSalesImport);
 
 window.addEventListener("hashchange", () => {
   const page = location.hash.slice(1);

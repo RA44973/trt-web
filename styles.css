@@ -1465,3 +1465,145 @@ body:has(#page-trt:not([hidden])) .main-content {
   opacity: .48;
   cursor: not-allowed;
 }
+
+/* Обновление 2026-08-03: широкое аккордеон-меню и настройки */
+.app-shell { grid-template-columns: 282px minmax(0, 1fr); }
+.sidebar { padding-left: 20px; padding-right: 20px; }
+.main-nav { display: flex; flex-direction: column; gap: 6px; }
+.nav-group { display: grid; gap: 4px; }
+.nav-label { min-width: 0; flex: 1; }
+.nav-parent .nav-chevron {
+  margin-left: auto;
+  color: #98a2b3;
+  font-size: 18px;
+  line-height: 1;
+  transition: transform .16s ease;
+}
+.nav-parent[aria-expanded="true"] .nav-chevron { transform: rotate(180deg); }
+.nav-submenu {
+  display: grid;
+  gap: 3px;
+  padding: 2px 0 5px 40px;
+}
+.nav-subitem {
+  width: 100%;
+  min-height: 38px;
+  border: 0;
+  border-radius: 9px;
+  padding: 8px 12px;
+  color: #aeb8ca;
+  background: transparent;
+  text-align: left;
+  font-size: 13px;
+  font-weight: 700;
+}
+.nav-subitem:hover { color: #fff; background: rgba(255,255,255,.06); }
+.nav-subitem.active { color: #fff; background: rgba(31,94,255,.32); }
+
+/* ТРТ больше не отнимает дополнительную колонку у карты: панель лежит поверх карты. */
+.legacy-trt-shell { position: relative; display: block; }
+.legacy-trt-main { width: 100%; height: 100%; }
+.legacy-trt-sidebar {
+  position: absolute;
+  z-index: 1100;
+  top: 16px;
+  left: 16px;
+  width: 342px;
+  min-width: 0;
+  max-height: calc(100vh - 32px);
+  border: 1px solid rgba(208,213,221,.92);
+  border-radius: 16px;
+  box-shadow: 0 18px 48px rgba(16,24,40,.18);
+  background: rgba(247,248,250,.97);
+  backdrop-filter: blur(8px);
+}
+.legacy-trt-sidebar > h2,
+.legacy-trt-sidebar > .legacy-view-tabs { display: none; }
+
+/* Настройки → загрузка продаж */
+.sales-import-card { padding: 22px; }
+.sales-import-period-grid {
+  display: grid;
+  grid-template-columns: 150px 180px minmax(280px, 1fr) auto;
+  gap: 14px;
+  align-items: end;
+}
+.sales-import-file-field input { min-height: 42px; padding: 7px 10px; }
+.sales-import-preview-button { min-width: 150px; }
+.sales-import-help {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin: 18px 0;
+  color: #475467;
+  font-size: 13px;
+}
+.sales-import-help strong { margin-right: 3px; }
+.sales-import-help span {
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: #f2f4f7;
+}
+.sales-import-result { display: grid; gap: 16px; }
+.sales-import-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(130px, 1fr));
+  gap: 12px;
+}
+.sales-import-summary-grid article,
+.sales-import-direction-totals article {
+  padding: 15px;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: #fff;
+}
+.sales-import-summary-grid span,
+.sales-import-direction-totals span { display: block; color: var(--muted); font-size: 12px; }
+.sales-import-summary-grid strong,
+.sales-import-direction-totals strong { display: block; margin-top: 5px; font-size: 22px; }
+.sales-import-warning {
+  padding: 13px 15px;
+  border: 1px solid #f7c97b;
+  border-radius: 11px;
+  color: #8a4b08;
+  background: #fff7e6;
+  font-weight: 700;
+}
+.sales-import-direction-totals { display: flex; flex-wrap: wrap; gap: 10px; }
+.sales-import-direction-totals article { min-width: 180px; }
+.sales-import-table-wrap { max-height: 480px; border: 1px solid var(--border); border-radius: 12px; }
+.sales-import-table { min-width: 1180px; }
+.sales-import-table th { position: sticky; top: 0; z-index: 1; background: #f8fafc; }
+.sales-import-table td small { display: block; margin-top: 4px; color: #667085; }
+.sales-import-row-unmatched td,
+.sales-import-row-ambiguous td,
+.sales-import-row-invalid td { background: #fffaf5; }
+.sales-import-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.badge.warning { color: #8a4b08; background: #fff3d6; }
+.badge.danger { color: #b42318; background: #fee4e2; }
+
+@media (max-width: 1180px) {
+  .sales-import-period-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .sales-import-summary-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 900px) {
+  .legacy-trt-sidebar {
+    position: relative;
+    top: auto;
+    left: auto;
+    width: 100%;
+    max-height: none;
+    border-radius: 0;
+    box-shadow: none;
+  }
+}
+@media (max-width: 820px) {
+  .main-nav { display: grid; grid-template-columns: 1fr; }
+  .nav-item { justify-content: flex-start; }
+  .nav-icon { display: grid; }
+  .nav-submenu { padding-left: 38px; }
+  .sales-import-period-grid,
+  .sales-import-summary-grid { grid-template-columns: 1fr; }
+  .sales-import-actions { flex-direction: column; }
+}
+

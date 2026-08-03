@@ -11,7 +11,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
-  <link rel="stylesheet" href="styles.css?v=20260731-vog-mobile-helper-1">
+  <link rel="stylesheet" href="styles.css?v=20260803-settings-sales-menu-1">
 </head>
 <body>
   <div id="toast" class="toast" hidden></div>
@@ -57,22 +57,38 @@
       </div>
 
       <nav class="main-nav" aria-label="Основная навигация">
-        <button class="nav-item active" type="button" data-page="employees">
-          <span class="nav-icon">С</span>
-          Сотрудники
-        </button>
         <button class="nav-item" type="button" data-page="tasks">
           <span class="nav-icon">З</span>
-          Задачи
+          <span class="nav-label">Задачи</span>
         </button>
         <button class="nav-item" type="button" data-page="visits">
           <span class="nav-icon">В</span>
-          Визиты
+          <span class="nav-label">Визиты</span>
         </button>
-        <button class="nav-item" type="button" data-page="trt">
-          <span class="nav-icon">Т</span>
-          ТРТ
-        </button>
+
+        <div class="nav-group" data-nav-group-container="trt">
+          <button class="nav-item nav-parent" type="button" data-nav-group="trt" aria-expanded="false">
+            <span class="nav-icon">Т</span>
+            <span class="nav-label">ТРТ</span>
+            <span class="nav-chevron" aria-hidden="true">⌄</span>
+          </button>
+          <div class="nav-submenu" data-nav-submenu="trt" hidden>
+            <button class="nav-subitem" type="button" data-page="trt" data-trt-view="map">Карта</button>
+            <button class="nav-subitem" type="button" data-page="trt" data-trt-view="analytics">Аналитика</button>
+          </div>
+        </div>
+
+        <div id="settings-nav-group" class="nav-group" data-nav-group-container="settings" hidden>
+          <button class="nav-item nav-parent" type="button" data-nav-group="settings" aria-expanded="false">
+            <span class="nav-icon">Н</span>
+            <span class="nav-label">Настройки</span>
+            <span class="nav-chevron" aria-hidden="true">⌄</span>
+          </button>
+          <div class="nav-submenu" data-nav-submenu="settings" hidden>
+            <button class="nav-subitem" type="button" data-page="employees">Сотрудники</button>
+            <button class="nav-subitem" type="button" data-page="sales-import">Загрузка продаж</button>
+          </div>
+        </div>
       </nav>
 
       <div class="sidebar-user">
@@ -85,7 +101,7 @@
       <section id="page-employees" class="page-view">
         <header class="page-header">
           <div>
-            <p class="eyebrow">Организационная структура</p>
+            <p class="eyebrow">Настройки · Организационная структура</p>
             <h1>Сотрудники</h1>
           </div>
           <button id="add-employee-button" class="primary-button" type="button">+ Сотрудник</button>
@@ -303,6 +319,93 @@
         </section>
       </section>
 
+      <section id="page-sales-import" class="page-view" hidden>
+        <header class="page-header">
+          <div>
+            <p class="eyebrow">Настройки · Сервисные операции</p>
+            <h1>Загрузка продаж</h1>
+            <p class="page-description">Загрузка итоговых продаж за выбранный месяц с обязательной проверкой сопоставления торговых точек.</p>
+          </div>
+        </header>
+
+        <section class="content-card sales-import-card">
+          <div class="sales-import-period-grid">
+            <label>
+              Год
+              <select id="sales-import-year"></select>
+            </label>
+            <label>
+              Месяц
+              <select id="sales-import-month">
+                <option value="1">Январь</option>
+                <option value="2">Февраль</option>
+                <option value="3">Март</option>
+                <option value="4">Апрель</option>
+                <option value="5">Май</option>
+                <option value="6">Июнь</option>
+                <option value="7">Июль</option>
+                <option value="8">Август</option>
+                <option value="9">Сентябрь</option>
+                <option value="10">Октябрь</option>
+                <option value="11">Ноябрь</option>
+                <option value="12">Декабрь</option>
+              </select>
+            </label>
+            <label class="sales-import-file-field">
+              Excel-файл
+              <input id="sales-import-file" type="file" accept=".xlsx,.xls">
+            </label>
+            <button id="sales-import-preview-button" class="primary-button sales-import-preview-button" type="button" disabled>Проверить файл</button>
+          </div>
+
+          <div class="sales-import-help">
+            <strong>Обязательные столбцы:</strong>
+            <span>Направление деятельности</span>
+            <span>Менеджер</span>
+            <span>Клиент</span>
+            <span>Торговая точка. Местоположение</span>
+            <span>Количество</span>
+          </div>
+
+          <div id="sales-import-error" class="form-error" hidden></div>
+          <div id="sales-import-progress" class="loading-state" hidden>Проверка файла…</div>
+
+          <section id="sales-import-result" class="sales-import-result" hidden>
+            <div class="sales-import-summary-grid">
+              <article><span>Строк в файле</span><strong id="sales-import-total-rows">0</strong></article>
+              <article><span>Сопоставлено</span><strong id="sales-import-matched-rows">0</strong></article>
+              <article><span>Не сопоставлено</span><strong id="sales-import-unmatched-rows">0</strong></article>
+              <article><span>Ошибок</span><strong id="sales-import-invalid-rows">0</strong></article>
+              <article><span>Итоговое количество</span><strong id="sales-import-total-quantity">0</strong></article>
+            </div>
+
+            <div id="sales-import-period-warning" class="sales-import-warning" hidden></div>
+            <div id="sales-import-direction-totals" class="sales-import-direction-totals"></div>
+
+            <div class="table-wrap sales-import-table-wrap">
+              <table class="sales-import-table">
+                <thead>
+                  <tr>
+                    <th>Строка</th>
+                    <th>Направление</th>
+                    <th>Менеджер</th>
+                    <th>Клиент</th>
+                    <th>ТРТ / местоположение</th>
+                    <th>Количество</th>
+                    <th>Результат</th>
+                  </tr>
+                </thead>
+                <tbody id="sales-import-table-body"></tbody>
+              </table>
+            </div>
+
+            <div class="sales-import-actions">
+              <button id="sales-import-reset-button" class="secondary-button" type="button">Выбрать другой файл</button>
+              <button id="sales-import-commit-button" class="primary-button" type="button" disabled>Загрузить продажи</button>
+            </div>
+          </section>
+        </section>
+      </section>
       <section id="page-trt" class="page-view trt-page legacy-trt-page" hidden>
         <div class="legacy-trt-shell">
           <aside class="legacy-trt-sidebar">
@@ -732,6 +835,7 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
-  <script src="app.js?v=20260731-vog-mobile-helper-1"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="app.js?v=20260803-settings-sales-menu-1"></script>
 </body>
 </html>
