@@ -2744,6 +2744,21 @@ async function commitSalesImport() {
   }
 }
 
+
+function openSalesImportInfo() {
+  const modal = $("sales-import-info-modal");
+  if (!modal) return;
+  modal.hidden = false;
+  document.body.style.overflow = "hidden";
+}
+
+function closeSalesImportInfo() {
+  const modal = $("sales-import-info-modal");
+  if (!modal) return;
+  modal.hidden = true;
+  document.body.style.overflow = "";
+}
+
 async function logout() {
   try { await api("/auth/logout", { method: "POST", body: "{}" }); } catch { /* Локальная сессия очищается в любом случае. */ }
   clearSession();
@@ -2898,6 +2913,16 @@ document.querySelectorAll("[data-page]").forEach((button) => {
   "sales-import-location-filter",
 ].forEach((id) => $(id)?.addEventListener("input", renderSalesImportRows));
 $("sales-import-filter-reset")?.addEventListener("click", () => resetSalesImportFilters(true));
+
+
+$("sales-import-info-button")?.addEventListener("click", openSalesImportInfo);
+$("sales-import-info-close")?.addEventListener("click", closeSalesImportInfo);
+$("sales-import-info-modal")?.addEventListener("click", (event) => {
+  if (event.target === $("sales-import-info-modal")) closeSalesImportInfo();
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !$("sales-import-info-modal")?.hidden) closeSalesImportInfo();
+});
 
 $("sales-import-file").addEventListener("change", () => {
   resetSalesImport(false);

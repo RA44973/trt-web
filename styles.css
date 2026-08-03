@@ -1715,3 +1715,63 @@ body:has(#page-trt:not([hidden])) .main-content {
 .sales-import-row-skipped td { background: #f8fafc; color: #667085; }
 @media (max-width: 1350px) { .sales-import-summary-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 820px) { .sales-import-summary-grid { grid-template-columns: 1fr; } }
+
+
+/* Инструкция по загрузке продаж */
+.sales-import-title-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.sales-import-info-button {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  display: inline-grid;
+  place-items: center;
+  border: 2px solid #2563eb;
+  border-radius: 50%;
+  color: #2563eb;
+  background: #fff;
+  font-size: 17px;
+  font-weight: 900;
+  line-height: 1;
+}
+.sales-import-info-button:hover { background: #eff6ff; }
+.sales-import-info-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 6000;
+  display: grid;
+  place-items: center;
+  padding: 22px;
+  background: rgba(15,23,42,.62);
+}
+.sales-import-info-dialog {
+  width: min(720px, 100%);
+  max-height: calc(100vh - 44px);
+  overflow-y: auto;
+  border-radius: 18px;
+  padding: 24px;
+  background: #fff;
+  box-shadow: 0 28px 80px rgba(16,24,40,.30);
+}
+.sales-import-info-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+.sales-import-info-header h2 { margin: 0; font-size: 25px; }
+.sales-import-info-body { color: #344054; font-size: 15px; line-height: 1.55; }
+.sales-import-info-body ol { margin: 20px 0; padding-left: 22px; }
+.sales-import-info-body li { margin-bottom: 10px; }
+.sales-import-info-warning {
+  margin: 18px 0;
+  padding: 14px 16px;
+  border: 1px solid #f7c97b;
+  border-radius: 12px;
+  color: #7a4508;
+  background: #fff7e6;
+}
+.sales-import-info-warning strong { display: block; margin-bottom: 5px; }

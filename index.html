@@ -11,7 +11,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
-  <link rel="stylesheet" href="styles.css?v=20260803-missing-trt-1">
+  <link rel="stylesheet" href="styles.css?v=20260803-sales-import-info">
 </head>
 <body>
   <div id="toast" class="toast" hidden></div>
@@ -323,7 +323,7 @@
         <header class="page-header">
           <div>
             <p class="eyebrow">Настройки · Сервисные операции</p>
-            <h1>Загрузка продаж</h1>
+            <div class="sales-import-title-row"><h1>Загрузка продаж</h1><button id="sales-import-info-button" class="sales-import-info-button" type="button" aria-label="Инструкция по загрузке продаж" title="Инструкция по загрузке продаж">i</button></div>
             <p class="page-description">Загрузка итоговых продаж за выбранный месяц с обязательной проверкой сопоставления торговых точек.</p>
           </div>
         </header>
@@ -640,6 +640,32 @@
     </main>
   </div>
 
+  <div id="sales-import-info-modal" class="sales-import-info-backdrop" hidden>
+    <section class="sales-import-info-dialog" role="dialog" aria-modal="true" aria-labelledby="sales-import-info-title">
+      <header class="sales-import-info-header">
+        <div>
+          <p class="eyebrow">Инструкция</p>
+          <h2 id="sales-import-info-title">Как загружать продажи</h2>
+        </div>
+        <button id="sales-import-info-close" class="icon-button" type="button" aria-label="Закрыть">×</button>
+      </header>
+      <div class="sales-import-info-body">
+        <ol>
+          <li>Выберите год, месяц и полный Excel-файл за этот месяц.</li>
+          <li>Нажмите «Проверить файл». В систему будут записаны только строки со статусом «Сопоставлено».</li>
+          <li>Строки «ТРТ не найдена», «Несколько ТРТ», «ТРТ не заполнена» и «Другие ошибки» не загружаются.</li>
+          <li>Если в столбце «Количество» нет числа, строка считается строкой без продаж, пропускается и не является ошибкой.</li>
+          <li>После проверки нажмите «Загрузить продажи».</li>
+        </ol>
+        <div class="sales-import-info-warning">
+          <strong>Повторная загрузка месяца полностью заменяет ранее загруженные данные за этот месяц.</strong>
+          Поэтому после исправления проблемных строк загружайте заново весь исправленный файл, а не отдельный файл только с ошибками.
+        </div>
+        <p>Ранее загруженные данные за другие месяцы не изменяются.</p>
+      </div>
+    </section>
+  </div>
+
   <dialog id="employee-dialog" class="employee-dialog">
     <form id="employee-form" method="dialog" autocomplete="off">
       <div class="dialog-header">
@@ -875,6 +901,6 @@
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <script src="app.js?v=20260803-missing-trt-1"></script>
+  <script src="app.js?v=20260803-sales-import-info"></script>
 </body>
 </html>
