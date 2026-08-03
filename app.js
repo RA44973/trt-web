@@ -2492,6 +2492,8 @@ function resetSalesImport(clearFile = true) {
   $("sales-import-progress").hidden = true;
   $("sales-import-commit-button").disabled = true;
   if (clearFile) $("sales-import-file").value = "";
+  resetSalesImportFilters(false);
+  if ($("sales-import-filter-count")) $("sales-import-filter-count").textContent = "Показано: 0";
   updateSalesImportPreviewButton();
 }
 
@@ -2553,14 +2555,13 @@ function salesImportStatusBadge(row) {
   return `<span class="badge inactive">ТРТ не найдена</span>`;
 }
 
-function salesImportRows() {
-  return Array.isArray(salesImportPreview?.rows) ? salesImportPreview.rows : [];
+function salesImportFilterValue(id) {
+  return String($(id)?.value || "").trim();
 }
 
-function fillSalesImportFilters() {
-  const rows = salesImportRows();
-  const directionSelect = $("sales-import-filter-direction");
-  const managerSelect = $("sales-import-filter-manager");
+function fillSalesImportFilterOptions(rows) {
+  const directionSelect = $("sales-import-direction-filter");
+  const managerSelect = $("sales-import-manager-filter");
   if (!directionSelect || !managerSelect) return;
 
   const currentDirection = directionSelect.value;
@@ -2582,17 +2583,17 @@ function fillSalesImportFilters() {
 }
 
 function filteredSalesImportRows() {
-  const rows = salesImportRows();
-  const status = $("sales-import-filter-status")?.value || "all";
-  const direction = $("sales-import-filter-direction")?.value || "";
-  const manager = $("sales-import-filter-manager")?.value || "";
-  const client = normalizeText($("sales-import-filter-client")?.value || "");
-  const location = normalizeText($("sales-import-filter-location")?.value || "");
+  const rows = Array.isArray(salesImportPreview?.rows) ? salesImportPreview.rows : [];
+  const status = salesImportFilterValue("sales-import-status-filter") || "problem";
+  const direction = salesImportFilterValue("sales-import-direction-filter");
+  const manager = salesImportFilterValue("sales-import-manager-filter");
+  const client = normalizeText(salesImportFilterValue("sales-import-client-filter"));
+  const location = normalizeText(salesImportFilterValue("sales-import-location-filter"));
 
   return rows.filter((row) => {
     const rowStatus = String(row.status || "unmatched").toLowerCase();
-    if (status === "problems" && rowStatus === "matched") return false;
-    if (!["all", "problems"].includes(status) && rowStatus !== status) return false;
+    if (status === "problem" && rowStatus === "matched") return false;
+    if (status !== "all" && status !== "problem" && rowStatus !== status) return false;
     if (direction && String(row.direction || "") !== direction) return false;
     if (manager && String(row.manager || "") !== manager) return false;
     if (client && !normalizeText(row.client).includes(client)) return false;
@@ -2614,17 +2615,18 @@ function renderSalesImportRows() {
       <td>${salesImportStatusBadge(row)}</td>
     </tr>`).join("");
 
+  const total = Array.isArray(salesImportPreview?.rows) ? salesImportPreview.rows.length : 0;
   const counter = $("sales-import-filter-count");
-  if (counter) counter.textContent = `Показано: ${rows.length.toLocaleString("ru-RU")} из ${salesImportRows().length.toLocaleString("ru-RU")}`;
+  if (counter) counter.textContent = `Показано: ${rows.length.toLocaleString("ru-RU")} из ${total.toLocaleString("ru-RU")}`;
 }
 
-function resetSalesImportFilters() {
-  if ($("sales-import-filter-status")) $("sales-import-filter-status").value = "all";
-  if ($("sales-import-filter-direction")) $("sales-import-filter-direction").value = "";
-  if ($("sales-import-filter-manager")) $("sales-import-filter-manager").value = "";
-  if ($("sales-import-filter-client")) $("sales-import-filter-client").value = "";
-  if ($("sales-import-filter-location")) $("sales-import-filter-location").value = "";
-  renderSalesImportRows();
+function resetSalesImportFilters(render = true) {
+  if ($("sales-import-status-filter")) $("sales-import-status-filter").value = "problem";
+  if ($("sales-import-direction-filter")) $("sales-import-direction-filter").value = "";
+  if ($("sales-import-manager-filter")) $("sales-import-manager-filter").value = "";
+  if ($("sales-import-client-filter")) $("sales-import-client-filter").value = "";
+  if ($("sales-import-location-filter")) $("sales-import-location-filter").value = "";
+  if (render) renderSalesImportRows();
 }
 
 function renderSalesImportPreview(payload) {
@@ -2647,8 +2649,10 @@ function renderSalesImportPreview(payload) {
     `<article><span>${escapeHtml(item.direction || "Без направления")}</span><strong>${Number(item.quantity || 0).toLocaleString("ru-RU")}</strong></article>`
   )).join("");
 
-  fillSalesImportFilters();
-  resetSalesImportFilters();
+  const rows = Array.isArray(payload.rows) ? payload.rows : [];
+  fillSalesImportFilterOptions(rows);
+  resetSalesImportFilters(false);
+  renderSalesImportRows();
 
   $("sales-import-result").hidden = false;
   $("sales-import-commit-button").disabled = Number(summary.matchedRows || 0) === 0;
@@ -2667,10 +2671,11 @@ async function previewSalesImport() {
   try {
     salesImportSourceRows = await readSalesImportFile(file);
     salesImportFileName = file.name;
-    const payload = await api("/admin/sales-import", {
+    const payload = await api("/employees", {
       method: "POST",
       body: JSON.stringify({
-        operation: "preview",
+        operation: "sales_import",
+        salesOperation: "preview",
         year: Number($("sales-import-year").value),
         month: Number($("sales-import-month").value),
         fileName: file.name,
@@ -2704,10 +2709,11 @@ async function commitSalesImport() {
   button.disabled = true;
   button.textContent = replace ? "Замена данных…" : "Загрузка…";
   try {
-    const result = await api("/admin/sales-import", {
+    const result = await api("/employees", {
       method: "POST",
       body: JSON.stringify({
-        operation: "commit",
+        operation: "sales_import",
+        salesOperation: "commit",
         year,
         month,
         fileName: salesImportFileName,
@@ -2872,6 +2878,17 @@ document.querySelectorAll("[data-page]").forEach((button) => {
   });
 });
 
+[
+  "sales-import-status-filter",
+  "sales-import-direction-filter",
+  "sales-import-manager-filter",
+].forEach((id) => $(id)?.addEventListener("change", renderSalesImportRows));
+[
+  "sales-import-client-filter",
+  "sales-import-location-filter",
+].forEach((id) => $(id)?.addEventListener("input", renderSalesImportRows));
+$("sales-import-filter-reset")?.addEventListener("click", () => resetSalesImportFilters(true));
+
 $("sales-import-file").addEventListener("change", () => {
   resetSalesImport(false);
   updateSalesImportPreviewButton();
@@ -2881,13 +2898,6 @@ $("sales-import-month").addEventListener("change", () => resetSalesImport(false)
 $("sales-import-preview-button").addEventListener("click", previewSalesImport);
 $("sales-import-reset-button").addEventListener("click", () => resetSalesImport(true));
 $("sales-import-commit-button").addEventListener("click", commitSalesImport);
-["sales-import-filter-status", "sales-import-filter-direction", "sales-import-filter-manager"].forEach((id) => {
-  $(id)?.addEventListener("change", renderSalesImportRows);
-});
-["sales-import-filter-client", "sales-import-filter-location"].forEach((id) => {
-  $(id)?.addEventListener("input", renderSalesImportRows);
-});
-$("sales-import-filter-reset")?.addEventListener("click", resetSalesImportFilters);
 
 window.addEventListener("hashchange", () => {
   const page = location.hash.slice(1);

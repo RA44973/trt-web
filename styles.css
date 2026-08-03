@@ -1660,32 +1660,37 @@ body:has(#page-trt:not([hidden])) .main-content {
 
 
 
-/* Фильтры результатов проверки продаж */
-.sales-import-filterbar {
+/* Фильтры результатов проверки загрузки продаж */
+.sales-import-filters {
   display: grid;
-  grid-template-columns: minmax(170px, .8fr) minmax(170px, .9fr) minmax(170px, .9fr) minmax(190px, 1fr) minmax(240px, 1.35fr) auto;
-  gap: 12px;
+  grid-template-columns:
+    minmax(165px, .85fr)
+    minmax(155px, .8fr)
+    minmax(165px, .9fr)
+    minmax(180px, 1fr)
+    minmax(220px, 1.3fr)
+    auto;
+  gap: 10px;
   align-items: end;
   padding: 14px;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: #f8fafc;
 }
-.sales-import-filterbar label { min-width: 0; }
-.sales-import-filterbar input,
-.sales-import-filterbar select { min-height: 42px; }
-.sales-import-filterbar .secondary-button { white-space: nowrap; }
+.sales-import-filters label { min-width: 0; }
+.sales-import-filters input,
+.sales-import-filters select { min-height: 42px; }
+.sales-import-filter-reset { min-height: 42px; white-space: nowrap; }
 .sales-import-filter-count {
   grid-column: 1 / -1;
   color: var(--muted);
   font-size: 13px;
+  font-weight: 700;
 }
-@media (max-width: 1350px) {
-  .sales-import-filterbar { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 1280px) {
+  .sales-import-filters { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
-@media (max-width: 900px) {
-  .sales-import-filterbar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-@media (max-width: 620px) {
-  .sales-import-filterbar { grid-template-columns: 1fr; }
+@media (max-width: 820px) {
+  .sales-import-filters { grid-template-columns: 1fr; }
+  .sales-import-filter-count { grid-column: auto; }
 }
