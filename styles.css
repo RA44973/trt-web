@@ -1709,3 +1709,9 @@ body:has(#page-trt:not([hidden])) .main-content {
     grid-template-columns: 1fr;
   }
 }
+
+/* Продажи: отдельный статус строк без продаж */
+.sales-import-summary-grid { grid-template-columns: repeat(6, minmax(120px, 1fr)); }
+.sales-import-row-skipped td { background: #f8fafc; color: #667085; }
+@media (max-width: 1350px) { .sales-import-summary-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 820px) { .sales-import-summary-grid { grid-template-columns: 1fr; } }

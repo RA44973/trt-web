@@ -2537,14 +2537,18 @@ async function readSalesImportFile(file) {
     throw new Error(`Не найдены обязательные столбцы: ${missingKeys.join(", ")}.`);
   }
 
-  return rawRows.map((row, index) => ({
-    rowNumber: index + 2,
-    direction: String(row[normalizedToOriginal.get(SALES_IMPORT_REQUIRED_HEADERS.direction)] ?? "").trim(),
-    manager: String(row[normalizedToOriginal.get(SALES_IMPORT_REQUIRED_HEADERS.manager)] ?? "").trim(),
-    client: String(row[normalizedToOriginal.get(SALES_IMPORT_REQUIRED_HEADERS.client)] ?? "").trim(),
-    location: String(row[normalizedToOriginal.get(SALES_IMPORT_REQUIRED_HEADERS.location)] ?? "").trim(),
-    quantity: parseSalesQuantity(row[normalizedToOriginal.get(SALES_IMPORT_REQUIRED_HEADERS.quantity)]),
-  }));
+  return rawRows.map((row, index) => {
+    const quantityRaw = row[normalizedToOriginal.get(SALES_IMPORT_REQUIRED_HEADERS.quantity)];
+    return {
+      rowNumber: index + 2,
+      direction: String(row[normalizedToOriginal.get(SALES_IMPORT_REQUIRED_HEADERS.direction)] ?? "").trim(),
+      manager: String(row[normalizedToOriginal.get(SALES_IMPORT_REQUIRED_HEADERS.manager)] ?? "").trim(),
+      client: String(row[normalizedToOriginal.get(SALES_IMPORT_REQUIRED_HEADERS.client)] ?? "").trim(),
+      location: String(row[normalizedToOriginal.get(SALES_IMPORT_REQUIRED_HEADERS.location)] ?? "").trim(),
+      quantityRaw: quantityRaw ?? "",
+      quantity: parseSalesQuantity(quantityRaw),
+    };
+  });
 }
 
 function salesImportStatusBadge(row) {
@@ -2552,6 +2556,7 @@ function salesImportStatusBadge(row) {
   if (status === "matched") return `<span class="badge success">Найдено</span>`;
   if (status === "ambiguous") return `<span class="badge warning">Несколько ТРТ</span>`;
   if (status === "invalid") return `<span class="badge danger">Ошибка</span>`;
+  if (status === "skipped") return `<span class="badge inactive">Нет продаж</span>`;
   return `<span class="badge inactive">ТРТ не найдена</span>`;
 }
 
@@ -2592,7 +2597,7 @@ function filteredSalesImportRows() {
 
   return rows.filter((row) => {
     const rowStatus = String(row.status || "unmatched").toLowerCase();
-    if (status === "problem" && rowStatus === "matched") return false;
+    if (status === "problem" && !["unmatched", "ambiguous", "invalid"].includes(rowStatus)) return false;
     if (status !== "all" && status !== "problem" && rowStatus !== status) return false;
     if (direction && String(row.direction || "") !== direction) return false;
     if (manager && String(row.manager || "") !== manager) return false;
@@ -2636,6 +2641,8 @@ function renderSalesImportPreview(payload) {
   $("sales-import-matched-rows").textContent = Number(summary.matchedRows || 0).toLocaleString("ru-RU");
   $("sales-import-unmatched-rows").textContent = Number(summary.unmatchedRows || 0).toLocaleString("ru-RU");
   $("sales-import-invalid-rows").textContent = Number(summary.invalidRows || 0).toLocaleString("ru-RU");
+  const skippedNode = $("sales-import-skipped-rows");
+  if (skippedNode) skippedNode.textContent = Number(summary.skippedRows || 0).toLocaleString("ru-RU");
   $("sales-import-total-quantity").textContent = Number(summary.totalQuantity || 0).toLocaleString("ru-RU");
 
   const warning = $("sales-import-period-warning");
