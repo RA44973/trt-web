@@ -11,7 +11,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
-  <link rel="stylesheet" href="styles.css?v=20260803-sales-import-info">
+  <link rel="stylesheet" href="styles.css?v=20260803-map-fixed-ytd-dynamic">
 </head>
 <body>
   <div id="toast" class="toast" hidden></div>
@@ -888,8 +888,8 @@
       </header>
       <div class="sales-chart-wrap"><canvas id="trt-sales-chart"></canvas></div>
       <div class="sales-summary-grid">
-        <article><span>Январь–июнь 2025</span><strong id="trt-sales-ytd-2025">—</strong></article>
-        <article><span>Январь–июнь 2026</span><strong id="trt-sales-ytd-2026">—</strong></article>
+        <article><span id="trt-sales-ytd-label-2025">Период 2025</span><strong id="trt-sales-ytd-2025">—</strong></article>
+        <article><span id="trt-sales-ytd-label-2026">Период 2026</span><strong id="trt-sales-ytd-2026">—</strong></article>
         <article id="trt-sales-yoy-box" class="sales-yoy-box sales-yoy-neutral">
           <span>Изменение год к году</span><strong id="trt-sales-yoy">—</strong>
         </article>
@@ -901,6 +901,6 @@
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <script src="app.js?v=20260803-sales-import-info"></script>
+  <script src="app.js?v=20260803-map-fixed-ytd-dynamic"></script>
 </body>
 </html>

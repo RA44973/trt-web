@@ -2350,12 +2350,25 @@ function openTrtSales() {
   const sales2026 = (Array.isArray(point.sales?.["2026"]) ? point.sales["2026"] : [])
     .concat(Array(12).fill(null)).slice(0, 12);
   const unit = trtUnit(point);
-  const ytd2025 = sumSales(sales2025, 6);
-  const ytd2026 = sumSales(sales2026, 6);
+  const currentYear = analyticsCurrentYear();
+  const previousYear = currentYear - 1;
+  const lastMonthIndex = Math.max(0, analyticsLastCompleteMonthIndex());
+  const comparedMonthCount = Math.min(12, lastMonthIndex + 1);
+  const periodLabel = comparedMonthCount === 1
+    ? "Январь"
+    : `Январь–${SALES_IMPORT_MONTHS[comparedMonthCount - 1].toLowerCase()}`;
+  const previousSales = (Array.isArray(point.sales?.[String(previousYear)]) ? point.sales[String(previousYear)] : [])
+    .concat(Array(12).fill(null)).slice(0, 12);
+  const currentSales = (Array.isArray(point.sales?.[String(currentYear)]) ? point.sales[String(currentYear)] : [])
+    .concat(Array(12).fill(null)).slice(0, 12);
+  const ytd2025 = sumSales(previousSales, comparedMonthCount);
+  const ytd2026 = sumSales(currentSales, comparedMonthCount);
   const yoy = ytd2025 ? ((ytd2026 - ytd2025) / ytd2025) * 100 : null;
 
   $("trt-sales-modal-title").textContent = `Продажи: ${point.client || point.holding || "ТРТ"}`;
-  $("trt-sales-modal-subtitle").textContent = `Сравнение 2025 и 2026 годов, единица: ${unit}`;
+  $("trt-sales-modal-subtitle").textContent = `Сравнение ${previousYear} и ${currentYear} годов за одинаковый период, единица: ${unit}`;
+  $("trt-sales-ytd-label-2025").textContent = `${periodLabel} ${previousYear}`;
+  $("trt-sales-ytd-label-2026").textContent = `${periodLabel} ${currentYear}`;
   $("trt-sales-ytd-2025").textContent = formatSales(ytd2025, unit);
   $("trt-sales-ytd-2026").textContent = formatSales(ytd2026, unit);
   $("trt-sales-yoy").textContent = yoy === null
@@ -2375,8 +2388,8 @@ function openTrtSales() {
       labels: analyticsMonthLabels(),
       datasets: [
         {
-          label: "2025",
-          data: sales2025,
+          label: String(previousYear),
+          data: previousSales,
           backgroundColor: "#b9dcff",
           borderColor: "#8fc5f5",
           borderWidth: 1,
@@ -2384,8 +2397,8 @@ function openTrtSales() {
           maxBarThickness: 34,
         },
         {
-          label: "2026",
-          data: sales2026,
+          label: String(currentYear),
+          data: currentSales,
           backgroundColor: "#1677ff",
           borderColor: "#0b5ed7",
           borderWidth: 1,

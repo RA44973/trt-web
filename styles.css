@@ -1775,3 +1775,50 @@ body:has(#page-trt:not([hidden])) .main-content {
   background: #fff7e6;
 }
 .sales-import-info-warning strong { display: block; margin-bottom: 5px; }
+
+
+/* Обновление 2026-08-03: меню и рабочая область прокручиваются независимо. */
+@media (min-width: 821px) {
+  html,
+  body {
+    height: 100%;
+    overflow: hidden;
+  }
+
+  .app-shell {
+    height: 100vh;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .sidebar {
+    position: relative;
+    top: auto;
+    height: 100vh;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .main-content {
+    height: 100vh;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  body:has(#page-trt:not([hidden])) .main-content {
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  .legacy-trt-page,
+  .legacy-trt-shell,
+  .legacy-trt-main,
+  .legacy-trt-main #trt-map {
+    height: 100%;
+    min-height: 0;
+  }
+}
