@@ -2553,6 +2553,80 @@ function salesImportStatusBadge(row) {
   return `<span class="badge inactive">ТРТ не найдена</span>`;
 }
 
+function salesImportRows() {
+  return Array.isArray(salesImportPreview?.rows) ? salesImportPreview.rows : [];
+}
+
+function fillSalesImportFilters() {
+  const rows = salesImportRows();
+  const directionSelect = $("sales-import-filter-direction");
+  const managerSelect = $("sales-import-filter-manager");
+  if (!directionSelect || !managerSelect) return;
+
+  const currentDirection = directionSelect.value;
+  const currentManager = managerSelect.value;
+  const directions = [...new Set(rows.map((row) => String(row.direction || "").trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, "ru"));
+  const managers = [...new Set(rows.map((row) => String(row.manager || "").trim()).filter(Boolean))]
+    .sort((a, b) => shortPersonName(a).localeCompare(shortPersonName(b), "ru"));
+
+  directionSelect.innerHTML = `<option value="">Все направления</option>${directions.map((value) => (
+    `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`
+  )).join("")}`;
+  managerSelect.innerHTML = `<option value="">Все менеджеры</option>${managers.map((value) => (
+    `<option value="${escapeHtml(value)}">${escapeHtml(shortPersonName(value) || value)}</option>`
+  )).join("")}`;
+
+  if (directions.includes(currentDirection)) directionSelect.value = currentDirection;
+  if (managers.includes(currentManager)) managerSelect.value = currentManager;
+}
+
+function filteredSalesImportRows() {
+  const rows = salesImportRows();
+  const status = $("sales-import-filter-status")?.value || "all";
+  const direction = $("sales-import-filter-direction")?.value || "";
+  const manager = $("sales-import-filter-manager")?.value || "";
+  const client = normalizeText($("sales-import-filter-client")?.value || "");
+  const location = normalizeText($("sales-import-filter-location")?.value || "");
+
+  return rows.filter((row) => {
+    const rowStatus = String(row.status || "unmatched").toLowerCase();
+    if (status === "problems" && rowStatus === "matched") return false;
+    if (!["all", "problems"].includes(status) && rowStatus !== status) return false;
+    if (direction && String(row.direction || "") !== direction) return false;
+    if (manager && String(row.manager || "") !== manager) return false;
+    if (client && !normalizeText(row.client).includes(client)) return false;
+    if (location && !normalizeText(`${row.location || ""} ${row.message || ""}`).includes(location)) return false;
+    return true;
+  });
+}
+
+function renderSalesImportRows() {
+  const rows = filteredSalesImportRows();
+  $("sales-import-table-body").innerHTML = rows.map((row) => `
+    <tr class="sales-import-row-${escapeHtml(row.status || "unmatched")}">
+      <td>${escapeHtml(row.rowNumber)}</td>
+      <td>${escapeHtml(row.direction || "—")}</td>
+      <td>${escapeHtml(shortPersonName(row.manager) || "—")}</td>
+      <td>${escapeHtml(row.client || "—")}</td>
+      <td><strong>${escapeHtml(row.location || "—")}</strong>${row.message ? `<small>${escapeHtml(row.message)}</small>` : ""}</td>
+      <td>${row.quantity === null || row.quantity === undefined ? "—" : escapeHtml(Number(row.quantity).toLocaleString("ru-RU"))}</td>
+      <td>${salesImportStatusBadge(row)}</td>
+    </tr>`).join("");
+
+  const counter = $("sales-import-filter-count");
+  if (counter) counter.textContent = `Показано: ${rows.length.toLocaleString("ru-RU")} из ${salesImportRows().length.toLocaleString("ru-RU")}`;
+}
+
+function resetSalesImportFilters() {
+  if ($("sales-import-filter-status")) $("sales-import-filter-status").value = "all";
+  if ($("sales-import-filter-direction")) $("sales-import-filter-direction").value = "";
+  if ($("sales-import-filter-manager")) $("sales-import-filter-manager").value = "";
+  if ($("sales-import-filter-client")) $("sales-import-filter-client").value = "";
+  if ($("sales-import-filter-location")) $("sales-import-filter-location").value = "";
+  renderSalesImportRows();
+}
+
 function renderSalesImportPreview(payload) {
   salesImportPreview = payload;
   const summary = payload.summary || {};
@@ -2573,17 +2647,8 @@ function renderSalesImportPreview(payload) {
     `<article><span>${escapeHtml(item.direction || "Без направления")}</span><strong>${Number(item.quantity || 0).toLocaleString("ru-RU")}</strong></article>`
   )).join("");
 
-  const rows = Array.isArray(payload.rows) ? payload.rows : [];
-  $("sales-import-table-body").innerHTML = rows.map((row) => `
-    <tr class="sales-import-row-${escapeHtml(row.status || "unmatched")}">
-      <td>${escapeHtml(row.rowNumber)}</td>
-      <td>${escapeHtml(row.direction || "—")}</td>
-      <td>${escapeHtml(shortPersonName(row.manager) || "—")}</td>
-      <td>${escapeHtml(row.client || "—")}</td>
-      <td><strong>${escapeHtml(row.location || "—")}</strong>${row.message ? `<small>${escapeHtml(row.message)}</small>` : ""}</td>
-      <td>${row.quantity === null || row.quantity === undefined ? "—" : escapeHtml(Number(row.quantity).toLocaleString("ru-RU"))}</td>
-      <td>${salesImportStatusBadge(row)}</td>
-    </tr>`).join("");
+  fillSalesImportFilters();
+  resetSalesImportFilters();
 
   $("sales-import-result").hidden = false;
   $("sales-import-commit-button").disabled = Number(summary.matchedRows || 0) === 0;
@@ -2602,11 +2667,10 @@ async function previewSalesImport() {
   try {
     salesImportSourceRows = await readSalesImportFile(file);
     salesImportFileName = file.name;
-    const payload = await api("/employees", {
+    const payload = await api("/admin/sales-import", {
       method: "POST",
       body: JSON.stringify({
-        operation: "sales_import",
-        salesOperation: "preview",
+        operation: "preview",
         year: Number($("sales-import-year").value),
         month: Number($("sales-import-month").value),
         fileName: file.name,
@@ -2640,11 +2704,10 @@ async function commitSalesImport() {
   button.disabled = true;
   button.textContent = replace ? "Замена данных…" : "Загрузка…";
   try {
-    const result = await api("/employees", {
+    const result = await api("/admin/sales-import", {
       method: "POST",
       body: JSON.stringify({
-        operation: "sales_import",
-        salesOperation: "commit",
+        operation: "commit",
         year,
         month,
         fileName: salesImportFileName,
@@ -2818,6 +2881,13 @@ $("sales-import-month").addEventListener("change", () => resetSalesImport(false)
 $("sales-import-preview-button").addEventListener("click", previewSalesImport);
 $("sales-import-reset-button").addEventListener("click", () => resetSalesImport(true));
 $("sales-import-commit-button").addEventListener("click", commitSalesImport);
+["sales-import-filter-status", "sales-import-filter-direction", "sales-import-filter-manager"].forEach((id) => {
+  $(id)?.addEventListener("change", renderSalesImportRows);
+});
+["sales-import-filter-client", "sales-import-filter-location"].forEach((id) => {
+  $(id)?.addEventListener("input", renderSalesImportRows);
+});
+$("sales-import-filter-reset")?.addEventListener("click", resetSalesImportFilters);
 
 window.addEventListener("hashchange", () => {
   const page = location.hash.slice(1);

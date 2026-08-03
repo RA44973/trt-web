@@ -11,7 +11,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
-  <link rel="stylesheet" href="styles.css?v=20260803-sales-layout-final">
+  <link rel="stylesheet" href="styles.css?v=20260803-sales-filter-1">
 </head>
 <body>
   <div id="toast" class="toast" hidden></div>
@@ -381,6 +381,42 @@
 
             <div id="sales-import-period-warning" class="sales-import-warning" hidden></div>
             <div id="sales-import-direction-totals" class="sales-import-direction-totals"></div>
+
+            <div class="sales-import-filterbar" aria-label="Фильтры проверки файла">
+              <label>
+                Результат
+                <select id="sales-import-filter-status">
+                  <option value="all">Все строки</option>
+                  <option value="problems">Только проблемные</option>
+                  <option value="matched">Сопоставлено</option>
+                  <option value="unmatched">ТРТ не найдена</option>
+                  <option value="ambiguous">Несколько ТРТ</option>
+                  <option value="invalid">Ошибка в данных</option>
+                </select>
+              </label>
+              <label>
+                Направление
+                <select id="sales-import-filter-direction">
+                  <option value="">Все направления</option>
+                </select>
+              </label>
+              <label>
+                Менеджер
+                <select id="sales-import-filter-manager">
+                  <option value="">Все менеджеры</option>
+                </select>
+              </label>
+              <label>
+                Клиент
+                <input id="sales-import-filter-client" type="search" placeholder="Поиск по клиенту">
+              </label>
+              <label>
+                ТРТ / местоположение
+                <input id="sales-import-filter-location" type="search" placeholder="Поиск по адресу или ТРТ">
+              </label>
+              <button id="sales-import-filter-reset" class="secondary-button" type="button">Сбросить фильтры</button>
+              <div id="sales-import-filter-count" class="sales-import-filter-count">Показано: 0</div>
+            </div>
 
             <div class="table-wrap sales-import-table-wrap">
               <table class="sales-import-table">
@@ -836,6 +872,6 @@
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <script src="app.js?v=20260803-sales-layout-final"></script>
+  <script src="app.js?v=20260803-sales-filter-1"></script>
 </body>
 </html>
