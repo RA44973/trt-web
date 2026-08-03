@@ -11,7 +11,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
-  <link rel="stylesheet" href="styles.css?v=20260803-blank-sales-skip-1">
+  <link rel="stylesheet" href="styles.css?v=20260803-missing-trt-1">
 </head>
 <body>
   <div id="toast" class="toast" hidden></div>
@@ -375,7 +375,8 @@
               <article><span>Строк в файле</span><strong id="sales-import-total-rows">0</strong></article>
               <article><span>Сопоставлено</span><strong id="sales-import-matched-rows">0</strong></article>
               <article><span>Не сопоставлено</span><strong id="sales-import-unmatched-rows">0</strong></article>
-              <article><span>Ошибок</span><strong id="sales-import-invalid-rows">0</strong></article>
+              <article><span>ТРТ не заполнена</span><strong id="sales-import-missing-trt-rows">0</strong></article>
+              <article><span>Другие ошибки</span><strong id="sales-import-invalid-rows">0</strong></article>
               <article><span>Пропущено: нет продаж</span><strong id="sales-import-skipped-rows">0</strong></article>
               <article><span>Итоговое количество</span><strong id="sales-import-total-quantity">0</strong></article>
             </div>
@@ -392,7 +393,8 @@
                   <option value="matched">Сопоставленные</option>
                   <option value="unmatched">ТРТ не найдена</option>
                   <option value="ambiguous">Несколько ТРТ</option>
-                  <option value="invalid">Ошибки</option>
+                  <option value="missing_trt">ТРТ не заполнена</option>
+                  <option value="invalid">Другие ошибки</option>
                 </select>
               </label>
               <label>
@@ -873,6 +875,6 @@
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <script src="app.js?v=20260803-blank-sales-skip-1"></script>
+  <script src="app.js?v=20260803-missing-trt-1"></script>
 </body>
 </html>

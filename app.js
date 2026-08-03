@@ -2555,6 +2555,7 @@ function salesImportStatusBadge(row) {
   const status = String(row.status || "").toLowerCase();
   if (status === "matched") return `<span class="badge success">Найдено</span>`;
   if (status === "ambiguous") return `<span class="badge warning">Несколько ТРТ</span>`;
+  if (status === "missing_trt") return `<span class="badge warning">ТРТ не заполнена</span>`;
   if (status === "invalid") return `<span class="badge danger">Ошибка</span>`;
   if (status === "skipped") return `<span class="badge inactive">Нет продаж</span>`;
   return `<span class="badge inactive">ТРТ не найдена</span>`;
@@ -2597,7 +2598,7 @@ function filteredSalesImportRows() {
 
   return rows.filter((row) => {
     const rowStatus = String(row.status || "unmatched").toLowerCase();
-    if (status === "problem" && !["unmatched", "ambiguous", "invalid"].includes(rowStatus)) return false;
+    if (status === "problem" && !["unmatched", "ambiguous", "missing_trt", "invalid"].includes(rowStatus)) return false;
     if (status !== "all" && status !== "problem" && rowStatus !== status) return false;
     if (direction && String(row.direction || "") !== direction) return false;
     if (manager && String(row.manager || "") !== manager) return false;
@@ -2641,6 +2642,8 @@ function renderSalesImportPreview(payload) {
   $("sales-import-matched-rows").textContent = Number(summary.matchedRows || 0).toLocaleString("ru-RU");
   $("sales-import-unmatched-rows").textContent = Number(summary.unmatchedRows || 0).toLocaleString("ru-RU");
   $("sales-import-invalid-rows").textContent = Number(summary.invalidRows || 0).toLocaleString("ru-RU");
+  const missingTrtNode = $("sales-import-missing-trt-rows");
+  if (missingTrtNode) missingTrtNode.textContent = Number(summary.missingTrtRows || 0).toLocaleString("ru-RU");
   const skippedNode = $("sales-import-skipped-rows");
   if (skippedNode) skippedNode.textContent = Number(summary.skippedRows || 0).toLocaleString("ru-RU");
   $("sales-import-total-quantity").textContent = Number(summary.totalQuantity || 0).toLocaleString("ru-RU");
