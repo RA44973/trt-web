@@ -2602,10 +2602,11 @@ async function previewSalesImport() {
   try {
     salesImportSourceRows = await readSalesImportFile(file);
     salesImportFileName = file.name;
-    const payload = await api("/admin/sales-import", {
+    const payload = await api("/employees", {
       method: "POST",
       body: JSON.stringify({
-        operation: "preview",
+        operation: "sales_import",
+        salesOperation: "preview",
         year: Number($("sales-import-year").value),
         month: Number($("sales-import-month").value),
         fileName: file.name,
@@ -2639,10 +2640,11 @@ async function commitSalesImport() {
   button.disabled = true;
   button.textContent = replace ? "Замена данных…" : "Загрузка…";
   try {
-    const result = await api("/admin/sales-import", {
+    const result = await api("/employees", {
       method: "POST",
       body: JSON.stringify({
-        operation: "commit",
+        operation: "sales_import",
+        salesOperation: "commit",
         year,
         month,
         fileName: salesImportFileName,
