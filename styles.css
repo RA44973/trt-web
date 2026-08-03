@@ -1607,3 +1607,54 @@ body:has(#page-trt:not([hidden])) .main-content {
   .sales-import-actions { flex-direction: column; }
 }
 
+/* VOG update 20260803-sales-invites-layout-2: фильтры ТРТ в единой левой панели */
+.sidebar {
+  width: 360px;
+  min-width: 360px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.main-sidebar-trt-tools {
+  position: static !important;
+  inset: auto !important;
+  z-index: auto !important;
+  width: auto !important;
+  max-width: none !important;
+  max-height: none !important;
+  margin: 14px 0 0 !important;
+  padding: 14px 0 22px !important;
+  overflow: visible !important;
+  border: 0 !important;
+  border-top: 1px solid rgba(255,255,255,.18) !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+}
+.main-sidebar-trt-tools > h2,
+.main-sidebar-trt-tools > .legacy-view-tabs { display: none !important; }
+.main-sidebar-trt-tools .legacy-section-title,
+.main-sidebar-trt-tools .legacy-field label,
+.main-sidebar-trt-tools .legacy-status,
+.main-sidebar-trt-tools .legacy-empty,
+.main-sidebar-trt-tools .legacy-card,
+.main-sidebar-trt-tools .legacy-small-label { color: inherit; }
+.main-sidebar-trt-tools .legacy-field select,
+.main-sidebar-trt-tools .legacy-field input,
+.main-sidebar-trt-tools .legacy-multiselect-control,
+.main-sidebar-trt-tools .legacy-map-mode,
+.main-sidebar-trt-tools .legacy-card,
+.main-sidebar-trt-tools .legacy-filter-card {
+  width: 100%;
+  box-sizing: border-box;
+}
+.legacy-trt-shell { display: block !important; }
+.legacy-trt-main { width: 100% !important; height: 100% !important; }
+@media (max-width: 1180px) {
+  .sidebar { width: 330px; min-width: 330px; }
+}
+@media (max-width: 820px) {
+  .sidebar { width: 100%; min-width: 0; }
+  .main-sidebar-trt-tools { padding-bottom: 12px !important; }
+}
+

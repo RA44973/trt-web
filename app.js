@@ -128,17 +128,35 @@ async function api(path, options = {}) {
   const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
   if (state.token) headers.Authorization = `Bearer ${state.token}`;
 
-  const response = await fetch(`${API_BASE}${path}`, { ...options, headers });
-  const text = await response.text();
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), options.timeout || 30000);
+  let response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      headers,
+      signal: options.signal || controller.signal,
+      cache: "no-store",
+    });
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error("Сервер не ответил вовремя. Проверьте интернет и повторите попытку.");
+    }
+    throw new Error("Нет связи с сервером. Проверьте интернет и повторите попытку.");
+  } finally {
+    window.clearTimeout(timeout);
+  }
+
+  const responseText = await response.text();
   let data = {};
-  try { data = text ? JSON.parse(text) : {}; } catch { data = { error: text || "Некорректный ответ сервера." }; }
+  try { data = responseText ? JSON.parse(responseText) : {}; }
+  catch { data = { error: responseText || "Некорректный ответ сервера." }; }
 
   if (response.status === 401 && path !== "/auth/login") {
     clearSession();
     showLogin();
   }
-
-  if (!response.ok) throw new Error(data.error || `Ошибка ${response.status}`);
+  if (!response.ok) throw new Error(data.error || `Ошибка сервера: ${response.status}`);
   return data;
 }
 
@@ -280,10 +298,24 @@ function showLogin() {
   resetLoginForm();
 }
 
+
+function mountTrtToolsInMainSidebar() {
+  const mainSidebar = document.querySelector(".sidebar");
+  const trtTools = document.querySelector(".legacy-trt-sidebar");
+  if (!mainSidebar || !trtTools || trtTools.dataset.mountedInMainSidebar === "true") return;
+  trtTools.dataset.mountedInMainSidebar = "true";
+  trtTools.classList.add("main-sidebar-trt-tools");
+  mainSidebar.append(trtTools);
+  trtTools.hidden = state.currentPage !== "trt";
+}
+
 function showPage(page, updateHash = true) {
   let nextPage = PAGES.has(page) ? page : "trt";
   if (["employees", "sales-import"].includes(nextPage) && !isSystemAdmin()) nextPage = "trt";
   state.currentPage = nextPage;
+  mountTrtToolsInMainSidebar();
+  const trtTools = document.querySelector(".main-sidebar-trt-tools");
+  if (trtTools) trtTools.hidden = nextPage !== "trt";
 
   document.querySelectorAll(".page-view").forEach((section) => {
     section.hidden = section.id !== `page-${nextPage}`;
@@ -540,9 +572,13 @@ async function inviteEmployee(employeeId, button) {
       ? "Тестовое приглашение"
       : "Приглашение";
 
+    const accountText = result.accountCreated
+      ? " Учётная запись создана автоматически."
+      : (result.accountReactivated ? " Учётная запись активирована." : "");
     showToast(
-      `${prefix} отправлено на ${result.recipient}. Новый временный пароль находится в письме.`
+      `${prefix} отправлено на ${result.recipient}.${accountText}`
     );
+    await loadEmployees();
   } catch (error) {
     showToast(error.message || "Не удалось отправить приглашение.");
   } finally {
@@ -2406,8 +2442,15 @@ const SALES_IMPORT_REQUIRED_HEADERS = {
   direction: "направление деятельности",
   manager: "менеджер",
   client: "клиент",
-  location: "торговая точка. местоположение",
+  location: "торговая точка.месторасположение",
   quantity: "количество",
+};
+const SALES_IMPORT_HEADER_LABELS = {
+  direction: "Направление деятельности",
+  manager: "Менеджер",
+  client: "Клиент",
+  location: "Торговая точка.Месторасположение",
+  quantity: "Количество",
 };
 let salesImportSourceRows = [];
 let salesImportPreview = null;
@@ -2418,6 +2461,8 @@ function normalizeSalesHeader(value) {
     .trim()
     .toLowerCase()
     .replace(/ё/g, "е")
+    .replace(/\s*\.\s*/g, ".")
+    .replace(/местоположение/g, "месторасположение")
     .replace(/\s+/g, " ");
 }
 
@@ -2483,10 +2528,11 @@ async function readSalesImportFile(file) {
   const normalizedToOriginal = new Map(
     originalHeaders.map((header) => [normalizeSalesHeader(header), header])
   );
-  const missing = Object.values(SALES_IMPORT_REQUIRED_HEADERS)
-    .filter((required) => !normalizedToOriginal.has(required));
-  if (missing.length) {
-    throw new Error(`Не найдены обязательные столбцы: ${missing.join(", ")}.`);
+  const missingKeys = Object.entries(SALES_IMPORT_REQUIRED_HEADERS)
+    .filter(([, required]) => !normalizedToOriginal.has(required))
+    .map(([key]) => SALES_IMPORT_HEADER_LABELS[key]);
+  if (missingKeys.length) {
+    throw new Error(`Не найдены обязательные столбцы: ${missingKeys.join(", ")}.`);
   }
 
   return rawRows.map((row, index) => ({
@@ -2776,4 +2822,5 @@ window.addEventListener("hashchange", () => {
   if (PAGES.has(page)) showPage(page, false);
 });
 
+mountTrtToolsInMainSidebar();
 restoreSession();
