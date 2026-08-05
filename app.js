@@ -3246,12 +3246,26 @@ async function readLogisticsFile(file) {
   if (!trips.length) throw new Error("Не найдены строки «Задание на перевозку». Проверьте структуру первого листа."); return trips;
 }
 function resetLogisticsImport(clear=true) { state.logistics.preview=null; state.logistics.sourceTrips=[]; state.logistics.fileName=""; $("logistics-import-result").hidden=true; $("logistics-commit-button").disabled=true; if(clear) $("logistics-file").value=""; $("logistics-preview-button").disabled=!$("logistics-file").files?.[0] || !isSystemAdmin(); }
+const LOGISTICS_PREVIEW_CHUNK_SIZE = 40;
+function mergeLogisticsPreviewParts(parts) {
+  const summary = { tripCount:0,lineCount:0,ignoredCount:0,matchedCount:0,clientOnlyCount:0,unresolvedCount:0,redTrips:0,yellowTrips:0,greenTrips:0,totalShipment:0,totalCost:0,totalPercent:0 };
+  const warehouseAliases=new Set(), vehicleAliases=new Set(), trips=[];
+  let periodExists=false, periodLabel="";
+  parts.forEach((part)=>{ const s=part.summary||{}; periodExists=periodExists||Boolean(part.periodExists); periodLabel=periodLabel||part.periodLabel||"";
+    ["tripCount","lineCount","ignoredCount","matchedCount","clientOnlyCount","unresolvedCount","redTrips","yellowTrips","greenTrips","totalShipment","totalCost"].forEach((key)=>{summary[key]+=Number(s[key]||0);});
+    (part.warehouseAliases||[]).forEach((value)=>warehouseAliases.add(value)); (part.vehicleAliases||[]).forEach((value)=>vehicleAliases.add(value)); trips.push(...(part.trips||[]));
+  });
+  summary.totalPercent=summary.totalShipment>0?(summary.totalCost/summary.totalShipment)*100:0;
+  return {periodExists,periodLabel,summary,warehouseAliases:[...warehouseAliases].sort(),vehicleAliases:[...vehicleAliases].sort(),trips};
+}
 async function previewLogisticsFile() {
-  const file=$("logistics-file").files?.[0]; if(!file) return; $("logistics-import-progress").hidden=false; $("logistics-preview-button").disabled=true;
-  try { const trips=await readLogisticsFile(file); state.logistics.sourceTrips=trips; state.logistics.fileName=file.name;
-    const data=await api("/admin/logistics-import",{method:"POST",body:JSON.stringify({operation:"preview",year:Number($("logistics-year").value),month:Number($("logistics-month").value),fileName:file.name,trips}) ,timeout:120000});
-    state.logistics.preview=data; state.logistics.observedWarehouses=data.warehouseAliases||[]; state.logistics.observedVehicles=data.vehicleAliases||[]; renderLogisticsPreview();
-  } catch(exc){ $("logistics-error").textContent=exc.message; $("logistics-error").hidden=false; } finally { $("logistics-import-progress").hidden=true; $("logistics-preview-button").disabled=false; }
+  const file=$("logistics-file").files?.[0]; if(!file) return; const progress=$("logistics-import-progress"); progress.hidden=false; $("logistics-preview-button").disabled=true; $("logistics-error").hidden=true;
+  try { const trips=await readLogisticsFile(file); state.logistics.sourceTrips=trips; state.logistics.fileName=file.name; const parts=[];
+    for(let start=0;start<trips.length;start+=LOGISTICS_PREVIEW_CHUNK_SIZE){ const chunk=trips.slice(start,start+LOGISTICS_PREVIEW_CHUNK_SIZE); const done=Math.min(start+chunk.length,trips.length); progress.textContent=`Разбор и сопоставление файла: ${done} из ${trips.length} рейсов…`;
+      parts.push(await api("/admin/logistics-import",{method:"POST",body:JSON.stringify({operation:"preview",year:Number($("logistics-year").value),month:Number($("logistics-month").value),fileName:file.name,trips:chunk}),timeout:180000}));
+    }
+    const data=mergeLogisticsPreviewParts(parts); state.logistics.preview=data; state.logistics.observedWarehouses=data.warehouseAliases||[]; state.logistics.observedVehicles=data.vehicleAliases||[]; renderLogisticsPreview();
+  } catch(exc){ $("logistics-error").textContent=exc.message; $("logistics-error").hidden=false; } finally { progress.textContent="Разбор и сопоставление файла…"; progress.hidden=true; $("logistics-preview-button").disabled=false; }
 }
 function renderLogisticsPreview() {
   const data=state.logistics.preview, s=data.summary||{}; $("logistics-preview-trips").textContent=s.tripCount||0; $("logistics-preview-lines").textContent=s.lineCount||0; $("logistics-preview-matched").textContent=s.matchedCount||0; $("logistics-preview-client-only").textContent=s.clientOnlyCount||0; $("logistics-preview-ignored").textContent=s.ignoredCount||0; $("logistics-preview-unresolved").textContent=s.unresolvedCount||0;
@@ -3265,7 +3279,7 @@ function applyLogisticsManualMatch(select) { const trip=state.logistics.sourceTr
 async function commitLogistics() {
   const button=$("logistics-commit-button"); button.disabled=true; button.textContent="Загрузка…";
   try { const body={operation:"commit",year:Number($("logistics-year").value),month:Number($("logistics-month").value),fileName:state.logistics.fileName,trips:state.logistics.sourceTrips,replace:Boolean(state.logistics.preview?.periodExists)};
-    const result=await api("/admin/logistics-import",{method:"POST",body:JSON.stringify(body),timeout:180000}); showToast(result.message||"Логистика загружена"); resetLogisticsImport(true); state.logistics.loaded=false; await loadLogistics(true); setLogisticsTab("overview");
+    const result=await api("/admin/logistics-import",{method:"POST",body:JSON.stringify(body),timeout:600000}); showToast(result.message||"Логистика загружена"); resetLogisticsImport(true); state.logistics.loaded=false; await loadLogistics(true); setLogisticsTab("overview");
   } catch(exc){ $("logistics-error").textContent=exc.message; $("logistics-error").hidden=false; button.disabled=false; } finally { button.textContent="Загрузить логистику"; }
 }
 async function loadLogisticsDictionaries(force=false) { if(state.logistics.dictionaries&&!force){renderLogisticsDictionaries();return;} try{state.logistics.dictionaries=await api("/logistics?view=dictionaries");renderLogisticsDictionaries();}catch(exc){$("logistics-error").textContent=exc.message;$("logistics-error").hidden=false;} }
