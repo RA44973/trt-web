@@ -5,12 +5,14 @@ const SESSION_KEY = "trt_web_session";
 const TRT_MAP_VIEW_KEY = "trt_web_map_view";
 const TRT_MAP_DEFAULT_CENTER = [55.7558, 37.6173];
 const TRT_MAP_DEFAULT_ZOOM = 10;
-const PAGES = new Set(["employees", "sales-import", "tasks", "visits", "trt"]);
+const PAGES = new Set(["employees", "sales-import", "activity", "tasks", "visits", "trt"]);
 
 const state = {
   token: localStorage.getItem(SESSION_KEY) || sessionStorage.getItem(SESSION_KEY) || "",
   user: null,
   employees: [],
+  activity: [],
+  activityLoaded: false,
   tasks: [],
   tasksLoaded: false,
   taskSelectedId: "",
@@ -72,6 +74,8 @@ function showToast(message) {
 
 function resetProtectedState() {
   state.employees = [];
+  state.activity = [];
+  state.activityLoaded = false;
   state.tasks = [];
   state.tasksLoaded = false;
   state.taskSelectedId = "";
@@ -107,7 +111,7 @@ function setNavGroupExpanded(groupName, expanded) {
 
 function syncSidebarNavigation(page) {
   const isTrt = page === "trt";
-  const isSettings = page === "employees" || page === "sales-import";
+  const isSettings = page === "employees" || page === "sales-import" || page === "activity";
   if (isTrt) setNavGroupExpanded("trt", true);
   if (isSettings) setNavGroupExpanded("settings", true);
 
@@ -311,7 +315,7 @@ function mountTrtToolsInMainSidebar() {
 
 function showPage(page, updateHash = true) {
   let nextPage = PAGES.has(page) ? page : "trt";
-  if (["employees", "sales-import"].includes(nextPage) && !isSystemAdmin()) nextPage = "trt";
+  if (["employees", "sales-import", "activity"].includes(nextPage) && !isSystemAdmin()) nextPage = "trt";
   state.currentPage = nextPage;
   mountTrtToolsInMainSidebar();
   const trtTools = document.querySelector(".main-sidebar-trt-tools");
@@ -339,6 +343,10 @@ function showPage(page, updateHash = true) {
     initializeSalesImportPeriod();
   }
 
+  if (nextPage === "activity" && state.token) {
+    loadActivity();
+  }
+
   if (nextPage === "tasks" && state.token) {
     loadTasks();
   }
@@ -362,17 +370,19 @@ function showApp() {
   const settingsNavGroup = $("settings-nav-group");
   const employeesPage = $("page-employees");
   const salesImportPage = $("page-sales-import");
+  const activityPage = $("page-activity");
   const gdAdmin = isSystemAdmin();
   if (settingsNavGroup) settingsNavGroup.hidden = !gdAdmin;
   if (employeesPage && !gdAdmin) employeesPage.hidden = true;
   if (salesImportPage && !gdAdmin) salesImportPage.hidden = true;
+  if (activityPage && !gdAdmin) activityPage.hidden = true;
 
   $("add-employee-button").hidden = !gdAdmin;
   $("add-employee-button").title = gdAdmin
     ? "Добавить сотрудника и создать ему учётную запись"
     : "Раздел доступен только администратору";
 
-  if (!gdAdmin && ["employees", "sales-import"].includes(state.currentPage)) state.currentPage = "trt";
+  if (!gdAdmin && ["employees", "sales-import", "activity"].includes(state.currentPage)) state.currentPage = "trt";
   showPage(state.currentPage, true);
 }
 
@@ -444,6 +454,128 @@ async function restoreSession() {
     showLogin();
   }
 }
+
+function activityDateTime(value) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return String(value);
+  return new Intl.DateTimeFormat("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function activityLocalDateKey(value) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "";
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function activitySourceLabel(value) {
+  return value === "web" ? "Веб-кабинет" : "МП";
+}
+
+function fillActivityEmployeeFilter() {
+  const select = $("activity-employee-filter");
+  if (!select) return;
+  const current = select.value;
+  const people = [...new Map(
+    state.activity
+      .filter((item) => item.employeeId || item.employeeName)
+      .map((item) => [String(item.employeeId || item.employeeName), {
+        id: String(item.employeeId || item.employeeName),
+        name: shortPersonName(item.employeeName) || "—",
+      }])
+  ).values()].sort((a, b) => a.name.localeCompare(b.name, "ru"));
+  select.innerHTML = `<option value="">Все сотрудники</option>${people.map((person) => (
+    `<option value="${escapeHtml(person.id)}">${escapeHtml(person.name)}</option>`
+  )).join("")}`;
+  if (people.some((person) => person.id === current)) select.value = current;
+}
+
+function filteredActivity() {
+  const query = $("activity-search").value.trim().toLowerCase();
+  const employeeId = $("activity-employee-filter").value;
+  const actionType = $("activity-action-filter").value;
+  const source = $("activity-source-filter").value;
+  const dateFrom = $("activity-date-from").value;
+  const dateTo = $("activity-date-to").value;
+
+  return state.activity.filter((item) => {
+    if (employeeId && String(item.employeeId || item.employeeName) !== employeeId) return false;
+    if (actionType && item.actionType !== actionType) return false;
+    if (source && item.source !== source) return false;
+    const dateKey = activityLocalDateKey(item.occurredAt);
+    if (dateFrom && dateKey && dateKey < dateFrom) return false;
+    if (dateTo && dateKey && dateKey > dateTo) return false;
+    if (!query) return true;
+    return [
+      item.employeeName,
+      item.action,
+      item.section,
+      item.pointName,
+      item.address,
+      item.details,
+      item.deviceName,
+    ].join(" ").toLowerCase().includes(query);
+  });
+}
+
+function renderActivity() {
+  const rows = filteredActivity();
+  const today = activityLocalDateKey(new Date().toISOString());
+  const todayRows = state.activity.filter((item) => activityLocalDateKey(item.occurredAt) === today);
+  $("activity-today").textContent = todayRows.length;
+  $("activity-users-today").textContent = new Set(todayRows.map((item) => item.employeeId || item.employeeName).filter(Boolean)).size;
+  $("activity-visits").textContent = state.activity.filter((item) => item.actionType === "visit").length;
+  $("activity-tasks").textContent = state.activity.filter((item) => item.actionType === "task").length;
+  $("activity-media").textContent = state.activity.filter((item) => item.actionType === "media").length;
+
+  $("activity-loading").hidden = true;
+  $("activity-empty").hidden = rows.length > 0;
+  $("activity-table-body").innerHTML = rows.map((item) => {
+    const where = item.pointName || item.section || "—";
+    const address = item.address ? `<span class="activity-address">${escapeHtml(item.address)}</span>` : "";
+    const device = item.deviceName ? `<span class="activity-device">${escapeHtml(item.deviceName)}</span>` : "";
+    return `
+      <tr>
+        <td class="activity-time">${escapeHtml(activityDateTime(item.occurredAt))}</td>
+        <td><strong>${escapeHtml(shortPersonName(item.employeeName) || "—")}</strong></td>
+        <td><span class="badge ${item.source === "web" ? "account" : "success"}">${escapeHtml(activitySourceLabel(item.source))}</span>${device}</td>
+        <td><strong>${escapeHtml(item.action || "—")}</strong><span class="activity-section">${escapeHtml(item.section || "")}</span></td>
+        <td><strong>${escapeHtml(where)}</strong>${address}</td>
+        <td class="activity-details">${escapeHtml(item.details || "—")}</td>
+      </tr>`;
+  }).join("");
+}
+
+async function loadActivity(force = false) {
+  if (!isSystemAdmin()) return;
+  if (state.activityLoaded && !force) {
+    renderActivity();
+    return;
+  }
+  $("activity-loading").hidden = false;
+  $("activity-loading").textContent = "Загрузка активности…";
+  $("activity-empty").hidden = true;
+  try {
+    const result = await api("/activity");
+    state.activity = Array.isArray(result.events) ? result.events : [];
+    state.activityLoaded = true;
+    fillActivityEmployeeFilter();
+    renderActivity();
+  } catch (error) {
+    $("activity-loading").hidden = false;
+    $("activity-loading").textContent = error.message;
+  }
+}
+
 
 async function loadEmployees() {
   if (!isSystemAdmin()) {
@@ -2350,25 +2482,12 @@ function openTrtSales() {
   const sales2026 = (Array.isArray(point.sales?.["2026"]) ? point.sales["2026"] : [])
     .concat(Array(12).fill(null)).slice(0, 12);
   const unit = trtUnit(point);
-  const currentYear = analyticsCurrentYear();
-  const previousYear = currentYear - 1;
-  const lastMonthIndex = Math.max(0, analyticsLastCompleteMonthIndex());
-  const comparedMonthCount = Math.min(12, lastMonthIndex + 1);
-  const periodLabel = comparedMonthCount === 1
-    ? "Январь"
-    : `Январь–${SALES_IMPORT_MONTHS[comparedMonthCount - 1].toLowerCase()}`;
-  const previousSales = (Array.isArray(point.sales?.[String(previousYear)]) ? point.sales[String(previousYear)] : [])
-    .concat(Array(12).fill(null)).slice(0, 12);
-  const currentSales = (Array.isArray(point.sales?.[String(currentYear)]) ? point.sales[String(currentYear)] : [])
-    .concat(Array(12).fill(null)).slice(0, 12);
-  const ytd2025 = sumSales(previousSales, comparedMonthCount);
-  const ytd2026 = sumSales(currentSales, comparedMonthCount);
+  const ytd2025 = sumSales(sales2025, 6);
+  const ytd2026 = sumSales(sales2026, 6);
   const yoy = ytd2025 ? ((ytd2026 - ytd2025) / ytd2025) * 100 : null;
 
   $("trt-sales-modal-title").textContent = `Продажи: ${point.client || point.holding || "ТРТ"}`;
-  $("trt-sales-modal-subtitle").textContent = `Сравнение ${previousYear} и ${currentYear} годов за одинаковый период, единица: ${unit}`;
-  $("trt-sales-ytd-label-2025").textContent = `${periodLabel} ${previousYear}`;
-  $("trt-sales-ytd-label-2026").textContent = `${periodLabel} ${currentYear}`;
+  $("trt-sales-modal-subtitle").textContent = `Сравнение 2025 и 2026 годов, единица: ${unit}`;
   $("trt-sales-ytd-2025").textContent = formatSales(ytd2025, unit);
   $("trt-sales-ytd-2026").textContent = formatSales(ytd2026, unit);
   $("trt-sales-yoy").textContent = yoy === null
@@ -2388,8 +2507,8 @@ function openTrtSales() {
       labels: analyticsMonthLabels(),
       datasets: [
         {
-          label: String(previousYear),
-          data: previousSales,
+          label: "2025",
+          data: sales2025,
           backgroundColor: "#b9dcff",
           borderColor: "#8fc5f5",
           borderWidth: 1,
@@ -2397,8 +2516,8 @@ function openTrtSales() {
           maxBarThickness: 34,
         },
         {
-          label: String(currentYear),
-          data: currentSales,
+          label: "2026",
+          data: sales2026,
           backgroundColor: "#1677ff",
           borderColor: "#0b5ed7",
           borderWidth: 1,
@@ -2505,8 +2624,6 @@ function resetSalesImport(clearFile = true) {
   $("sales-import-progress").hidden = true;
   $("sales-import-commit-button").disabled = true;
   if (clearFile) $("sales-import-file").value = "";
-  resetSalesImportFilters(false);
-  if ($("sales-import-filter-count")) $("sales-import-filter-count").textContent = "Показано: 0";
   updateSalesImportPreviewButton();
 }
 
@@ -2550,102 +2667,22 @@ async function readSalesImportFile(file) {
     throw new Error(`Не найдены обязательные столбцы: ${missingKeys.join(", ")}.`);
   }
 
-  return rawRows.map((row, index) => {
-    const quantityRaw = row[normalizedToOriginal.get(SALES_IMPORT_REQUIRED_HEADERS.quantity)];
-    return {
-      rowNumber: index + 2,
-      direction: String(row[normalizedToOriginal.get(SALES_IMPORT_REQUIRED_HEADERS.direction)] ?? "").trim(),
-      manager: String(row[normalizedToOriginal.get(SALES_IMPORT_REQUIRED_HEADERS.manager)] ?? "").trim(),
-      client: String(row[normalizedToOriginal.get(SALES_IMPORT_REQUIRED_HEADERS.client)] ?? "").trim(),
-      location: String(row[normalizedToOriginal.get(SALES_IMPORT_REQUIRED_HEADERS.location)] ?? "").trim(),
-      quantityRaw: quantityRaw ?? "",
-      quantity: parseSalesQuantity(quantityRaw),
-    };
-  });
+  return rawRows.map((row, index) => ({
+    rowNumber: index + 2,
+    direction: String(row[normalizedToOriginal.get(SALES_IMPORT_REQUIRED_HEADERS.direction)] ?? "").trim(),
+    manager: String(row[normalizedToOriginal.get(SALES_IMPORT_REQUIRED_HEADERS.manager)] ?? "").trim(),
+    client: String(row[normalizedToOriginal.get(SALES_IMPORT_REQUIRED_HEADERS.client)] ?? "").trim(),
+    location: String(row[normalizedToOriginal.get(SALES_IMPORT_REQUIRED_HEADERS.location)] ?? "").trim(),
+    quantity: parseSalesQuantity(row[normalizedToOriginal.get(SALES_IMPORT_REQUIRED_HEADERS.quantity)]),
+  }));
 }
 
 function salesImportStatusBadge(row) {
   const status = String(row.status || "").toLowerCase();
   if (status === "matched") return `<span class="badge success">Найдено</span>`;
   if (status === "ambiguous") return `<span class="badge warning">Несколько ТРТ</span>`;
-  if (status === "missing_trt") return `<span class="badge warning">ТРТ не заполнена</span>`;
   if (status === "invalid") return `<span class="badge danger">Ошибка</span>`;
-  if (status === "skipped") return `<span class="badge inactive">Нет продаж</span>`;
   return `<span class="badge inactive">ТРТ не найдена</span>`;
-}
-
-function salesImportFilterValue(id) {
-  return String($(id)?.value || "").trim();
-}
-
-function fillSalesImportFilterOptions(rows) {
-  const directionSelect = $("sales-import-direction-filter");
-  const managerSelect = $("sales-import-manager-filter");
-  if (!directionSelect || !managerSelect) return;
-
-  const currentDirection = directionSelect.value;
-  const currentManager = managerSelect.value;
-  const directions = [...new Set(rows.map((row) => String(row.direction || "").trim()).filter(Boolean))]
-    .sort((a, b) => a.localeCompare(b, "ru"));
-  const managers = [...new Set(rows.map((row) => String(row.manager || "").trim()).filter(Boolean))]
-    .sort((a, b) => shortPersonName(a).localeCompare(shortPersonName(b), "ru"));
-
-  directionSelect.innerHTML = `<option value="">Все направления</option>${directions.map((value) => (
-    `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`
-  )).join("")}`;
-  managerSelect.innerHTML = `<option value="">Все менеджеры</option>${managers.map((value) => (
-    `<option value="${escapeHtml(value)}">${escapeHtml(shortPersonName(value) || value)}</option>`
-  )).join("")}`;
-
-  if (directions.includes(currentDirection)) directionSelect.value = currentDirection;
-  if (managers.includes(currentManager)) managerSelect.value = currentManager;
-}
-
-function filteredSalesImportRows() {
-  const rows = Array.isArray(salesImportPreview?.rows) ? salesImportPreview.rows : [];
-  const status = salesImportFilterValue("sales-import-status-filter") || "problem";
-  const direction = salesImportFilterValue("sales-import-direction-filter");
-  const manager = salesImportFilterValue("sales-import-manager-filter");
-  const client = normalizeText(salesImportFilterValue("sales-import-client-filter"));
-  const location = normalizeText(salesImportFilterValue("sales-import-location-filter"));
-
-  return rows.filter((row) => {
-    const rowStatus = String(row.status || "unmatched").toLowerCase();
-    if (status === "problem" && !["unmatched", "ambiguous", "missing_trt", "invalid"].includes(rowStatus)) return false;
-    if (status !== "all" && status !== "problem" && rowStatus !== status) return false;
-    if (direction && String(row.direction || "") !== direction) return false;
-    if (manager && String(row.manager || "") !== manager) return false;
-    if (client && !normalizeText(row.client).includes(client)) return false;
-    if (location && !normalizeText(`${row.location || ""} ${row.message || ""}`).includes(location)) return false;
-    return true;
-  });
-}
-
-function renderSalesImportRows() {
-  const rows = filteredSalesImportRows();
-  $("sales-import-table-body").innerHTML = rows.map((row) => `
-    <tr class="sales-import-row-${escapeHtml(row.status || "unmatched")}">
-      <td>${escapeHtml(row.rowNumber)}</td>
-      <td>${escapeHtml(row.direction || "—")}</td>
-      <td>${escapeHtml(shortPersonName(row.manager) || "—")}</td>
-      <td>${escapeHtml(row.client || "—")}</td>
-      <td><strong>${escapeHtml(row.location || "—")}</strong>${row.message ? `<small>${escapeHtml(row.message)}</small>` : ""}</td>
-      <td>${row.quantity === null || row.quantity === undefined ? "—" : escapeHtml(Number(row.quantity).toLocaleString("ru-RU"))}</td>
-      <td>${salesImportStatusBadge(row)}</td>
-    </tr>`).join("");
-
-  const total = Array.isArray(salesImportPreview?.rows) ? salesImportPreview.rows.length : 0;
-  const counter = $("sales-import-filter-count");
-  if (counter) counter.textContent = `Показано: ${rows.length.toLocaleString("ru-RU")} из ${total.toLocaleString("ru-RU")}`;
-}
-
-function resetSalesImportFilters(render = true) {
-  if ($("sales-import-status-filter")) $("sales-import-status-filter").value = "problem";
-  if ($("sales-import-direction-filter")) $("sales-import-direction-filter").value = "";
-  if ($("sales-import-manager-filter")) $("sales-import-manager-filter").value = "";
-  if ($("sales-import-client-filter")) $("sales-import-client-filter").value = "";
-  if ($("sales-import-location-filter")) $("sales-import-location-filter").value = "";
-  if (render) renderSalesImportRows();
 }
 
 function renderSalesImportPreview(payload) {
@@ -2655,10 +2692,6 @@ function renderSalesImportPreview(payload) {
   $("sales-import-matched-rows").textContent = Number(summary.matchedRows || 0).toLocaleString("ru-RU");
   $("sales-import-unmatched-rows").textContent = Number(summary.unmatchedRows || 0).toLocaleString("ru-RU");
   $("sales-import-invalid-rows").textContent = Number(summary.invalidRows || 0).toLocaleString("ru-RU");
-  const missingTrtNode = $("sales-import-missing-trt-rows");
-  if (missingTrtNode) missingTrtNode.textContent = Number(summary.missingTrtRows || 0).toLocaleString("ru-RU");
-  const skippedNode = $("sales-import-skipped-rows");
-  if (skippedNode) skippedNode.textContent = Number(summary.skippedRows || 0).toLocaleString("ru-RU");
   $("sales-import-total-quantity").textContent = Number(summary.totalQuantity || 0).toLocaleString("ru-RU");
 
   const warning = $("sales-import-period-warning");
@@ -2673,9 +2706,16 @@ function renderSalesImportPreview(payload) {
   )).join("");
 
   const rows = Array.isArray(payload.rows) ? payload.rows : [];
-  fillSalesImportFilterOptions(rows);
-  resetSalesImportFilters(false);
-  renderSalesImportRows();
+  $("sales-import-table-body").innerHTML = rows.map((row) => `
+    <tr class="sales-import-row-${escapeHtml(row.status || "unmatched")}">
+      <td>${escapeHtml(row.rowNumber)}</td>
+      <td>${escapeHtml(row.direction || "—")}</td>
+      <td>${escapeHtml(shortPersonName(row.manager) || "—")}</td>
+      <td>${escapeHtml(row.client || "—")}</td>
+      <td><strong>${escapeHtml(row.location || "—")}</strong>${row.message ? `<small>${escapeHtml(row.message)}</small>` : ""}</td>
+      <td>${row.quantity === null || row.quantity === undefined ? "—" : escapeHtml(Number(row.quantity).toLocaleString("ru-RU"))}</td>
+      <td>${salesImportStatusBadge(row)}</td>
+    </tr>`).join("");
 
   $("sales-import-result").hidden = false;
   $("sales-import-commit-button").disabled = Number(summary.matchedRows || 0) === 0;
@@ -2694,11 +2734,10 @@ async function previewSalesImport() {
   try {
     salesImportSourceRows = await readSalesImportFile(file);
     salesImportFileName = file.name;
-    const payload = await api("/employees", {
+    const payload = await api("/admin/sales-import", {
       method: "POST",
       body: JSON.stringify({
-        operation: "sales_import",
-        salesOperation: "preview",
+        operation: "preview",
         year: Number($("sales-import-year").value),
         month: Number($("sales-import-month").value),
         fileName: file.name,
@@ -2732,11 +2771,10 @@ async function commitSalesImport() {
   button.disabled = true;
   button.textContent = replace ? "Замена данных…" : "Загрузка…";
   try {
-    const result = await api("/employees", {
+    const result = await api("/admin/sales-import", {
       method: "POST",
       body: JSON.stringify({
-        operation: "sales_import",
-        salesOperation: "commit",
+        operation: "commit",
         year,
         month,
         fileName: salesImportFileName,
@@ -2755,21 +2793,6 @@ async function commitSalesImport() {
   } finally {
     button.textContent = "Загрузить продажи";
   }
-}
-
-
-function openSalesImportInfo() {
-  const modal = $("sales-import-info-modal");
-  if (!modal) return;
-  modal.hidden = false;
-  document.body.style.overflow = "hidden";
-}
-
-function closeSalesImportInfo() {
-  const modal = $("sales-import-info-modal");
-  if (!modal) return;
-  modal.hidden = true;
-  document.body.style.overflow = "";
 }
 
 async function logout() {
@@ -2916,27 +2939,6 @@ document.querySelectorAll("[data-page]").forEach((button) => {
   });
 });
 
-[
-  "sales-import-status-filter",
-  "sales-import-direction-filter",
-  "sales-import-manager-filter",
-].forEach((id) => $(id)?.addEventListener("change", renderSalesImportRows));
-[
-  "sales-import-client-filter",
-  "sales-import-location-filter",
-].forEach((id) => $(id)?.addEventListener("input", renderSalesImportRows));
-$("sales-import-filter-reset")?.addEventListener("click", () => resetSalesImportFilters(true));
-
-
-$("sales-import-info-button")?.addEventListener("click", openSalesImportInfo);
-$("sales-import-info-close")?.addEventListener("click", closeSalesImportInfo);
-$("sales-import-info-modal")?.addEventListener("click", (event) => {
-  if (event.target === $("sales-import-info-modal")) closeSalesImportInfo();
-});
-document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && !$("sales-import-info-modal")?.hidden) closeSalesImportInfo();
-});
-
 $("sales-import-file").addEventListener("change", () => {
   resetSalesImport(false);
   updateSalesImportPreviewButton();
@@ -2946,6 +2948,13 @@ $("sales-import-month").addEventListener("change", () => resetSalesImport(false)
 $("sales-import-preview-button").addEventListener("click", previewSalesImport);
 $("sales-import-reset-button").addEventListener("click", () => resetSalesImport(true));
 $("sales-import-commit-button").addEventListener("click", commitSalesImport);
+
+["activity-search", "activity-employee-filter", "activity-action-filter", "activity-source-filter", "activity-date-from", "activity-date-to"].forEach((id) => {
+  const element = $(id);
+  if (!element) return;
+  element.addEventListener(id === "activity-search" ? "input" : "change", renderActivity);
+});
+$("activity-refresh")?.addEventListener("click", () => loadActivity(true));
 
 window.addEventListener("hashchange", () => {
   const page = location.hash.slice(1);

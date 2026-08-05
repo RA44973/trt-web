@@ -11,7 +11,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
-  <link rel="stylesheet" href="styles.css?v=20260803-map-fixed-ytd-dynamic">
+  <link rel="stylesheet" href="styles.css?v=20260805-activity-1">
 </head>
 <body>
   <div id="toast" class="toast" hidden></div>
@@ -87,6 +87,7 @@
           <div class="nav-submenu" data-nav-submenu="settings" hidden>
             <button class="nav-subitem" type="button" data-page="employees">Сотрудники</button>
             <button class="nav-subitem" type="button" data-page="sales-import">Загрузка продаж</button>
+            <button class="nav-subitem" type="button" data-page="activity">Активность</button>
           </div>
         </div>
       </nav>
@@ -323,7 +324,7 @@
         <header class="page-header">
           <div>
             <p class="eyebrow">Настройки · Сервисные операции</p>
-            <div class="sales-import-title-row"><h1>Загрузка продаж</h1><button id="sales-import-info-button" class="sales-import-info-button" type="button" aria-label="Инструкция по загрузке продаж" title="Инструкция по загрузке продаж">i</button></div>
+            <h1>Загрузка продаж</h1>
             <p class="page-description">Загрузка итоговых продаж за выбранный месяц с обязательной проверкой сопоставления торговых точек.</p>
           </div>
         </header>
@@ -375,51 +376,12 @@
               <article><span>Строк в файле</span><strong id="sales-import-total-rows">0</strong></article>
               <article><span>Сопоставлено</span><strong id="sales-import-matched-rows">0</strong></article>
               <article><span>Не сопоставлено</span><strong id="sales-import-unmatched-rows">0</strong></article>
-              <article><span>ТРТ не заполнена</span><strong id="sales-import-missing-trt-rows">0</strong></article>
-              <article><span>Другие ошибки</span><strong id="sales-import-invalid-rows">0</strong></article>
-              <article><span>Пропущено: нет продаж</span><strong id="sales-import-skipped-rows">0</strong></article>
+              <article><span>Ошибок</span><strong id="sales-import-invalid-rows">0</strong></article>
               <article><span>Итоговое количество</span><strong id="sales-import-total-quantity">0</strong></article>
             </div>
 
             <div id="sales-import-period-warning" class="sales-import-warning" hidden></div>
             <div id="sales-import-direction-totals" class="sales-import-direction-totals"></div>
-
-            <div class="sales-import-filters" aria-label="Фильтры результатов проверки">
-              <label>
-                Результат
-                <select id="sales-import-status-filter">
-                  <option value="problem">Только проблемные</option>
-                  <option value="all">Все строки</option>
-                  <option value="matched">Сопоставленные</option>
-                  <option value="unmatched">ТРТ не найдена</option>
-                  <option value="ambiguous">Несколько ТРТ</option>
-                  <option value="missing_trt">ТРТ не заполнена</option>
-                  <option value="invalid">Другие ошибки</option>
-                </select>
-              </label>
-              <label>
-                Направление
-                <select id="sales-import-direction-filter">
-                  <option value="">Все направления</option>
-                </select>
-              </label>
-              <label>
-                Менеджер
-                <select id="sales-import-manager-filter">
-                  <option value="">Все менеджеры</option>
-                </select>
-              </label>
-              <label>
-                Клиент
-                <input id="sales-import-client-filter" type="search" placeholder="Поиск по клиенту">
-              </label>
-              <label>
-                ТРТ / местоположение
-                <input id="sales-import-location-filter" type="search" placeholder="Поиск по адресу или ТРТ">
-              </label>
-              <button id="sales-import-filter-reset" class="secondary-button sales-import-filter-reset" type="button">Сбросить</button>
-              <div id="sales-import-filter-count" class="sales-import-filter-count">Показано: 0</div>
-            </div>
 
             <div class="table-wrap sales-import-table-wrap">
               <table class="sales-import-table">
@@ -445,6 +407,101 @@
           </section>
         </section>
       </section>
+
+      <section id="page-activity" class="page-view" hidden>
+        <header class="page-header">
+          <div>
+            <p class="eyebrow">Настройки · Контроль работы</p>
+            <h1>Активность</h1>
+            <p class="page-description">Основные действия пользователей в мобильном приложении и веб-кабинете: входы, визиты, задачи, материалы и новые ТРТ.</p>
+          </div>
+          <button id="activity-refresh" class="secondary-button" type="button">Обновить</button>
+        </header>
+
+        <section class="summary-grid activity-summary-grid" aria-label="Сводка активности">
+          <article class="summary-card">
+            <span>Действий сегодня</span>
+            <strong id="activity-today">0</strong>
+          </article>
+          <article class="summary-card">
+            <span>Пользователей сегодня</span>
+            <strong id="activity-users-today">0</strong>
+          </article>
+          <article class="summary-card">
+            <span>Визитов</span>
+            <strong id="activity-visits">0</strong>
+          </article>
+          <article class="summary-card">
+            <span>Задач</span>
+            <strong id="activity-tasks">0</strong>
+          </article>
+          <article class="summary-card">
+            <span>Фото и видео</span>
+            <strong id="activity-media">0</strong>
+          </article>
+        </section>
+
+        <section class="content-card">
+          <div class="activity-toolbar">
+            <label class="search-field activity-search-field">
+              <span>Поиск</span>
+              <input id="activity-search" type="search" placeholder="Сотрудник, действие, ТРТ, адрес">
+            </label>
+            <label class="filter-field">
+              <span>Сотрудник</span>
+              <select id="activity-employee-filter">
+                <option value="">Все сотрудники</option>
+              </select>
+            </label>
+            <label class="filter-field">
+              <span>Действие</span>
+              <select id="activity-action-filter">
+                <option value="">Все действия</option>
+                <option value="login">Вход</option>
+                <option value="visit">Визит</option>
+                <option value="task">Задача</option>
+                <option value="media">Фото и видео</option>
+                <option value="trt">Новая ТРТ</option>
+              </select>
+            </label>
+            <label class="filter-field">
+              <span>Источник</span>
+              <select id="activity-source-filter">
+                <option value="">МП и сайт</option>
+                <option value="mobile">Мобильное приложение</option>
+                <option value="web">Веб-кабинет</option>
+              </select>
+            </label>
+            <label class="filter-field">
+              <span>Дата с</span>
+              <input id="activity-date-from" type="date">
+            </label>
+            <label class="filter-field">
+              <span>Дата по</span>
+              <input id="activity-date-to" type="date">
+            </label>
+          </div>
+
+          <div class="table-wrap">
+            <table class="activity-table">
+              <thead>
+                <tr>
+                  <th>Когда</th>
+                  <th>Кто</th>
+                  <th>Источник</th>
+                  <th>Что сделал</th>
+                  <th>Где</th>
+                  <th>Подробности</th>
+                </tr>
+              </thead>
+              <tbody id="activity-table-body"></tbody>
+            </table>
+            <div id="activity-empty" class="empty-state" hidden>Действия не найдены.</div>
+            <div id="activity-loading" class="loading-state">Загрузка активности…</div>
+          </div>
+        </section>
+      </section>
+
       <section id="page-trt" class="page-view trt-page legacy-trt-page" hidden>
         <div class="legacy-trt-shell">
           <aside class="legacy-trt-sidebar">
@@ -638,32 +695,6 @@
       </section>
 
     </main>
-  </div>
-
-  <div id="sales-import-info-modal" class="sales-import-info-backdrop" hidden>
-    <section class="sales-import-info-dialog" role="dialog" aria-modal="true" aria-labelledby="sales-import-info-title">
-      <header class="sales-import-info-header">
-        <div>
-          <p class="eyebrow">Инструкция</p>
-          <h2 id="sales-import-info-title">Как загружать продажи</h2>
-        </div>
-        <button id="sales-import-info-close" class="icon-button" type="button" aria-label="Закрыть">×</button>
-      </header>
-      <div class="sales-import-info-body">
-        <ol>
-          <li>Выберите год, месяц и полный Excel-файл за этот месяц.</li>
-          <li>Нажмите «Проверить файл». В систему будут записаны только строки со статусом «Сопоставлено».</li>
-          <li>Строки «ТРТ не найдена», «Несколько ТРТ», «ТРТ не заполнена» и «Другие ошибки» не загружаются.</li>
-          <li>Если в столбце «Количество» нет числа, строка считается строкой без продаж, пропускается и не является ошибкой.</li>
-          <li>После проверки нажмите «Загрузить продажи».</li>
-        </ol>
-        <div class="sales-import-info-warning">
-          <strong>Повторная загрузка месяца полностью заменяет ранее загруженные данные за этот месяц.</strong>
-          Поэтому после исправления проблемных строк загружайте заново весь исправленный файл, а не отдельный файл только с ошибками.
-        </div>
-        <p>Ранее загруженные данные за другие месяцы не изменяются.</p>
-      </div>
-    </section>
   </div>
 
   <dialog id="employee-dialog" class="employee-dialog">
@@ -888,8 +919,8 @@
       </header>
       <div class="sales-chart-wrap"><canvas id="trt-sales-chart"></canvas></div>
       <div class="sales-summary-grid">
-        <article><span id="trt-sales-ytd-label-2025">Период 2025</span><strong id="trt-sales-ytd-2025">—</strong></article>
-        <article><span id="trt-sales-ytd-label-2026">Период 2026</span><strong id="trt-sales-ytd-2026">—</strong></article>
+        <article><span>Январь–июнь 2025</span><strong id="trt-sales-ytd-2025">—</strong></article>
+        <article><span>Январь–июнь 2026</span><strong id="trt-sales-ytd-2026">—</strong></article>
         <article id="trt-sales-yoy-box" class="sales-yoy-box sales-yoy-neutral">
           <span>Изменение год к году</span><strong id="trt-sales-yoy">—</strong>
         </article>
@@ -901,6 +932,6 @@
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <script src="app.js?v=20260803-map-fixed-ytd-dynamic"></script>
+  <script src="app.js?v=20260805-activity-1"></script>
 </body>
 </html>
