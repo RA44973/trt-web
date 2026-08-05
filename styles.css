@@ -1935,7 +1935,7 @@ body:has(#page-trt:not([hidden])) .main-content {
 }
 
 
-/* VOG update 2026-08-05 · Аналитика → Логистика v7.2 */
+/* VOG update 2026-08-05 · Аналитика → Логистика v7.3 */
 .logistics-page-header { align-items: end; }
 .logistics-period-controls { display:flex; gap:10px; align-items:center; }
 .logistics-period-controls select { min-width:110px; }

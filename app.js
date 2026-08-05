@@ -3247,6 +3247,7 @@ async function readLogisticsFile(file) {
 }
 function resetLogisticsImport(clear=true) { state.logistics.preview=null; state.logistics.sourceTrips=[]; state.logistics.fileName=""; $("logistics-import-result").hidden=true; $("logistics-commit-button").disabled=true; if(clear) $("logistics-file").value=""; $("logistics-preview-button").disabled=!$("logistics-file").files?.[0] || !isSystemAdmin(); }
 const LOGISTICS_PREVIEW_CHUNK_SIZE = 10;
+const LOGISTICS_PREVIEW_CONCURRENCY = 4;
 const LOGISTICS_COMMIT_CHUNK_SIZE = 10;
 function mergeLogisticsPreviewParts(parts) {
   const summary = { tripCount:0,lineCount:0,ignoredCount:0,matchedCount:0,clientOnlyCount:0,unresolvedCount:0,redTrips:0,yellowTrips:0,greenTrips:0,totalShipment:0,totalCost:0,totalPercent:0 };
@@ -3297,16 +3298,27 @@ async function previewLogisticsFile() {
     const trips=await readLogisticsFile(file);
     state.logistics.sourceTrips=trips;
     state.logistics.fileName=file.name;
-    const parts=[];
-    let completed=0;
+    const chunks=[];
     for(let start=0;start<trips.length;start+=LOGISTICS_PREVIEW_CHUNK_SIZE){
-      const chunk=trips.slice(start,start+LOGISTICS_PREVIEW_CHUNK_SIZE);
-      progress.textContent=`Сопоставление рейсов ${start+1}–${start+chunk.length} из ${trips.length}…`;
-      const chunkParts=await requestLogisticsPreviewChunk(chunk,`${start+1}–${start+chunk.length}`);
-      parts.push(...chunkParts);
-      completed+=chunk.length;
-      progress.textContent=`Сопоставлено ${completed} из ${trips.length} рейсов…`;
+      chunks.push({start,chunk:trips.slice(start,start+LOGISTICS_PREVIEW_CHUNK_SIZE)});
     }
+    const partsByChunk=new Array(chunks.length);
+    let completed=0;
+    let nextChunkIndex=0;
+    const worker=async()=>{
+      while(true){
+        const chunkIndex=nextChunkIndex++;
+        if(chunkIndex>=chunks.length) return;
+        const {start,chunk}=chunks[chunkIndex];
+        const chunkParts=await requestLogisticsPreviewChunk(chunk,`${start+1}–${start+chunk.length}`);
+        partsByChunk[chunkIndex]=chunkParts;
+        completed+=chunk.length;
+        progress.textContent=`Сопоставлено ${completed} из ${trips.length} рейсов · одновременно до ${LOGISTICS_PREVIEW_CONCURRENCY} пакетов…`;
+      }
+    };
+    const workers=Array.from({length:Math.min(LOGISTICS_PREVIEW_CONCURRENCY,chunks.length)},()=>worker());
+    await Promise.all(workers);
+    const parts=partsByChunk.flat();
     const data=mergeLogisticsPreviewParts(parts);
     state.logistics.preview=data;
     state.logistics.observedWarehouses=data.warehouseAliases||[];
