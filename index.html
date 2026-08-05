@@ -5,24 +5,24 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#111827">
   <title>ТК ВОГ Офис</title>
-  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=20260805-web-brand-v6-6">
-  <link rel="apple-touch-icon" sizes="192x192" href="icon-192.png?v=20260805-web-brand-v6-6">
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=20260805-web-layout-v6-8">
+  <link rel="apple-touch-icon" sizes="192x192" href="icon-192.png?v=20260805-web-layout-v6-8">
   <link rel="manifest" href="site.webmanifest">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
-  <link rel="stylesheet" href="styles.css?v=20260805-web-brand-v6-6">
+  <link rel="stylesheet" href="styles.css?v=20260805-web-layout-v6-8">
 </head>
 <body>
   <div id="toast" class="toast" hidden></div>
   <section id="session-bootstrap" class="session-bootstrap" aria-label="Проверка сессии">
-    <img src="icon-192.png?v=20260805-web-brand-v6-6" alt="">
+    <img src="icon-192.png?v=20260805-web-layout-v6-8" alt="">
     <span class="session-bootstrap-spinner"></span>
   </section>
 
   <section id="login-screen" class="login-screen" hidden>
     <div class="login-card">
-      <img class="brand-logo login-logo" src="icon-192.png?v=20260805-web-brand-v6-6" alt="ТК ВОГ Офис">
+      <img class="brand-logo login-logo" src="icon-192.png?v=20260805-web-layout-v6-8" alt="ТК ВОГ Офис">
       <button id="open-login-form-button" class="primary-button" type="button">Ввести логин и пароль</button>
       <form id="login-form" autocomplete="off" hidden>
         <div id="login-fields"></div>
@@ -49,10 +49,11 @@
   <div id="app-shell" class="app-shell" hidden>
     <aside class="sidebar">
       <div class="sidebar-brand">
-        <img class="brand-logo sidebar-logo" src="icon-192.png?v=20260805-web-brand-v6-6" alt="">
-        <div>
+        <img class="brand-logo sidebar-logo" src="icon-192.png?v=20260805-web-layout-v6-8" alt="">
+        <div class="sidebar-brand-copy">
           <strong>ТК ВОГ Офис</strong>
-          <span>Кабинет руководителя</span>
+          <span id="sidebar-user-role" class="sidebar-brand-role">—</span>
+          <span id="sidebar-user-display-name" class="sidebar-brand-user-name">—</span>
         </div>
       </div>
 
@@ -93,7 +94,6 @@
       </nav>
 
       <div class="sidebar-user">
-        <span id="sidebar-user-name">—</span>
         <button id="logout-button" class="text-button" type="button">Выйти</button>
       </div>
     </aside>
@@ -230,7 +230,6 @@
                   <th>Срок</th>
                   <th>Приоритет</th>
                   <th>Статус</th>
-                  <th></th>
                 </tr>
               </thead>
               <tbody id="tasks-table-body"></tbody>
@@ -309,7 +308,6 @@
                   <th>Направление</th>
                   <th>Результат</th>
                   <th>Материалы</th>
-                  <th></th>
                 </tr>
               </thead>
               <tbody id="visits-table-body"></tbody>
@@ -709,8 +707,8 @@
 
       <div class="form-grid">
         <label class="full-width">
-          Полное ФИО
-          <input id="employee-full-name" required maxlength="300" placeholder="Фамилия Имя Отчество" autocomplete="off">
+          Фамилия Имя
+          <input id="employee-full-name" required maxlength="200" placeholder="Фамилия Имя" autocomplete="off">
         </label>
 
         <label>
@@ -932,6 +930,6 @@
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <script src="app.js?v=20260805-web-brand-v6-6"></script>
+  <script src="app.js?v=20260805-web-layout-v6-8"></script>
 </body>
 </html>

@@ -62,6 +62,17 @@ function shortPersonName(value) {
     .join(" ");
 }
 
+function userRoleLabel(user) {
+  const role = String(user?.role || "").trim().toUpperCase();
+  const labels = {
+    GD: "Генеральный директор",
+    KD: "Коммерческий директор",
+    RRO: "Руководитель регионального отдела",
+    MANAGER: "Менеджер",
+  };
+  return labels[role] || String(user?.roleLabel || user?.role_label || user?.position || "Сотрудник").trim();
+}
+
 function showToast(message) {
   const toast = $("toast");
   toast.textContent = message;
@@ -365,7 +376,12 @@ function showApp() {
   $("session-bootstrap").hidden = true;
   $("login-screen").hidden = true;
   $("app-shell").hidden = false;
-  $("sidebar-user-name").textContent = shortPersonName(state.user?.full_name || state.user?.fullName) || "—";
+  const sidebarUserRole = $("sidebar-user-role");
+  const sidebarUserName = $("sidebar-user-display-name");
+  if (sidebarUserRole) sidebarUserRole.textContent = userRoleLabel(state.user);
+  if (sidebarUserName) {
+    sidebarUserName.textContent = shortPersonName(state.user?.full_name || state.user?.fullName) || "—";
+  }
 
   const settingsNavGroup = $("settings-nav-group");
   const employeesPage = $("page-employees");
@@ -1029,7 +1045,7 @@ function renderTasks() {
     const trtName = point?.client || point?.holding || task.trtId || "—";
     const address = point?.address || "";
     return `
-      <tr>
+      <tr class="interactive-table-row" data-task-view="${escapeHtml(task.id)}" tabindex="0" role="button" aria-label="Открыть задачу ${escapeHtml(task.title || "Задача")}">
         <td>
           <span class="task-title">${escapeHtml(task.title || "Задача")}</span>
           ${task.description ? `<span class="task-secondary">${escapeHtml(task.description)}</span>` : ""}
@@ -1043,13 +1059,8 @@ function renderTasks() {
         <td class="${taskIsOverdue(task) ? "overdue-date" : ""}">${escapeHtml(formatTaskDate(task.dueDate))}</td>
         <td><span class="badge ${priority.className}">${escapeHtml(priority.label)}</span></td>
         <td><span class="badge ${status.className}">${escapeHtml(status.label)}</span></td>
-        <td><button class="edit-button" type="button" data-task-view="${escapeHtml(task.id)}">Просмотр</button></td>
       </tr>`;
   }).join("");
-
-  document.querySelectorAll("[data-task-view]").forEach((button) => {
-    button.addEventListener("click", () => openTaskDetail(button.dataset.taskView));
-  });
 }
 
 
@@ -1331,7 +1342,7 @@ function renderVisits() {
     const mediaCount = visitMediaItems(visit.id).length;
     const result = visitResultText(visit) || String(visit.comment || "—").trim();
     return `
-      <tr>
+      <tr class="interactive-table-row" data-visit-view="${escapeHtml(visit.id)}" tabindex="0" role="button" aria-label="Открыть визит ${escapeHtml(formatVisitDateTime(visit))}">
         <td class="visit-date-cell">${escapeHtml(formatVisitDateTime(visit))}</td>
         <td>
           <span class="task-trt-name">${escapeHtml(visitPointTitle(visit))}</span>
@@ -1341,7 +1352,6 @@ function renderVisits() {
         <td>${escapeHtml(point?.direction || "—")}</td>
         <td><span class="visit-result-preview">${escapeHtml(result)}</span></td>
         <td>${mediaCount ? `<span class="badge badge-neutral">${mediaCount}</span>` : "—"}</td>
-        <td><button class="edit-button" type="button" data-visit-view="${escapeHtml(visit.id)}">Просмотр</button></td>
       </tr>`;
   }).join("");
 
@@ -2830,6 +2840,18 @@ $("employee-direction").addEventListener("change", () => fillManagerOptions());
   const eventName = id === "task-search" ? "input" : "change";
   $(id).addEventListener(eventName, renderTasks);
 });
+$("tasks-table-body").addEventListener("click", (event) => {
+  if (event.target.closest("button, a, input, select, textarea")) return;
+  const row = event.target.closest("[data-task-view]");
+  if (row) openTaskDetail(row.dataset.taskView);
+});
+$("tasks-table-body").addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  const row = event.target.closest("[data-task-view]");
+  if (!row) return;
+  event.preventDefault();
+  openTaskDetail(row.dataset.taskView);
+});
 $("task-detail-close").addEventListener("click", closeTaskDetail);
 $("task-detail-modal").addEventListener("click", (event) => {
   if (event.target === $("task-detail-modal")) closeTaskDetail();
@@ -2845,8 +2867,16 @@ $("media-preview-modal").addEventListener("click", (event) => {
   $(id).addEventListener(id === "visit-search" ? "input" : "change", renderVisits);
 });
 $("visits-table-body").addEventListener("click", (event) => {
-  const button = event.target.closest("[data-visit-view]");
-  if (button) openVisitDetail(button.dataset.visitView);
+  if (event.target.closest("button, a, input, select, textarea")) return;
+  const row = event.target.closest("[data-visit-view]");
+  if (row) openVisitDetail(row.dataset.visitView);
+});
+$("visits-table-body").addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  const row = event.target.closest("[data-visit-view]");
+  if (!row) return;
+  event.preventDefault();
+  openVisitDetail(row.dataset.visitView);
 });
 $("visit-detail-close").addEventListener("click", closeVisitDetail);
 $("visit-detail-modal").addEventListener("click", (event) => {
