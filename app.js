@@ -23,6 +23,8 @@ const state = {
   mediaLoaded: false,
   mediaPreviewUrls: new Map(),
   mediaPreviewRequests: new Map(),
+  mediaPreviewItems: [],
+  mediaPreviewIndex: -1,
   trtPoints: [],
   trtLoaded: false,
   trtSelectedId: "",
@@ -41,6 +43,8 @@ let trtMainView = "map";
 let trtAnalyticsTab = "dynamics";
 let trtAnalyticsSelectedFormats = new Set();
 let trtAnalyticsFormatAnchorIndex = null;
+let mediaPreviewLoadSequence = 0;
+let mediaPreviewTouchStartX = null;
 
 const $ = (id) => document.getElementById(id);
 
@@ -97,6 +101,8 @@ function resetProtectedState() {
   state.mediaLoaded = false;
   state.mediaPreviewUrls.clear();
   state.mediaPreviewRequests.clear();
+  state.mediaPreviewItems = [];
+  state.mediaPreviewIndex = -1;
   state.trtPoints = [];
   state.trtLoaded = false;
   state.trtSelectedId = "";
@@ -1363,7 +1369,10 @@ async function openVisitDetail(visitId) {
 
   state.visitSelectedId = String(visit.id);
   const point = visitPoint(visit);
-  const mediaItems = visitMediaItems(visit.id);
+  const mediaItems = visitMediaItems(visit.id).map((item) => ({
+    ...item,
+    contextEmployeeName: visitEmployeeName(visit),
+  }));
   const modal = $("visit-detail-modal");
 
   // Открываем окно до построения внутренних блоков: даже ошибка превью
@@ -1377,7 +1386,23 @@ async function openVisitDetail(visitId) {
   $("visit-detail-employee").textContent = visitEmployeeName(visit);
   $("visit-detail-date").textContent = formatVisitDateTime(visit);
   $("visit-detail-direction").textContent = point?.direction || "—";
-  $("visit-detail-distance").textContent = formatVisitDistance(visit);
+  const gpsBox = $("visit-gps-box");
+  const visitGrid = document.querySelector(".visit-detail-grid");
+  const showGpsControl = isSystemAdmin();
+  gpsBox.hidden = !showGpsControl;
+  visitGrid?.classList.toggle("admin-gps", showGpsControl);
+  if (showGpsControl) {
+    const distanceMeters = Number(visit?.distanceMeters);
+    const gpsConfirmed = Number.isFinite(distanceMeters) && distanceMeters <= 150;
+    gpsBox.classList.toggle("gps-confirmed", gpsConfirmed);
+    gpsBox.classList.toggle("gps-unconfirmed", !gpsConfirmed);
+    $("visit-detail-distance").textContent = gpsConfirmed
+      ? "Визит подтвержден по GPS"
+      : "Нет подтверждения GPS";
+    gpsBox.title = Number.isFinite(distanceMeters)
+      ? `Расстояние до координат ТРТ: ${formatVisitDistance(visit)}`
+      : "Координаты визита не были получены";
+  }
   $("visit-detail-result").textContent = visitResultText(visit);
   $("visit-detail-comment").textContent = visit.comment || "—";
   $("visit-detail-next-step").textContent = visit.nextStep || "—";
@@ -1475,7 +1500,125 @@ async function hydrateTaskMediaImage(button, item) {
   }
 }
 
-function renderTaskMedia(containerId, emptyId, items) {
+function mediaIsImage(item) {
+  return String(item?.type || "").startsWith("image/")
+    || String(item?.mediaKind || "") === "photo";
+}
+
+function formatMediaFileSize(value) {
+  const bytes = Number(value || 0);
+  if (!Number.isFinite(bytes) || bytes <= 0) return "—";
+  if (bytes < 1024) return `${Math.round(bytes)} Б`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1).replace(".", ",")} КБ`;
+  return `${(bytes / (1024 * 1024)).toFixed(1).replace(".", ",")} МБ`;
+}
+
+function formatMediaDateTime(value) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return new Intl.DateTimeFormat("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(date);
+}
+
+function mediaSourceLabel(value) {
+  const labels = {
+    camera: "Снято камерой из МП",
+    library: "Загружено с телефона",
+    unknown: "Источник не определён",
+  };
+  return labels[String(value || "").toLowerCase()] || String(value || "—");
+}
+
+function mediaPurposeLabel(value) {
+  const labels = {
+    visit: "Визит",
+    task_material: "Материалы задачи",
+    task_result: "Результат задачи",
+    point: "Карточка ТРТ",
+  };
+  return labels[String(value || "")] || "—";
+}
+
+function mediaUploaderName(item) {
+  const metadata = item?.metadata && typeof item.metadata === "object" ? item.metadata : {};
+  const employee = state.employees.find((row) => String(row.employeeId || row.id || "") === String(item?.employeeId || ""));
+  return shortPersonName(
+    metadata.uploadedByName
+    || item?.contextEmployeeName
+    || employee?.displayName
+    || employee?.fullName
+    || item?.employeeId
+  ) || "—";
+}
+
+function mediaCoordinates(metadata) {
+  const exifLat = Number(metadata.gpsLatitude);
+  const exifLon = Number(metadata.gpsLongitude);
+  if (Number.isFinite(exifLat) && Number.isFinite(exifLon)) {
+    return {lat: exifLat, lon: exifLon, label: "GPS фотографии (EXIF)"};
+  }
+  const uploadLat = Number(metadata.uploadLatitude);
+  const uploadLon = Number(metadata.uploadLongitude);
+  if (Number.isFinite(uploadLat) && Number.isFinite(uploadLon)) {
+    return {lat: uploadLat, lon: uploadLon, label: "Геопозиция при добавлении"};
+  }
+  return null;
+}
+
+function renderMediaMetadata(item) {
+  const metadata = item?.metadata && typeof item.metadata === "object" ? item.metadata : {};
+  const coordinates = mediaCoordinates(metadata);
+  const device = [metadata.cameraMake, metadata.cameraModel].filter(Boolean).join(" ")
+    || metadata.platform
+    || "—";
+  const dimensions = Number(metadata.width) > 0 && Number(metadata.height) > 0
+    ? `${metadata.width} × ${metadata.height} px`
+    : "—";
+  const capturedAt = metadata.capturedAt || metadata.fileLastModifiedAt || "";
+  const capturedLabel = metadata.capturedAt ? "Снято" : "Дата файла";
+  const accuracy = Number(metadata.uploadAccuracy);
+  const coordinateText = coordinates
+    ? `${coordinates.lat.toFixed(6)}, ${coordinates.lon.toFixed(6)}${Number.isFinite(accuracy) && coordinates.label !== "GPS фотографии (EXIF)" ? ` · точность ±${Math.round(accuracy)} м` : ""}`
+    : "GPS-метка отсутствует";
+  const rows = [
+    ["Файл", item?.name || metadata.originalName || "—"],
+    [capturedLabel, formatMediaDateTime(capturedAt)],
+    ["Добавлено в систему", formatMediaDateTime(item?.createdAt || metadata.receivedAt)],
+    ["Добавил", mediaUploaderName(item)],
+    ["Источник", mediaSourceLabel(metadata.source)],
+    ["Устройство / камера", device],
+    ["Размер изображения", dimensions],
+    ["Размер файла", formatMediaFileSize(item?.size || metadata.originalSize)],
+    ["Тип файла", item?.type || metadata.originalType || "—"],
+    ["Раздел", mediaPurposeLabel(item?.purpose)],
+    [coordinates?.label || "Геопозиция", coordinateText],
+    ["ID файла", item?.id || "—"],
+  ];
+  $("media-preview-metadata").innerHTML = rows.map(([label, value]) => `
+    <div class="media-preview-meta-item">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+    </div>
+  `).join("");
+
+  const mapLink = $("media-preview-map");
+  if (coordinates) {
+    mapLink.href = `https://yandex.ru/maps/?pt=${encodeURIComponent(coordinates.lon)},${encodeURIComponent(coordinates.lat)}&z=17&l=map`;
+    mapLink.hidden = false;
+  } else {
+    mapLink.hidden = true;
+    mapLink.href = "#";
+  }
+}
+
+function renderTaskMedia(containerId, emptyId, items, galleryItems = items) {
   const container = $(containerId);
   const empty = $(emptyId);
   container.innerHTML = "";
@@ -1485,12 +1628,13 @@ function renderTaskMedia(containerId, emptyId, items) {
     return;
   }
 
+  const galleryImages = (galleryItems || []).filter(mediaIsImage);
   empty.hidden = true;
   container.innerHTML = items.map((item) => {
     const href = escapeHtml(item.downloadUrl || "#");
     const mediaId = escapeHtml(item.id || "");
     const name = escapeHtml(item.name || (item.mediaKind === "video" ? "Видео" : "Фото"));
-    if (String(item.type || "").startsWith("image/")) {
+    if (mediaIsImage(item)) {
       return `<button class="task-media-item task-image-item" type="button" data-media-preview="${mediaId}" aria-label="Открыть ${name}">
         <span class="task-media-image-box">
           <img alt="${name}" loading="lazy" decoding="async" hidden>
@@ -1506,44 +1650,74 @@ function renderTaskMedia(containerId, emptyId, items) {
   }).join("");
 
   container.querySelectorAll("[data-media-preview]").forEach((button) => {
-    const item = state.media.find((media) => String(media.id) === String(button.dataset.mediaPreview));
+    const item = items.find((media) => String(media.id) === String(button.dataset.mediaPreview));
     if (!item) return;
     hydrateTaskMediaImage(button, item);
-    button.addEventListener("click", () => openMediaPreview(item));
+    button.addEventListener("click", () => openMediaPreview(item, galleryImages));
   });
 }
 
-async function openMediaPreview(item) {
-  const modal = $("media-preview-modal");
+async function showCurrentMediaPreview() {
+  const item = state.mediaPreviewItems[state.mediaPreviewIndex];
+  if (!item) return;
+  const sequence = ++mediaPreviewLoadSequence;
   const image = $("media-preview-image");
   const loading = $("media-preview-loading");
   const original = $("media-preview-original");
+  const total = state.mediaPreviewItems.length;
 
   $("media-preview-title").textContent = item.name || "Фото";
+  $("media-preview-counter").textContent = total > 1 ? `${state.mediaPreviewIndex + 1} из ${total}` : "";
+  $("media-preview-prev").hidden = total <= 1;
+  $("media-preview-next").hidden = total <= 1;
+  $("media-preview-prev").disabled = state.mediaPreviewIndex <= 0;
+  $("media-preview-next").disabled = state.mediaPreviewIndex >= total - 1;
   image.hidden = true;
   image.removeAttribute("src");
   loading.hidden = false;
   loading.textContent = "Загрузка превью…";
   original.hidden = true;
-  modal.hidden = false;
+  renderMediaMetadata(item);
 
   try {
     const preview = await ensureMediaPreview(item);
+    if (sequence !== mediaPreviewLoadSequence) return;
     image.src = preview.thumbnailUrl;
     image.hidden = false;
     loading.hidden = true;
     original.href = preview.downloadUrl || item.downloadUrl || "#";
     original.hidden = !original.href || original.href.endsWith("#");
   } catch (error) {
+    if (sequence !== mediaPreviewLoadSequence) return;
     loading.textContent = `Не удалось открыть фото: ${error.message}`;
     original.href = item.downloadUrl || "#";
     original.hidden = !item.downloadUrl;
   }
 }
 
+async function openMediaPreview(item, galleryItems = null) {
+  const images = (galleryItems || [item]).filter(mediaIsImage);
+  state.mediaPreviewItems = images.length ? images : [item];
+  state.mediaPreviewIndex = Math.max(0, state.mediaPreviewItems.findIndex((row) => String(row.id) === String(item.id)));
+  $("media-preview-modal").hidden = false;
+  document.body.style.overflow = "hidden";
+  await showCurrentMediaPreview();
+}
+
+function moveMediaPreview(step) {
+  const next = state.mediaPreviewIndex + step;
+  if (next < 0 || next >= state.mediaPreviewItems.length) return;
+  state.mediaPreviewIndex = next;
+  showCurrentMediaPreview();
+}
+
 function closeMediaPreview() {
+  mediaPreviewLoadSequence += 1;
   $("media-preview-modal").hidden = true;
   $("media-preview-image").removeAttribute("src");
+  state.mediaPreviewItems = [];
+  state.mediaPreviewIndex = -1;
+  document.body.style.overflow = "";
 }
 
 async function openTaskDetail(taskId) {
@@ -1577,16 +1751,23 @@ async function openTaskDetail(taskId) {
 
   try {
     await ensureMediaLoaded();
-    const taskMedia = state.media.filter((item) => String(item.taskId || "") === String(task.id));
+    const taskMedia = state.media
+      .filter((item) => String(item.taskId || "") === String(task.id))
+      .map((item) => ({
+        ...item,
+        contextEmployeeName: shortPersonName(task.createdBy),
+      }));
     renderTaskMedia(
       "task-materials",
       "task-materials-empty",
       taskMedia.filter((item) => item.purpose === "task_material"),
+      taskMedia,
     );
     renderTaskMedia(
       "task-result-media",
       "task-result-media-empty",
       taskMedia.filter((item) => item.purpose === "task_result"),
+      taskMedia,
     );
   } catch (error) {
     $("task-materials-empty").textContent = `Материалы недоступны: ${error.message}`;
@@ -2858,9 +3039,22 @@ $("task-detail-modal").addEventListener("click", (event) => {
 });
 $("task-open-trt-button").addEventListener("click", openSelectedTaskTrt);
 $("media-preview-close").addEventListener("click", closeMediaPreview);
+$("media-preview-prev").addEventListener("click", () => moveMediaPreview(-1));
+$("media-preview-next").addEventListener("click", () => moveMediaPreview(1));
 $("media-preview-modal").addEventListener("click", (event) => {
   if (event.target === $("media-preview-modal")) closeMediaPreview();
 });
+$("media-preview-stage").addEventListener("touchstart", (event) => {
+  mediaPreviewTouchStartX = event.touches?.[0]?.clientX ?? null;
+}, {passive:true});
+$("media-preview-stage").addEventListener("touchend", (event) => {
+  if (mediaPreviewTouchStartX == null) return;
+  const endX = event.changedTouches?.[0]?.clientX ?? mediaPreviewTouchStartX;
+  const delta = endX - mediaPreviewTouchStartX;
+  mediaPreviewTouchStartX = null;
+  if (Math.abs(delta) < 45) return;
+  moveMediaPreview(delta > 0 ? -1 : 1);
+}, {passive:true});
 
 
 ["visit-search", "visit-employee-filter", "visit-direction-filter", "visit-date-from", "visit-date-to"].forEach((id) => {
@@ -2884,6 +3078,11 @@ $("visit-detail-modal").addEventListener("click", (event) => {
 });
 $("visit-open-trt-button").addEventListener("click", openSelectedVisitTrt);
 document.addEventListener("keydown", (event) => {
+  if (!$("media-preview-modal").hidden) {
+    if (event.key === "ArrowLeft") { event.preventDefault(); moveMediaPreview(-1); return; }
+    if (event.key === "ArrowRight") { event.preventDefault(); moveMediaPreview(1); return; }
+    if (event.key === "Escape") { event.preventDefault(); closeMediaPreview(); return; }
+  }
   if (event.key === "Escape" && !$("visit-detail-modal").hidden) closeVisitDetail();
 });
 

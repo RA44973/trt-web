@@ -1726,7 +1726,7 @@ body:has(#page-trt:not([hidden])) .main-content {
 }
 
 
-/* VOG update 2026-08-05 v6.8: независимая прокрутка меню и рабочей зоны */
+/* VOG update 2026-08-05 v6.9: независимая прокрутка меню и рабочей зоны */
 @media (min-width: 821px) {
   html,
   body {
@@ -1823,4 +1823,113 @@ body:has(#page-trt:not([hidden])) .main-content {
     min-height: 0;
     overflow: visible;
   }
+}
+
+
+/* VOG update 2026-08-05 · галерея фото, GPS и скругление модальных окон */
+.task-modal,
+.sales-modal,
+.media-preview-dialog {
+  clip-path: inset(0 round 18px);
+  background-clip: padding-box;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+}
+.task-modal::-webkit-scrollbar,
+.sales-modal::-webkit-scrollbar { width: 10px; }
+.task-modal::-webkit-scrollbar-track,
+.sales-modal::-webkit-scrollbar-track { background: transparent; }
+.task-modal::-webkit-scrollbar-thumb,
+.sales-modal::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: #c7ced8;
+  background-clip: padding-box;
+}
+.visit-detail-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.visit-detail-grid.admin-gps { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.visit-gps-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 54px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: #fff;
+  text-align: center;
+}
+.visit-gps-box[hidden] { display: none !important; }
+.visit-gps-box dd { margin: 0; font-size: 13px; font-weight: 800; line-height: 1.3; }
+.visit-gps-box.gps-confirmed {
+  border-color: #a6dfbd;
+  color: #087443;
+  background: #eaf9f0;
+}
+.visit-gps-box.gps-unconfirmed { color: #475467; background: #fff; }
+.visually-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  overflow: hidden !important;
+  clip: rect(0 0 0 0) !important;
+  white-space: nowrap !important;
+}
+.media-preview-dialog { width: min(1080px, 100%); }
+.media-preview-heading { min-width: 0; display: flex; align-items: baseline; gap: 12px; }
+.media-preview-counter { flex: 0 0 auto; color: var(--muted); font-size: 13px; font-weight: 700; }
+.media-preview-stage { position: relative; min-height: 280px; background: #111827; }
+.media-preview-body { min-height: 280px; padding: 18px 72px; }
+.media-preview-body img { max-height: min(58vh, 650px); }
+.media-preview-arrow {
+  position: absolute;
+  z-index: 2;
+  top: 50%;
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255,255,255,.46);
+  border-radius: 50%;
+  color: #111827;
+  background: rgba(255,255,255,.92);
+  box-shadow: 0 8px 24px rgba(0,0,0,.24);
+  font-size: 36px;
+  line-height: 1;
+  transform: translateY(-50%);
+  cursor: pointer;
+}
+.media-preview-arrow:hover { background: #fff; }
+.media-preview-arrow:disabled { opacity: .28; cursor: default; }
+.media-preview-arrow-prev { left: 14px; }
+.media-preview-arrow-next { right: 14px; }
+.media-preview-information { padding: 15px 18px 17px; border-top: 1px solid var(--border); background: #fff; }
+.media-preview-information h3 { margin: 0 0 12px; font-size: 15px; }
+.media-preview-metadata { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.media-preview-meta-item {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #f8fafc;
+}
+.media-preview-meta-item span { display: block; margin-bottom: 4px; color: var(--muted); font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .03em; }
+.media-preview-meta-item strong { display: block; overflow-wrap: anywhere; color: #182230; font-size: 13px; line-height: 1.35; }
+.media-preview-actions { gap: 10px; }
+@media (max-width: 900px) {
+  .media-preview-metadata { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .visit-detail-grid,
+  .visit-detail-grid.admin-gps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 620px) {
+  .media-preview-backdrop { padding: 8px; }
+  .media-preview-dialog { max-height: calc(100vh - 16px); border-radius: 16px; clip-path: inset(0 round 16px); }
+  .media-preview-body { min-height: 220px; padding: 12px 50px; }
+  .media-preview-arrow { width: 38px; height: 38px; font-size: 30px; }
+  .media-preview-arrow-prev { left: 7px; }
+  .media-preview-arrow-next { right: 7px; }
+  .media-preview-metadata { grid-template-columns: 1fr; }
+  .media-preview-actions { flex-wrap: wrap; }
+  .visit-detail-grid,
+  .visit-detail-grid.admin-gps { grid-template-columns: 1fr; }
 }

@@ -1,10 +1,10 @@
 {
-  "name": "VOG Мобильный помощник",
-  "short_name": "VOG Помощник",
+  "name": "ТК ВОГ Офис",
+  "short_name": "ТК ВОГ Офис",
   "start_url": "./",
   "display": "standalone",
-  "background_color": "#f3f5f8",
-  "theme_color": "#111827",
+  "background_color": "#f4f6fa",
+  "theme_color": "#0f1b2d",
   "icons": [
     {
       "src": "icon-192.png",

@@ -5,24 +5,24 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#111827">
   <title>ТК ВОГ Офис</title>
-  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=20260805-web-layout-v6-8">
-  <link rel="apple-touch-icon" sizes="192x192" href="icon-192.png?v=20260805-web-layout-v6-8">
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=20260805-media-gallery-v6-9">
+  <link rel="apple-touch-icon" sizes="192x192" href="icon-192.png?v=20260805-media-gallery-v6-9">
   <link rel="manifest" href="site.webmanifest">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
-  <link rel="stylesheet" href="styles.css?v=20260805-web-layout-v6-8">
+  <link rel="stylesheet" href="styles.css?v=20260805-media-gallery-v6-9">
 </head>
 <body>
   <div id="toast" class="toast" hidden></div>
   <section id="session-bootstrap" class="session-bootstrap" aria-label="Проверка сессии">
-    <img src="icon-192.png?v=20260805-web-layout-v6-8" alt="">
+    <img src="icon-192.png?v=20260805-media-gallery-v6-9" alt="">
     <span class="session-bootstrap-spinner"></span>
   </section>
 
   <section id="login-screen" class="login-screen" hidden>
     <div class="login-card">
-      <img class="brand-logo login-logo" src="icon-192.png?v=20260805-web-layout-v6-8" alt="ТК ВОГ Офис">
+      <img class="brand-logo login-logo" src="icon-192.png?v=20260805-media-gallery-v6-9" alt="ТК ВОГ Офис">
       <button id="open-login-form-button" class="primary-button" type="button">Ввести логин и пароль</button>
       <form id="login-form" autocomplete="off" hidden>
         <div id="login-fields"></div>
@@ -49,7 +49,7 @@
   <div id="app-shell" class="app-shell" hidden>
     <aside class="sidebar">
       <div class="sidebar-brand">
-        <img class="brand-logo sidebar-logo" src="icon-192.png?v=20260805-web-layout-v6-8" alt="">
+        <img class="brand-logo sidebar-logo" src="icon-192.png?v=20260805-media-gallery-v6-9" alt="">
         <div class="sidebar-brand-copy">
           <strong>ТК ВОГ Офис</strong>
           <span id="sidebar-user-role" class="sidebar-brand-role">—</span>
@@ -844,7 +844,7 @@
         <div><dt>Сотрудник</dt><dd id="visit-detail-employee">—</dd></div>
         <div><dt>Дата и время</dt><dd id="visit-detail-date">—</dd></div>
         <div><dt>Направление</dt><dd id="visit-detail-direction">—</dd></div>
-        <div><dt>Расстояние до ТРТ</dt><dd id="visit-detail-distance">—</dd></div>
+        <div id="visit-gps-box" class="visit-gps-box" hidden><dt class="visually-hidden">GPS</dt><dd id="visit-detail-distance">Нет подтверждения GPS</dd></div>
       </dl>
 
       <section class="task-text-section">
@@ -892,14 +892,26 @@
   <div id="media-preview-modal" class="media-preview-backdrop" hidden>
     <section class="media-preview-dialog" role="dialog" aria-modal="true" aria-labelledby="media-preview-title">
       <header class="media-preview-header">
-        <h2 id="media-preview-title">Фото</h2>
+        <div class="media-preview-heading">
+          <h2 id="media-preview-title">Фото</h2>
+          <span id="media-preview-counter" class="media-preview-counter"></span>
+        </div>
         <button id="media-preview-close" class="icon-button" type="button" aria-label="Закрыть">×</button>
       </header>
-      <div class="media-preview-body">
-        <p id="media-preview-loading" class="media-preview-loading">Загрузка превью…</p>
-        <img id="media-preview-image" alt="Просмотр фотографии" hidden>
+      <div id="media-preview-stage" class="media-preview-stage">
+        <button id="media-preview-prev" class="media-preview-arrow media-preview-arrow-prev" type="button" aria-label="Предыдущее фото">‹</button>
+        <div class="media-preview-body">
+          <p id="media-preview-loading" class="media-preview-loading">Загрузка превью…</p>
+          <img id="media-preview-image" alt="Просмотр фотографии" hidden>
+        </div>
+        <button id="media-preview-next" class="media-preview-arrow media-preview-arrow-next" type="button" aria-label="Следующее фото">›</button>
       </div>
+      <section class="media-preview-information" aria-label="Информация о фотографии">
+        <h3>Информация о фотографии</h3>
+        <div id="media-preview-metadata" class="media-preview-metadata"></div>
+      </section>
       <footer class="media-preview-actions">
+        <a id="media-preview-map" class="secondary-button" href="#" target="_blank" rel="noopener" hidden>Открыть место на карте</a>
         <a id="media-preview-original" class="secondary-button" href="#" target="_blank" rel="noopener" hidden>Открыть оригинал</a>
       </footer>
     </section>
@@ -930,6 +942,6 @@
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <script src="app.js?v=20260805-web-layout-v6-8"></script>
+  <script src="app.js?v=20260805-media-gallery-v6-9"></script>
 </body>
 </html>
