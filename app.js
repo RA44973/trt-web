@@ -5,7 +5,7 @@ const SESSION_KEY = "trt_web_session";
 const TRT_MAP_VIEW_KEY = "trt_web_map_view";
 const TRT_MAP_DEFAULT_CENTER = [55.7558, 37.6173];
 const TRT_MAP_DEFAULT_ZOOM = 10;
-const PAGES = new Set(["employees", "sales-import", "activity", "tasks", "visits", "trt"]);
+const PAGES = new Set(["employees", "sales-import", "activity", "tasks", "visits", "trt", "logistics"]);
 
 const state = {
   token: localStorage.getItem(SESSION_KEY) || sessionStorage.getItem(SESSION_KEY) || "",
@@ -29,6 +29,7 @@ const state = {
   trtLoaded: false,
   trtSelectedId: "",
   trtFitRequested: true,
+  logistics: { loaded: false, trips: [], summary: {}, dictionaries: null, preview: null, sourceTrips: [], fileName: "", observedWarehouses: [], observedVehicles: [] },
   currentPage: PAGES.has(location.hash.slice(1)) ? location.hash.slice(1) : "trt",
 };
 
@@ -45,6 +46,9 @@ let trtAnalyticsSelectedFormats = new Set();
 let trtAnalyticsFormatAnchorIndex = null;
 let mediaPreviewLoadSequence = 0;
 let mediaPreviewTouchStartX = null;
+let logisticsActiveTab = "overview";
+let warehouseMap = null;
+let warehouseMarker = null;
 
 const $ = (id) => document.getElementById(id);
 
@@ -107,6 +111,7 @@ function resetProtectedState() {
   state.trtLoaded = false;
   state.trtSelectedId = "";
   state.trtFitRequested = true;
+  state.logistics = { loaded: false, trips: [], summary: {}, dictionaries: null, preview: null, sourceTrips: [], fileName: "", observedWarehouses: [], observedVehicles: [] };
 }
 
 function isGeneralDirector() {
@@ -129,12 +134,14 @@ function setNavGroupExpanded(groupName, expanded) {
 function syncSidebarNavigation(page) {
   const isTrt = page === "trt";
   const isSettings = page === "employees" || page === "sales-import" || page === "activity";
+  const isAnalytics = page === "logistics";
   if (isTrt) setNavGroupExpanded("trt", true);
   if (isSettings) setNavGroupExpanded("settings", true);
+  if (isAnalytics) setNavGroupExpanded("analytics", true);
 
   document.querySelectorAll("[data-nav-group]").forEach((button) => {
     const group = button.dataset.navGroup;
-    const active = (group === "trt" && isTrt) || (group === "settings" && isSettings);
+    const active = (group === "trt" && isTrt) || (group === "settings" && isSettings) || (group === "analytics" && isAnalytics);
     button.classList.toggle("active", active);
   });
   document.querySelectorAll(".nav-subitem").forEach((button) => {
@@ -356,9 +363,8 @@ function showPage(page, updateHash = true) {
   if (nextPage === "employees" && state.token && state.employees.length === 0) {
     loadEmployees();
   }
-  if (nextPage === "sales-import") {
-    initializeSalesImportPeriod();
-  }
+  if (nextPage === "sales-import") { initializeSalesImportPeriod(); }
+  if (nextPage === "logistics") { initializeLogisticsPeriod(); loadLogistics(); }
 
   if (nextPage === "activity" && state.token) {
     loadActivity();
@@ -390,11 +396,13 @@ function showApp() {
   }
 
   const settingsNavGroup = $("settings-nav-group");
+  const analyticsNavGroup = $("analytics-nav-group");
   const employeesPage = $("page-employees");
   const salesImportPage = $("page-sales-import");
   const activityPage = $("page-activity");
   const gdAdmin = isSystemAdmin();
   if (settingsNavGroup) settingsNavGroup.hidden = !gdAdmin;
+  if (analyticsNavGroup) analyticsNavGroup.hidden = !["GD","KD","RRO"].includes(String(state.user?.role || "").toUpperCase()) && !gdAdmin;
   if (employeesPage && !gdAdmin) employeesPage.hidden = true;
   if (salesImportPage && !gdAdmin) salesImportPage.hidden = true;
   if (activityPage && !gdAdmin) activityPage.hidden = true;
@@ -3168,6 +3176,112 @@ document.querySelectorAll("[data-page]").forEach((button) => {
   });
 });
 
+
+// ---------------------------------------------------------------------------
+// Аналитика → Логистика
+// ---------------------------------------------------------------------------
+function logisticsMoney(value) { return Number(value || 0).toLocaleString("ru-RU", { maximumFractionDigits: 0 }); }
+function logisticsDecimal(value, digits = 2) { return Number(value || 0).toLocaleString("ru-RU", { maximumFractionDigits: digits }); }
+function logisticsDate(value) { const date = new Date(value); return Number.isNaN(date.getTime()) ? String(value || "—") : date.toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" }); }
+function logisticsBadge(color, percent) { const labels = { red: "Красный", yellow: "Жёлтый", green: "Зелёный" }; return `<span class="logistics-status logistics-status-${color}">${labels[color] || color} · ${logisticsDecimal(percent, 2)}%</span>`; }
+
+function initializeLogisticsPeriod() {
+  const year = $("logistics-year"); if (!year || year.options.length) return;
+  const now = new Date(); const previous = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  for (let item = now.getFullYear() + 1; item >= 2025; item -= 1) { const option = document.createElement("option"); option.value = item; option.textContent = item; year.append(option); }
+  year.value = String(previous.getFullYear()); $("logistics-month").value = String(previous.getMonth() + 1);
+}
+function setLogisticsTab(tab) {
+  logisticsActiveTab = tab;
+  document.querySelectorAll("[data-logistics-tab]").forEach((button) => button.classList.toggle("active", button.dataset.logisticsTab === tab));
+  document.querySelectorAll("[data-logistics-panel]").forEach((panel) => { panel.hidden = panel.dataset.logisticsPanel !== tab; });
+  if (tab === "warehouses") { loadLogisticsDictionaries(); window.setTimeout(initializeWarehouseMap, 80); }
+  if (tab === "vehicles") loadLogisticsDictionaries();
+}
+async function loadLogistics(force = false) {
+  if (state.logistics.loaded && !force) { renderLogistics(); return; }
+  const loading = $("logistics-loading"), error = $("logistics-error"); loading.hidden = false; error.hidden = true;
+  try {
+    const data = await api(`/logistics?year=${encodeURIComponent($("logistics-year").value)}&month=${encodeURIComponent($("logistics-month").value)}`);
+    state.logistics.trips = data.trips || []; state.logistics.summary = data.summary || {}; state.logistics.loaded = true; renderLogistics();
+  } catch (exc) { error.textContent = exc.message; error.hidden = false; } finally { loading.hidden = true; }
+}
+function renderLogistics() {
+  const summary = state.logistics.summary || {};
+  $("logistics-kpi-trips").textContent = Number(summary.tripCount || 0).toLocaleString("ru-RU");
+  $("logistics-kpi-red").textContent = Number(summary.redTrips || 0).toLocaleString("ru-RU");
+  $("logistics-kpi-yellow").textContent = Number(summary.yellowTrips || 0).toLocaleString("ru-RU");
+  $("logistics-kpi-cost").textContent = logisticsMoney(summary.totalCost);
+  $("logistics-kpi-percent").textContent = `${logisticsDecimal(summary.totalPercent, 2)}%`;
+  const problem = (state.logistics.trips || []).filter((trip) => trip.colorStatus !== "green").sort((a,b)=>Number(b.percent||0)-Number(a.percent||0));
+  $("logistics-problem-table").innerHTML = problem.map(logisticsTripRow).join(""); $("logistics-overview-empty").hidden = Boolean(problem.length || Number(summary.tripCount || 0));
+  renderLogisticsTrips();
+}
+function logisticsTripRow(trip, all = false) {
+  return `<tr class="logistics-trip-${escapeHtml(trip.colorStatus || "green")}"><td><strong>${escapeHtml(trip.tripNumber || trip.tripId || "—")}</strong></td><td>${escapeHtml(logisticsDate(trip.tripDate))}</td><td>${escapeHtml(trip.warehouse || "—")}</td><td>${escapeHtml(trip.vehicle || "—")}</td><td>${logisticsMoney(trip.shipment)}</td><td>${logisticsMoney(trip.cost)}</td><td>${logisticsBadge(trip.colorStatus, trip.percent)}</td>${all ? `<td>${logisticsDecimal(trip.weight)}</td><td>${logisticsDecimal(trip.volume)}</td>` : ""}<td>${Number(trip.stopCount || 0)}</td></tr>`;
+}
+function renderLogisticsTrips() {
+  const query = String($("logistics-trip-search")?.value || "").trim().toLowerCase(); const color = $("logistics-color-filter")?.value || "all";
+  const trips = (state.logistics.trips || []).filter((trip) => (color === "all" || trip.colorStatus === color) && (!query || JSON.stringify(trip).toLowerCase().includes(query)));
+  $("logistics-trips-table").innerHTML = trips.map((trip)=>logisticsTripRow(trip,true)).join(""); $("logistics-trips-empty").hidden = Boolean(trips.length);
+}
+function logisticsNumber(value) { if (typeof value === "number") return Number.isFinite(value) ? value : 0; const num = Number(String(value ?? "").replace(/\s+/g, "").replace(",", ".").replace("%", "")); return Number.isFinite(num) ? num : 0; }
+function excelDateIso(value) {
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === "number" && window.XLSX?.SSF?.parse_date_code) { const p = XLSX.SSF.parse_date_code(value); if (p) return new Date(Date.UTC(p.y,p.m-1,p.d,p.H||0,p.M||0,Math.floor(p.S||0))).toISOString(); }
+  const text=String(value||"").trim(); const m=text.match(/(\d{2})\.(\d{2})\.(\d{4})(?:\s+(\d{1,2}):(\d{2}):(\d{2}))?/); if (!m) return text;
+  return new Date(Number(m[3]),Number(m[2])-1,Number(m[1]),Number(m[4]||0),Number(m[5]||0),Number(m[6]||0)).toISOString();
+}
+async function readLogisticsFile(file) {
+  if (!window.XLSX) throw new Error("Модуль чтения Excel не загрузился.");
+  const workbook=XLSX.read(await file.arrayBuffer(),{type:"array",cellDates:true}); const sheet=workbook.Sheets[workbook.SheetNames[0]]; if (!sheet) throw new Error("В файле нет листов.");
+  const rows=XLSX.utils.sheet_to_json(sheet,{header:1,defval:"",raw:true}); if (rows.length<3) throw new Error("Файл не содержит заданий на перевозку.");
+  const trips=[]; let current=null;
+  rows.slice(2).forEach((row,index)=>{ const first=String(row[0]??"").trim(); if (!first) return;
+    if (/^Задание на перевозку\s+/i.test(first)) { const number=(first.match(/Задание на перевозку\s+([^\s]+)/i)||[])[1]||first; const date=(first.match(/от\s+(.+)$/i)||[])[1]||"";
+      current={tripId:`${number}-${index+3}`,tripNumber:number,tripDate:excelDateIso(date),sourceRow:index+3,vehicle:String(row[1]??"").trim(),warehouse:"",shipment:logisticsNumber(row[4]),cost:logisticsNumber(row[5]),percent:logisticsNumber(row[6]),weight:logisticsNumber(row[7]),volume:logisticsNumber(row[8]),lines:[]}; trips.push(current); return; }
+    if (!current) return; const warehouse=String(row[3]??"").trim(); if (warehouse && !current.warehouse) current.warehouse=warehouse;
+    current.lines.push({rowNumber:index+3,recipient:first,direction:String(row[1]??"").trim(),zone:String(row[2]??"").trim(),warehouse,shipment:logisticsNumber(row[4]),cost:logisticsNumber(row[5]),percent:logisticsNumber(row[6]),weight:logisticsNumber(row[7]),volume:logisticsNumber(row[8])});
+  });
+  if (!trips.length) throw new Error("Не найдены строки «Задание на перевозку». Проверьте структуру первого листа."); return trips;
+}
+function resetLogisticsImport(clear=true) { state.logistics.preview=null; state.logistics.sourceTrips=[]; state.logistics.fileName=""; $("logistics-import-result").hidden=true; $("logistics-commit-button").disabled=true; if(clear) $("logistics-file").value=""; $("logistics-preview-button").disabled=!$("logistics-file").files?.[0] || !isSystemAdmin(); }
+async function previewLogisticsFile() {
+  const file=$("logistics-file").files?.[0]; if(!file) return; $("logistics-import-progress").hidden=false; $("logistics-preview-button").disabled=true;
+  try { const trips=await readLogisticsFile(file); state.logistics.sourceTrips=trips; state.logistics.fileName=file.name;
+    const data=await api("/admin/logistics-import",{method:"POST",body:JSON.stringify({operation:"preview",year:Number($("logistics-year").value),month:Number($("logistics-month").value),fileName:file.name,trips}) ,timeout:120000});
+    state.logistics.preview=data; state.logistics.observedWarehouses=data.warehouseAliases||[]; state.logistics.observedVehicles=data.vehicleAliases||[]; renderLogisticsPreview();
+  } catch(exc){ $("logistics-error").textContent=exc.message; $("logistics-error").hidden=false; } finally { $("logistics-import-progress").hidden=true; $("logistics-preview-button").disabled=false; }
+}
+function renderLogisticsPreview() {
+  const data=state.logistics.preview, s=data.summary||{}; $("logistics-preview-trips").textContent=s.tripCount||0; $("logistics-preview-lines").textContent=s.lineCount||0; $("logistics-preview-matched").textContent=s.matchedCount||0; $("logistics-preview-client-only").textContent=s.clientOnlyCount||0; $("logistics-preview-ignored").textContent=s.ignoredCount||0; $("logistics-preview-unresolved").textContent=s.unresolvedCount||0;
+  const warning=$("logistics-period-warning"); warning.hidden=!data.periodExists; warning.textContent=data.periodExists?`Данные за ${data.periodLabel} уже загружены. Новая загрузка заменит активную версию месяца.`:"";
+  const unresolved=[]; (data.trips||[]).forEach((trip)=>trip.lines.forEach((line)=>{if(line.status==="unresolved") unresolved.push({trip,line});}));
+  $("logistics-match-table").innerHTML=unresolved.map(({trip,line})=>`<tr><td>${line.rowNumber||"—"}</td><td><strong>${escapeHtml(line.recipient)}</strong><small>${escapeHtml(trip.tripNumber||"")}</small></td><td>${escapeHtml(line.direction||"—")}</td><td>${escapeHtml(line.zone||"—")}</td><td>${logisticsMoney(line.cost)}</td><td><select class="logistics-match-select" data-trip-id="${escapeHtml(trip.tripId)}" data-row-number="${line.rowNumber}"><option value="">Выберите ТРТ</option>${(line.candidates||[]).map((c)=>`<option value="point:${escapeHtml(c.pointId)}">ТРТ: ${escapeHtml(c.label)} · ${Math.round(Number(c.score||0)*100)}%</option>`).join("")}${(line.clientCandidates||[]).map((c)=>`<option value="client:${escapeHtml(c.clientName)}">Только клиент: ${escapeHtml(c.clientName)} · ${Math.round(Number(c.score||0)*100)}%</option>`).join("")}</select></td></tr>`).join("");
+  $("logistics-match-empty").hidden=Boolean(unresolved.length); $("logistics-import-result").hidden=false; $("logistics-commit-button").disabled=Boolean(unresolved.length);
+  populateLogisticsAliasSelects();
+}
+function applyLogisticsManualMatch(select) { const trip=state.logistics.sourceTrips.find((item)=>item.tripId===select.dataset.tripId); const line=trip?.lines.find((item)=>String(item.rowNumber)===String(select.dataset.rowNumber)); if(line){ line.manualPointId=""; line.manualClientName=""; if(select.value.startsWith("point:")) line.manualPointId=select.value.slice(6); if(select.value.startsWith("client:")) line.manualClientName=select.value.slice(7); } const remaining=[...document.querySelectorAll(".logistics-match-select")].filter((item)=>!item.value).length; $("logistics-commit-button").disabled=remaining>0; }
+async function commitLogistics() {
+  const button=$("logistics-commit-button"); button.disabled=true; button.textContent="Загрузка…";
+  try { const body={operation:"commit",year:Number($("logistics-year").value),month:Number($("logistics-month").value),fileName:state.logistics.fileName,trips:state.logistics.sourceTrips,replace:Boolean(state.logistics.preview?.periodExists)};
+    const result=await api("/admin/logistics-import",{method:"POST",body:JSON.stringify(body),timeout:180000}); showToast(result.message||"Логистика загружена"); resetLogisticsImport(true); state.logistics.loaded=false; await loadLogistics(true); setLogisticsTab("overview");
+  } catch(exc){ $("logistics-error").textContent=exc.message; $("logistics-error").hidden=false; button.disabled=false; } finally { button.textContent="Загрузить логистику"; }
+}
+async function loadLogisticsDictionaries(force=false) { if(state.logistics.dictionaries&&!force){renderLogisticsDictionaries();return;} try{state.logistics.dictionaries=await api("/logistics?view=dictionaries");renderLogisticsDictionaries();}catch(exc){$("logistics-error").textContent=exc.message;$("logistics-error").hidden=false;} }
+function populateLogisticsAliasSelects(){ const wa=new Set(state.logistics.observedWarehouses||[]), va=new Set(state.logistics.observedVehicles||[]); (state.logistics.dictionaries?.warehouseAliases||[]).forEach(a=>wa.add(a.sourceAlias)); (state.logistics.dictionaries?.vehicleAliases||[]).forEach(a=>va.add(a.sourceAlias));
+  const w=$("warehouse-source-alias"), v=$("vehicle-source-alias"); if(w) w.innerHTML='<option value="">Выберите обозначение</option>'+[...wa].sort().map(a=>`<option>${escapeHtml(a)}</option>`).join(""); if(v) v.innerHTML='<option value="">Выберите обозначение</option>'+[...va].sort().map(a=>`<option>${escapeHtml(a)}</option>`).join(""); }
+function renderLogisticsDictionaries(){ const d=state.logistics.dictionaries||{}; const wa=d.warehouseAliases||[], va=d.vehicleAliases||[];
+  $("warehouses-table").innerHTML=(d.warehouses||[]).map(w=>`<tr data-warehouse-id="${escapeHtml(w.warehouseId)}"><td><strong>${escapeHtml(w.officialName)}</strong></td><td>${escapeHtml(w.address)}</td><td>${logisticsDecimal(w.lat,6)}, ${logisticsDecimal(w.lon,6)}</td><td>${wa.filter(a=>a.warehouseId===w.warehouseId).map(a=>escapeHtml(a.sourceAlias)).join("<br>")||"—"}</td></tr>`).join(""); $("warehouses-empty").hidden=Boolean((d.warehouses||[]).length);
+  $("vehicles-table").innerHTML=(d.vehicles||[]).map(v=>`<tr><td><strong>${escapeHtml(v.officialName)}</strong></td><td>${logisticsDecimal(v.capacityTons,1)} т</td><td>${logisticsDecimal(v.volumeM3,1)} м³</td><td>${va.filter(a=>a.vehicleId===v.vehicleId).map(a=>escapeHtml(a.sourceAlias)).join("<br>")||"—"}</td></tr>`).join(""); $("vehicles-empty").hidden=Boolean((d.vehicles||[]).length); populateLogisticsAliasSelects(); renderWarehouseMarkers(); }
+function initializeWarehouseMap(){ if(warehouseMap){warehouseMap.invalidateSize();return;} const el=$("warehouse-map"); if(!el||!window.L)return; warehouseMap=L.map(el).setView([55.75,37.62],5); L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{attribution:"© OpenStreetMap"}).addTo(warehouseMap); warehouseMap.on("click",({latlng})=>setWarehousePoint(latlng.lat,latlng.lng)); renderWarehouseMarkers(); }
+function setWarehousePoint(lat,lon){ $("warehouse-lat").value=Number(lat).toFixed(6); $("warehouse-lon").value=Number(lon).toFixed(6); if(!warehouseMap)return; if(warehouseMarker)warehouseMarker.remove(); warehouseMarker=L.marker([lat,lon]).addTo(warehouseMap); warehouseMap.setView([lat,lon],14); }
+function renderWarehouseMarkers(){ if(!warehouseMap||!state.logistics.dictionaries)return; (state.logistics.dictionaries.warehouses||[]).forEach(w=>L.circleMarker([w.lat,w.lon],{radius:7}).addTo(warehouseMap).bindPopup(`<strong>${escapeHtml(w.officialName)}</strong><br>${escapeHtml(w.address)}`)); }
+async function geocodeWarehouse(){ const address=$("warehouse-address").value.trim(); if(!address)return showToast("Введите адрес склада"); try{const response=await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&accept-language=ru&q=${encodeURIComponent(address)}`,{headers:{"Accept":"application/json"}}); const rows=await response.json(); if(!rows.length)throw new Error("Адрес не найден"); setWarehousePoint(Number(rows[0].lat),Number(rows[0].lon));}catch(exc){showToast(exc.message||"Не удалось найти адрес");} }
+async function saveWarehouse(){ try{await api("/admin/logistics",{method:"POST",body:JSON.stringify({operation:"save_warehouse",warehouseId:$("warehouse-id").value,sourceAlias:$("warehouse-source-alias").value,officialName:$("warehouse-name").value,address:$("warehouse-address").value,lat:Number($("warehouse-lat").value),lon:Number($("warehouse-lon").value),isActive:true})}); showToast("Склад сохранён"); state.logistics.dictionaries=null; await loadLogisticsDictionaries(true);}catch(exc){showToast(exc.message);} }
+async function saveVehicle(){ try{await api("/admin/logistics",{method:"POST",body:JSON.stringify({operation:"save_vehicle",vehicleId:$("vehicle-id").value,sourceAlias:$("vehicle-source-alias").value,officialName:$("vehicle-name").value,capacityTons:Number($("vehicle-capacity").value),volumeM3:Number($("vehicle-volume").value),isActive:true})}); showToast("Автомобиль сохранён"); state.logistics.dictionaries=null; await loadLogisticsDictionaries(true);}catch(exc){showToast(exc.message);} }
+
+
 $("sales-import-file").addEventListener("change", () => {
   resetSalesImport(false);
   updateSalesImportPreviewButton();
@@ -3184,6 +3298,22 @@ $("sales-import-commit-button").addEventListener("click", commitSalesImport);
   element.addEventListener(id === "activity-search" ? "input" : "change", renderActivity);
 });
 $("activity-refresh")?.addEventListener("click", () => loadActivity(true));
+
+
+document.querySelectorAll("[data-logistics-tab]").forEach((button)=>button.addEventListener("click",()=>setLogisticsTab(button.dataset.logisticsTab)));
+$("logistics-refresh")?.addEventListener("click",()=>{state.logistics.loaded=false;loadLogistics(true);});
+$("logistics-year")?.addEventListener("change",()=>{state.logistics.loaded=false;loadLogistics(true);});
+$("logistics-month")?.addEventListener("change",()=>{state.logistics.loaded=false;loadLogistics(true);});
+$("logistics-trip-search")?.addEventListener("input",renderLogisticsTrips);
+$("logistics-color-filter")?.addEventListener("change",renderLogisticsTrips);
+$("logistics-file")?.addEventListener("change",()=>{resetLogisticsImport(false);$("logistics-preview-button").disabled=!$("logistics-file").files?.[0]||!isSystemAdmin();});
+$("logistics-preview-button")?.addEventListener("click",previewLogisticsFile);
+$("logistics-reset-button")?.addEventListener("click",()=>resetLogisticsImport(true));
+$("logistics-commit-button")?.addEventListener("click",commitLogistics);
+$("logistics-match-table")?.addEventListener("change",(event)=>{if(event.target.matches(".logistics-match-select"))applyLogisticsManualMatch(event.target);});
+$("warehouse-geocode")?.addEventListener("click",geocodeWarehouse);
+$("warehouse-save")?.addEventListener("click",saveWarehouse);
+$("vehicle-save")?.addEventListener("click",saveVehicle);
 
 window.addEventListener("hashchange", () => {
   const page = location.hash.slice(1);

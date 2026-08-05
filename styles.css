@@ -1933,3 +1933,36 @@ body:has(#page-trt:not([hidden])) .main-content {
   .visit-detail-grid,
   .visit-detail-grid.admin-gps { grid-template-columns: 1fr; }
 }
+
+
+/* VOG update 2026-08-05 · Аналитика → Логистика v7.0 */
+.logistics-page-header { align-items: end; }
+.logistics-period-controls { display:flex; gap:10px; align-items:center; }
+.logistics-period-controls select { min-width:110px; }
+.logistics-tabs { display:flex; gap:8px; margin-bottom:16px; overflow:auto; }
+.logistics-tab { border:1px solid var(--border); border-radius:999px; padding:9px 15px; background:#fff; color:#475467; font-weight:800; cursor:pointer; white-space:nowrap; }
+.logistics-tab.active { border-color:#1f6f54; background:#e9f6f0; color:#0c6246; }
+.logistics-summary-grid { grid-template-columns:repeat(5,minmax(0,1fr)); }
+.logistics-yellow-summary { background:#fff8df; border-color:#f0cf6b; }
+.logistics-trip-red td:first-child { border-left:4px solid #d92d20; }
+.logistics-trip-yellow td:first-child { border-left:4px solid #d8a000; }
+.logistics-trip-green td:first-child { border-left:4px solid #12935c; }
+.logistics-status { display:inline-flex; align-items:center; border-radius:999px; padding:5px 9px; font-size:12px; font-weight:900; white-space:nowrap; }
+.logistics-status-red { color:#b42318; background:#fee4e2; }
+.logistics-status-yellow { color:#805b00; background:#fff2c7; }
+.logistics-status-green { color:#067647; background:#dcfae6; }
+.logistics-import-controls { display:grid; grid-template-columns:minmax(240px,1fr) auto; gap:12px; align-items:end; margin:16px 0; }
+.logistics-import-summary { grid-template-columns:repeat(6,minmax(0,1fr)); margin-top:16px; }
+.logistics-match-section { margin-top:18px; }
+.logistics-match-section h3 { margin:0 0 10px; }
+.logistics-match-select { min-width:320px; max-width:520px; }
+.logistics-match-table small { display:block; color:var(--muted); margin-top:3px; }
+.logistics-directory-grid { display:grid; grid-template-columns:minmax(330px,.8fr) minmax(460px,1.2fr); gap:16px; margin-bottom:16px; }
+.logistics-directory-form { display:flex; flex-direction:column; gap:12px; }
+.logistics-directory-form label { display:grid; gap:6px; color:#344054; font-weight:700; }
+.coordinate-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.logistics-map-card { min-height:430px; }
+.warehouse-map { width:100%; height:360px; border-radius:14px; overflow:hidden; background:#eef2f6; }
+.field-hint { margin:9px 0 0; color:var(--muted); font-size:12px; }
+@media (max-width:1100px) { .logistics-summary-grid,.logistics-import-summary{grid-template-columns:repeat(3,minmax(0,1fr));}.logistics-directory-grid{grid-template-columns:1fr;} }
+@media (max-width:700px) { .logistics-page-header{align-items:stretch}.logistics-period-controls{flex-wrap:wrap}.logistics-summary-grid,.logistics-import-summary{grid-template-columns:repeat(2,minmax(0,1fr));}.logistics-import-controls{grid-template-columns:1fr}.coordinate-grid{grid-template-columns:1fr}.logistics-match-select{min-width:240px}.warehouse-map{height:300px} }
