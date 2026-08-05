@@ -3246,7 +3246,8 @@ async function readLogisticsFile(file) {
   if (!trips.length) throw new Error("Не найдены строки «Задание на перевозку». Проверьте структуру первого листа."); return trips;
 }
 function resetLogisticsImport(clear=true) { state.logistics.preview=null; state.logistics.sourceTrips=[]; state.logistics.fileName=""; $("logistics-import-result").hidden=true; $("logistics-commit-button").disabled=true; if(clear) $("logistics-file").value=""; $("logistics-preview-button").disabled=!$("logistics-file").files?.[0] || !isSystemAdmin(); }
-const LOGISTICS_PREVIEW_CHUNK_SIZE = 40;
+const LOGISTICS_PREVIEW_CHUNK_SIZE = 10;
+const LOGISTICS_COMMIT_CHUNK_SIZE = 10;
 function mergeLogisticsPreviewParts(parts) {
   const summary = { tripCount:0,lineCount:0,ignoredCount:0,matchedCount:0,clientOnlyCount:0,unresolvedCount:0,redTrips:0,yellowTrips:0,greenTrips:0,totalShipment:0,totalCost:0,totalPercent:0 };
   const warehouseAliases=new Set(), vehicleAliases=new Set(), trips=[];
@@ -3258,15 +3259,70 @@ function mergeLogisticsPreviewParts(parts) {
   summary.totalPercent=summary.totalShipment>0?(summary.totalCost/summary.totalShipment)*100:0;
   return {periodExists,periodLabel,summary,warehouseAliases:[...warehouseAliases].sort(),vehicleAliases:[...vehicleAliases].sort(),trips};
 }
-async function previewLogisticsFile() {
-  const file=$("logistics-file").files?.[0]; if(!file) return; const progress=$("logistics-import-progress"); progress.hidden=false; $("logistics-preview-button").disabled=true; $("logistics-error").hidden=true;
-  try { const trips=await readLogisticsFile(file); state.logistics.sourceTrips=trips; state.logistics.fileName=file.name; const parts=[];
-    for(let start=0;start<trips.length;start+=LOGISTICS_PREVIEW_CHUNK_SIZE){ const chunk=trips.slice(start,start+LOGISTICS_PREVIEW_CHUNK_SIZE); const done=Math.min(start+chunk.length,trips.length); progress.textContent=`Разбор и сопоставление файла: ${done} из ${trips.length} рейсов…`;
-      parts.push(await api("/admin/logistics-import",{method:"POST",body:JSON.stringify({operation:"preview",year:Number($("logistics-year").value),month:Number($("logistics-month").value),fileName:file.name,trips:chunk}),timeout:180000}));
-    }
-    const data=mergeLogisticsPreviewParts(parts); state.logistics.preview=data; state.logistics.observedWarehouses=data.warehouseAliases||[]; state.logistics.observedVehicles=data.vehicleAliases||[]; renderLogisticsPreview();
-  } catch(exc){ $("logistics-error").textContent=exc.message; $("logistics-error").hidden=false; } finally { progress.textContent="Разбор и сопоставление файла…"; progress.hidden=true; $("logistics-preview-button").disabled=false; }
+function mergeLogisticsSummaries(items) {
+  return mergeLogisticsPreviewParts((items||[]).map((item)=>({summary:item.summary||item}))).summary;
 }
+async function requestLogisticsPreviewChunk(chunk, context) {
+  try {
+    return [await api("/admin/logistics-import",{
+      method:"POST",
+      body:JSON.stringify({
+        operation:"preview",
+        year:Number($("logistics-year").value),
+        month:Number($("logistics-month").value),
+        fileName:state.logistics.fileName,
+        trips:chunk,
+      }),
+      timeout:180000,
+    })];
+  } catch (error) {
+    if (chunk.length <= 1) {
+      const trip=chunk[0]||{};
+      throw new Error(`Не удалось обработать рейс ${trip.tripNumber||trip.tripId||context}: ${error.message}`);
+    }
+    const middle=Math.ceil(chunk.length/2);
+    const left=await requestLogisticsPreviewChunk(chunk.slice(0,middle),context);
+    const right=await requestLogisticsPreviewChunk(chunk.slice(middle),context);
+    return [...left,...right];
+  }
+}
+async function previewLogisticsFile() {
+  const file=$("logistics-file").files?.[0];
+  if(!file) return;
+  const progress=$("logistics-import-progress");
+  progress.hidden=false;
+  $("logistics-preview-button").disabled=true;
+  $("logistics-error").hidden=true;
+  try {
+    const trips=await readLogisticsFile(file);
+    state.logistics.sourceTrips=trips;
+    state.logistics.fileName=file.name;
+    const parts=[];
+    let completed=0;
+    for(let start=0;start<trips.length;start+=LOGISTICS_PREVIEW_CHUNK_SIZE){
+      const chunk=trips.slice(start,start+LOGISTICS_PREVIEW_CHUNK_SIZE);
+      progress.textContent=`Сопоставление рейсов ${start+1}–${start+chunk.length} из ${trips.length}…`;
+      const chunkParts=await requestLogisticsPreviewChunk(chunk,`${start+1}–${start+chunk.length}`);
+      parts.push(...chunkParts);
+      completed+=chunk.length;
+      progress.textContent=`Сопоставлено ${completed} из ${trips.length} рейсов…`;
+    }
+    const data=mergeLogisticsPreviewParts(parts);
+    state.logistics.preview=data;
+    state.logistics.observedWarehouses=data.warehouseAliases||[];
+    state.logistics.observedVehicles=data.vehicleAliases||[];
+    renderLogisticsPreview();
+    $("logistics-error").hidden=true;
+  } catch(exc){
+    $("logistics-error").textContent=exc.message;
+    $("logistics-error").hidden=false;
+  } finally {
+    progress.textContent="Разбор и сопоставление файла…";
+    progress.hidden=true;
+    $("logistics-preview-button").disabled=false;
+  }
+}
+
 function renderLogisticsPreview() {
   const data=state.logistics.preview, s=data.summary||{}; $("logistics-preview-trips").textContent=s.tripCount||0; $("logistics-preview-lines").textContent=s.lineCount||0; $("logistics-preview-matched").textContent=s.matchedCount||0; $("logistics-preview-client-only").textContent=s.clientOnlyCount||0; $("logistics-preview-ignored").textContent=s.ignoredCount||0; $("logistics-preview-unresolved").textContent=s.unresolvedCount||0;
   const warning=$("logistics-period-warning"); warning.hidden=!data.periodExists; warning.textContent=data.periodExists?`Данные за ${data.periodLabel} уже загружены. Новая загрузка заменит активную версию месяца.`:"";
@@ -3276,12 +3332,84 @@ function renderLogisticsPreview() {
   populateLogisticsAliasSelects();
 }
 function applyLogisticsManualMatch(select) { const trip=state.logistics.sourceTrips.find((item)=>item.tripId===select.dataset.tripId); const line=trip?.lines.find((item)=>String(item.rowNumber)===String(select.dataset.rowNumber)); if(line){ line.manualPointId=""; line.manualClientName=""; if(select.value.startsWith("point:")) line.manualPointId=select.value.slice(6); if(select.value.startsWith("client:")) line.manualClientName=select.value.slice(7); } const remaining=[...document.querySelectorAll(".logistics-match-select")].filter((item)=>!item.value).length; $("logistics-commit-button").disabled=remaining>0; }
-async function commitLogistics() {
-  const button=$("logistics-commit-button"); button.disabled=true; button.textContent="Загрузка…";
-  try { const body={operation:"commit",year:Number($("logistics-year").value),month:Number($("logistics-month").value),fileName:state.logistics.fileName,trips:state.logistics.sourceTrips,replace:Boolean(state.logistics.preview?.periodExists)};
-    const result=await api("/admin/logistics-import",{method:"POST",body:JSON.stringify(body),timeout:600000}); showToast(result.message||"Логистика загружена"); resetLogisticsImport(true); state.logistics.loaded=false; await loadLogistics(true); setLogisticsTab("overview");
-  } catch(exc){ $("logistics-error").textContent=exc.message; $("logistics-error").hidden=false; button.disabled=false; } finally { button.textContent="Загрузить логистику"; }
+async function commitLogisticsChunkAdaptive(importId, chunk, context) {
+  try {
+    return [await api("/admin/logistics-import",{
+      method:"POST",
+      body:JSON.stringify({
+        operation:"commit_chunk",
+        year:Number($("logistics-year").value),
+        month:Number($("logistics-month").value),
+        importId,
+        trips:chunk,
+      }),
+      timeout:180000,
+    })];
+  } catch (error) {
+    if (chunk.length <= 1) {
+      const trip=chunk[0]||{};
+      throw new Error(`Не удалось загрузить рейс ${trip.tripNumber||trip.tripId||context}: ${error.message}`);
+    }
+    const middle=Math.ceil(chunk.length/2);
+    const left=await commitLogisticsChunkAdaptive(importId,chunk.slice(0,middle),context);
+    const right=await commitLogisticsChunkAdaptive(importId,chunk.slice(middle),context);
+    return [...left,...right];
+  }
 }
+async function commitLogistics() {
+  const button=$("logistics-commit-button");
+  const progress=$("logistics-import-progress");
+  button.disabled=true;
+  button.textContent="Загрузка…";
+  progress.hidden=false;
+  $("logistics-error").hidden=true;
+  try {
+    const year=Number($("logistics-year").value);
+    const month=Number($("logistics-month").value);
+    const replace=Boolean(state.logistics.preview?.periodExists);
+    progress.textContent="Подготовка загрузки логистики…";
+    const started=await api("/admin/logistics-import",{
+      method:"POST",
+      body:JSON.stringify({operation:"commit_start",year,month,fileName:state.logistics.fileName,replace}),
+      timeout:60000,
+    });
+    const results=[];
+    const trips=state.logistics.sourceTrips||[];
+    let completed=0;
+    for(let start=0;start<trips.length;start+=LOGISTICS_COMMIT_CHUNK_SIZE){
+      const chunk=trips.slice(start,start+LOGISTICS_COMMIT_CHUNK_SIZE);
+      progress.textContent=`Загрузка рейсов ${start+1}–${start+chunk.length} из ${trips.length}…`;
+      const chunkResults=await commitLogisticsChunkAdaptive(started.importId,chunk,`${start+1}–${start+chunk.length}`);
+      results.push(...chunkResults);
+      completed+=chunk.length;
+      progress.textContent=`Загружено ${completed} из ${trips.length} рейсов…`;
+    }
+    const summary=mergeLogisticsSummaries(results);
+    progress.textContent="Завершение месячной загрузки…";
+    const result=await api("/admin/logistics-import",{
+      method:"POST",
+      body:JSON.stringify({
+        operation:"commit_finalize",year,month,importId:started.importId,
+        fileName:state.logistics.fileName,replace,summary,
+      }),
+      timeout:60000,
+    });
+    showToast(result.message||"Логистика загружена");
+    resetLogisticsImport(true);
+    state.logistics.loaded=false;
+    await loadLogistics(true);
+    setLogisticsTab("overview");
+  } catch(exc){
+    $("logistics-error").textContent=exc.message;
+    $("logistics-error").hidden=false;
+    button.disabled=false;
+  } finally {
+    progress.textContent="Разбор и сопоставление файла…";
+    progress.hidden=true;
+    button.textContent="Загрузить логистику";
+  }
+}
+
 async function loadLogisticsDictionaries(force=false) { if(state.logistics.dictionaries&&!force){renderLogisticsDictionaries();return;} try{state.logistics.dictionaries=await api("/logistics?view=dictionaries");renderLogisticsDictionaries();}catch(exc){$("logistics-error").textContent=exc.message;$("logistics-error").hidden=false;} }
 function populateLogisticsAliasSelects(){ const wa=new Set(state.logistics.observedWarehouses||[]), va=new Set(state.logistics.observedVehicles||[]); (state.logistics.dictionaries?.warehouseAliases||[]).forEach(a=>wa.add(a.sourceAlias)); (state.logistics.dictionaries?.vehicleAliases||[]).forEach(a=>va.add(a.sourceAlias));
   const w=$("warehouse-source-alias"), v=$("vehicle-source-alias"); if(w) w.innerHTML='<option value="">Выберите обозначение</option>'+[...wa].sort().map(a=>`<option>${escapeHtml(a)}</option>`).join(""); if(v) v.innerHTML='<option value="">Выберите обозначение</option>'+[...va].sort().map(a=>`<option>${escapeHtml(a)}</option>`).join(""); }
