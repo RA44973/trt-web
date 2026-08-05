@@ -565,7 +565,7 @@ async function loadActivity(force = false) {
   $("activity-loading").textContent = "Загрузка активности…";
   $("activity-empty").hidden = true;
   try {
-    const result = await api("/activity");
+    const result = await api("/employees?view=activity", { timeout: 60000 });
     state.activity = Array.isArray(result.events) ? result.events : [];
     state.activityLoaded = true;
     fillActivityEmployeeFilter();
