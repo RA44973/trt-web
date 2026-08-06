@@ -374,6 +374,7 @@
             <div id="logistics-import-result" hidden>
               <div class="summary-grid logistics-import-summary"><article class="summary-card"><span>Рейсов</span><strong id="logistics-preview-trips">0</strong></article><article class="summary-card"><span>Строк</span><strong id="logistics-preview-lines">0</strong></article><article class="summary-card"><span>Сопоставлено с ТРТ</span><strong id="logistics-preview-matched">0</strong></article><article class="summary-card"><span>Только клиент</span><strong id="logistics-preview-client-only">0</strong></article><article class="summary-card"><span>Исключено</span><strong id="logistics-preview-ignored">0</strong></article><article class="summary-card danger-summary"><span>Не определено</span><strong id="logistics-preview-unresolved">0</strong></article></div>
               <div id="logistics-period-warning" class="sales-import-warning" hidden></div>
+              <div id="logistics-unresolved-warning" class="sales-import-warning" hidden></div>
               <section class="logistics-match-section"><h3>Строки, требующие решения</h3><div class="table-wrap"><table><thead><tr><th>Строка</th><th>Получатель</th><th>Направление</th><th>Зона</th><th>Затраты</th><th>Сопоставление</th></tr></thead><tbody id="logistics-match-table"></tbody></table><div id="logistics-match-empty" class="empty-state">Все рабочие строки сопоставлены.</div></div></section>
               <div class="sales-import-actions"><button id="logistics-reset-button" class="secondary-button" type="button">Другой файл</button><button id="logistics-commit-button" class="primary-button" type="button" disabled>Загрузить логистику</button></div>
             </div>
@@ -1014,6 +1015,6 @@
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <script src="app.js?v=20260806-logistics-v7-7"></script>
+  <script src="app.js?v=20260806-logistics-v7-8"></script>
 </body>
 </html>

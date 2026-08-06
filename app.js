@@ -3317,6 +3317,8 @@ function resetLogisticsImport(clear=true) {
   state.logistics.uniqueMatchItems=[];
   $("logistics-import-result").hidden=true;
   $("logistics-commit-button").disabled=true;
+  const unresolvedWarning=$("logistics-unresolved-warning");
+  if(unresolvedWarning){unresolvedWarning.hidden=true;unresolvedWarning.textContent="";}
   if(clear) $("logistics-file").value="";
   $("logistics-preview-button").disabled=!$("logistics-file").files?.[0] || !isSystemAdmin();
 }
@@ -3449,7 +3451,21 @@ function renderLogisticsPreview(){
   const warning=$("logistics-period-warning"); warning.hidden=!data.periodExists; warning.textContent=data.periodExists?`Данные за ${data.periodLabel} уже загружены. Новая загрузка заменит активную версию месяца.`:"";
   const unresolved=unresolvedLogisticsGroups();
   $("logistics-match-table").innerHTML=unresolved.map((group)=>`<tr><td>${escapeHtml(group.rows.join(", ")||"—")}<small>${group.occurrences>1?`Повторов: ${group.occurrences}`:""}</small></td><td><strong>${escapeHtml(group.recipient)}</strong><small>${escapeHtml(group.address||"Адрес не указан")}</small><small>${escapeHtml([...group.tripNumbers].slice(0,3).join(", "))}</small></td><td>${escapeHtml(group.direction||"—")}</td><td>${escapeHtml([...group.zones].slice(0,4).join(", ")||"—")}</td><td>${logisticsMoney(group.cost)}</td><td><select class="logistics-match-select" data-match-key="${escapeHtml(encodeURIComponent(group.key))}"><option value="">Выберите ТРТ или клиента</option>${(group.candidates||[]).map((c)=>`<option value="point:${escapeHtml(c.pointId)}">ТРТ: ${escapeHtml(c.label)} · адрес ${Math.round(Number(c.addressScore||0)*100)}% · итог ${Math.round(Number(c.score||0)*100)}%</option>`).join("")}${(group.clientCandidates||[]).map((c)=>`<option value="client:${escapeHtml(c.clientName)}">Только клиент: ${escapeHtml(c.clientName)} · ${Math.round(Number(c.score||0)*100)}%</option>`).join("")}</select></td></tr>`).join("");
-  $("logistics-match-empty").hidden=Boolean(unresolved.length); $("logistics-import-result").hidden=false; $("logistics-commit-button").disabled=Boolean(unresolved.length); populateLogisticsAliasSelects();
+  $("logistics-match-empty").hidden=Boolean(unresolved.length);
+  $("logistics-import-result").hidden=false;
+  const commitButton=$("logistics-commit-button");
+  commitButton.disabled=!(state.logistics.sourceTrips||[]).length;
+  commitButton.title=unresolved.length
+    ? `Можно загрузить сейчас. Требуют сопоставления: ${Number(s.unresolvedCount||0)} строк.`
+    : "Все рабочие строки сопоставлены и готовы к загрузке.";
+  const unresolvedWarning=$("logistics-unresolved-warning");
+  if(unresolvedWarning){
+    unresolvedWarning.hidden=!unresolved.length;
+    unresolvedWarning.textContent=unresolved.length
+      ? `Не определено: ${Number(s.unresolvedCount||0)} строк (${unresolved.length} групп). Их можно сопоставить ниже либо загрузить сейчас. Несопоставленные строки сохранятся со статусом «Не определено» и не будут распределены по ТРТ или клиентам до исправления.`
+      : "";
+  }
+  populateLogisticsAliasSelects();
 }
 async function applyLogisticsManualMatch(select){
   const key=decodeURIComponent(select.dataset.matchKey||""); const group=unresolvedLogisticsGroups().find((item)=>item.key===key); if(!group||!select.value)return;
@@ -3488,6 +3504,13 @@ async function commitLogisticsChunkAdaptive(importId, chunk, context) {
 async function commitLogistics() {
   const button=$("logistics-commit-button");
   const progress=$("logistics-import-progress");
+  const unresolvedCount=Number(state.logistics.preview?.summary?.unresolvedCount||0);
+  if(unresolvedCount>0){
+    const confirmed=window.confirm(
+      `В файле осталось ${unresolvedCount} несопоставленных строк. Они будут загружены со статусом «Не определено» и не попадут в аналитику по ТРТ/клиентам до исправления. Продолжить загрузку?`
+    );
+    if(!confirmed)return;
+  }
   button.disabled=true;
   button.textContent="Загрузка…";
   progress.hidden=false;
