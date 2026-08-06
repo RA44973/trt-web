@@ -29,7 +29,7 @@ const state = {
   trtLoaded: false,
   trtSelectedId: "",
   trtFitRequested: true,
-  logistics: { loaded: false, trips: [], summary: {}, dictionaries: null, preview: null, sourceTrips: [], fileName: "", observedWarehouses: [], observedVehicles: [], matchResults: new Map(), uniqueMatchItems: [] },
+  logistics: { loaded: false, trips: [], summary: {}, dictionaries: null, aliasCatalog: null, aliasMap: new Map(), suggestionMap: new Map(), preview: null, sourceTrips: [], fileName: "", observedWarehouses: [], observedVehicles: [], matchResults: new Map(), uniqueMatchItems: [] },
   currentPage: PAGES.has(location.hash.slice(1)) ? location.hash.slice(1) : "trt",
 };
 
@@ -111,7 +111,7 @@ function resetProtectedState() {
   state.trtLoaded = false;
   state.trtSelectedId = "";
   state.trtFitRequested = true;
-  state.logistics = { loaded: false, trips: [], summary: {}, dictionaries: null, preview: null, sourceTrips: [], fileName: "", observedWarehouses: [], observedVehicles: [], matchResults: new Map(), uniqueMatchItems: [] };
+  state.logistics = { loaded: false, trips: [], summary: {}, dictionaries: null, aliasCatalog: null, aliasMap: new Map(), suggestionMap: new Map(), preview: null, sourceTrips: [], fileName: "", observedWarehouses: [], observedVehicles: [], matchResults: new Map(), uniqueMatchItems: [] };
 }
 
 function isGeneralDirector() {
@@ -3320,8 +3320,6 @@ function resetLogisticsImport(clear=true) {
   if(clear) $("logistics-file").value="";
   $("logistics-preview-button").disabled=!$("logistics-file").files?.[0] || !isSystemAdmin();
 }
-const LOGISTICS_MATCH_BATCH_SIZE = 80;
-const LOGISTICS_MATCH_CONCURRENCY = 3;
 const LOGISTICS_COMMIT_CHUNK_SIZE = 10;
 function mergeLogisticsSummaries(items) {
   const summary={tripCount:0,lineCount:0,ignoredCount:0,matchedCount:0,clientOnlyCount:0,unresolvedCount:0,redTrips:0,yellowTrips:0,greenTrips:0,totalShipment:0,totalCost:0,totalPercent:0};
@@ -3346,17 +3344,31 @@ function collectUniqueLogisticsMatches(trips){
   });});
   return [...groups.values()].map((group)=>({...group,zones:[...group.zones],rows:group.rows.slice(0,8)}));
 }
-async function requestLogisticsMatchBatch(items,context){
-  try{
-    const response=await api("/admin/logistics-import",{method:"POST",body:JSON.stringify({operation:"match_keys",year:Number($("logistics-year").value),month:Number($("logistics-month").value),items:items.map(({key,recipient,address,direction})=>({key,recipient,address,direction}))}),timeout:180000});
-    return response.matches||[];
-  }catch(error){
-    if(items.length<=1){const item=items[0]||{};throw new Error(`Не удалось сопоставить «${item.recipient||context}»: ${error.message}`);}
-    const middle=Math.ceil(items.length/2);
-    const left=await requestLogisticsMatchBatch(items.slice(0,middle),context);
-    const right=await requestLogisticsMatchBatch(items.slice(middle),context);
-    return [...left,...right];
-  }
+
+async function loadLogisticsAliasCatalog(force=false){
+  if(state.logistics.aliasCatalog&&!force)return state.logistics.aliasCatalog;
+  const data=await api("/logistics?view=aliases",{timeout:60000});
+  state.logistics.aliasCatalog=data||{};
+  state.logistics.aliasMap=new Map();
+  state.logistics.suggestionMap=new Map();
+  (data.aliases||[]).forEach((item)=>{
+    const key=String(item.key||`${logisticsNormalizeMatchValue(item.sourceName)}\u241f${logisticsNormalizeMatchValue(item.sourceAddress)}\u241f${logisticsNormalizeMatchValue(item.direction)}`);
+    state.logistics.aliasMap.set(key,item);
+  });
+  (data.suggestions||[]).forEach((item)=>state.logistics.suggestionMap.set(String(item.key||""),item.candidates||[]));
+  return data;
+}
+function buildLogisticsMatchesFromCatalog(items){
+  return (items||[]).map((item)=>{
+    const saved=state.logistics.aliasMap.get(item.key);
+    if(saved?.pointId){
+      return {key:item.key,status:"matched",pointId:saved.pointId,clientName:saved.clientName||"",reason:"Готовая таблица соответствий",savedAlias:true,candidates:[]};
+    }
+    if(saved?.clientName){
+      return {key:item.key,status:"client_only",pointId:"",clientName:saved.clientName,reason:"Готовая таблица соответствий (клиент)",savedAlias:true,candidates:[]};
+    }
+    return {key:item.key,status:"unresolved",pointId:"",clientName:"",reason:"Нет записи в таблице соответствий",candidates:state.logistics.suggestionMap.get(item.key)||[],clientCandidates:[]};
+  });
 }
 function applyLogisticsMatchesToSource(){
   (state.logistics.sourceTrips||[]).forEach((trip)=>{(trip.lines||[]).forEach((line)=>{
@@ -3394,18 +3406,17 @@ async function previewLogisticsFile(){
   const file=$("logistics-file").files?.[0]; if(!file)return;
   const progress=$("logistics-import-progress"); progress.hidden=false; $("logistics-preview-button").disabled=true; $("logistics-error").hidden=true;
   try{
+    progress.textContent="Чтение файла…";
     const trips=await readLogisticsFile(file); state.logistics.sourceTrips=trips; state.logistics.fileName=file.name;
     const uniqueItems=collectUniqueLogisticsMatches(trips); state.logistics.uniqueMatchItems=uniqueItems; state.logistics.matchResults=new Map();
-    const chunks=[]; for(let start=0;start<uniqueItems.length;start+=LOGISTICS_MATCH_BATCH_SIZE)chunks.push(uniqueItems.slice(start,start+LOGISTICS_MATCH_BATCH_SIZE));
-    let next=0,completed=0; const resultsByChunk=new Array(chunks.length);
-    const worker=async()=>{while(true){const index=next++;if(index>=chunks.length)return;const chunk=chunks[index];const matches=await requestLogisticsMatchBatch(chunk,`${completed+1}–${completed+chunk.length}`);resultsByChunk[index]=matches;completed+=chunk.length;progress.textContent=`Сопоставлено ${completed} из ${uniqueItems.length} уникальных получателей · исходных строк ${trips.reduce((sum,t)=>sum+(t.lines||[]).length,0)}…`;}};
-    await Promise.all(Array.from({length:Math.min(LOGISTICS_MATCH_CONCURRENCY,chunks.length)},()=>worker()));
-    resultsByChunk.flat().forEach((match)=>state.logistics.matchResults.set(match.key,match));
+    progress.textContent="Применение готовой таблицы соответствий…";
+    await loadLogisticsAliasCatalog();
+    buildLogisticsMatchesFromCatalog(uniqueItems).forEach((match)=>state.logistics.matchResults.set(match.key,match));
     applyLogisticsMatchesToSource();
     const data=buildLocalLogisticsPreview(); state.logistics.preview=data; state.logistics.observedWarehouses=data.warehouseAliases||[]; state.logistics.observedVehicles=data.vehicleAliases||[];
     renderLogisticsPreview(); $("logistics-error").hidden=true;
   }catch(exc){$("logistics-error").textContent=exc.message;$("logistics-error").hidden=false;}
-  finally{progress.textContent="Разбор и сопоставление файла…";progress.hidden=true;$("logistics-preview-button").disabled=false;}
+  finally{progress.textContent="Разбор файла…";progress.hidden=true;$("logistics-preview-button").disabled=false;}
 }
 function unresolvedLogisticsGroups(){
   const groups=new Map();
@@ -3426,7 +3437,7 @@ async function applyLogisticsManualMatch(select){
   else{const clientName=select.value.slice(7);match={status:"client_only",pointId:"",clientName,reason:"Ручное сопоставление с клиентом",manual:true,candidates:group.candidates||[],clientCandidates:group.clientCandidates||[]};}
   try{
     await api("/admin/logistics",{method:"POST",body:JSON.stringify({operation:"save_recipient_alias",sourceName:group.recipient,sourceAddress:group.address||"",direction:group.direction,pointId:match.pointId||"",clientName:match.clientName||""}),timeout:60000});
-    state.logistics.matchResults.set(key,match); applyLogisticsMatchesToSource(); state.logistics.preview=buildLocalLogisticsPreview(); renderLogisticsPreview(); showToast(`Сопоставление сохранено для ${group.occurrences} строк`);
+    state.logistics.matchResults.set(key,match); state.logistics.aliasMap.set(key,{key,sourceName:group.recipient,sourceAddress:group.address||"",direction:group.direction,pointId:match.pointId||"",clientName:match.clientName||"",matchSource:"manual"}); applyLogisticsMatchesToSource(); state.logistics.preview=buildLocalLogisticsPreview(); renderLogisticsPreview(); showToast(`Сопоставление сохранено для ${group.occurrences} строк`);
   }catch(exc){if(previous)state.logistics.matchResults.set(key,previous);else state.logistics.matchResults.delete(key);select.disabled=false;$("logistics-error").textContent=exc.message;$("logistics-error").hidden=false;}
 }
 async function commitLogisticsChunkAdaptive(importId, chunk, context) {
@@ -3501,7 +3512,7 @@ async function commitLogistics() {
     $("logistics-error").hidden=false;
     button.disabled=false;
   } finally {
-    progress.textContent="Разбор и сопоставление файла…";
+    progress.textContent="Разбор файла…";
     progress.hidden=true;
     button.textContent="Загрузить логистику";
   }
