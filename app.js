@@ -29,7 +29,7 @@ const state = {
   trtLoaded: false,
   trtSelectedId: "",
   trtFitRequested: true,
-  logistics: { loaded: false, trips: [], summary: {}, dictionaries: null, preview: null, sourceTrips: [], fileName: "", observedWarehouses: [], observedVehicles: [] },
+  logistics: { loaded: false, trips: [], summary: {}, dictionaries: null, preview: null, sourceTrips: [], fileName: "", observedWarehouses: [], observedVehicles: [], matchResults: new Map(), uniqueMatchItems: [] },
   currentPage: PAGES.has(location.hash.slice(1)) ? location.hash.slice(1) : "trt",
 };
 
@@ -111,7 +111,7 @@ function resetProtectedState() {
   state.trtLoaded = false;
   state.trtSelectedId = "";
   state.trtFitRequested = true;
-  state.logistics = { loaded: false, trips: [], summary: {}, dictionaries: null, preview: null, sourceTrips: [], fileName: "", observedWarehouses: [], observedVehicles: [] };
+  state.logistics = { loaded: false, trips: [], summary: {}, dictionaries: null, preview: null, sourceTrips: [], fileName: "", observedWarehouses: [], observedVehicles: [], matchResults: new Map(), uniqueMatchItems: [] };
 }
 
 function isGeneralDirector() {
@@ -3234,116 +3234,201 @@ function excelDateIso(value) {
 }
 async function readLogisticsFile(file) {
   if (!window.XLSX) throw new Error("Модуль чтения Excel не загрузился.");
-  const workbook=XLSX.read(await file.arrayBuffer(),{type:"array",cellDates:true}); const sheet=workbook.Sheets[workbook.SheetNames[0]]; if (!sheet) throw new Error("В файле нет листов.");
-  const rows=XLSX.utils.sheet_to_json(sheet,{header:1,defval:"",raw:true}); if (rows.length<3) throw new Error("Файл не содержит заданий на перевозку.");
-  const trips=[]; let current=null;
-  rows.slice(2).forEach((row,index)=>{ const first=String(row[0]??"").trim(); if (!first) return;
-    if (/^Задание на перевозку\s+/i.test(first)) { const number=(first.match(/Задание на перевозку\s+([^\s]+)/i)||[])[1]||first; const date=(first.match(/от\s+(.+)$/i)||[])[1]||"";
-      current={tripId:`${number}-${index+3}`,tripNumber:number,tripDate:excelDateIso(date),sourceRow:index+3,vehicle:String(row[1]??"").trim(),warehouse:"",shipment:logisticsNumber(row[4]),cost:logisticsNumber(row[5]),percent:logisticsNumber(row[6]),weight:logisticsNumber(row[7]),volume:logisticsNumber(row[8]),lines:[]}; trips.push(current); return; }
-    if (!current) return; const warehouse=String(row[3]??"").trim(); if (warehouse && !current.warehouse) current.warehouse=warehouse;
-    current.lines.push({rowNumber:index+3,recipient:first,direction:String(row[1]??"").trim(),zone:String(row[2]??"").trim(),warehouse,shipment:logisticsNumber(row[4]),cost:logisticsNumber(row[5]),percent:logisticsNumber(row[6]),weight:logisticsNumber(row[7]),volume:logisticsNumber(row[8])});
-  });
-  if (!trips.length) throw new Error("Не найдены строки «Задание на перевозку». Проверьте структуру первого листа."); return trips;
-}
-function resetLogisticsImport(clear=true) { state.logistics.preview=null; state.logistics.sourceTrips=[]; state.logistics.fileName=""; $("logistics-import-result").hidden=true; $("logistics-commit-button").disabled=true; if(clear) $("logistics-file").value=""; $("logistics-preview-button").disabled=!$("logistics-file").files?.[0] || !isSystemAdmin(); }
-const LOGISTICS_PREVIEW_CHUNK_SIZE = 10;
-const LOGISTICS_PREVIEW_CONCURRENCY = 4;
-const LOGISTICS_COMMIT_CHUNK_SIZE = 10;
-function mergeLogisticsPreviewParts(parts) {
-  const summary = { tripCount:0,lineCount:0,ignoredCount:0,matchedCount:0,clientOnlyCount:0,unresolvedCount:0,redTrips:0,yellowTrips:0,greenTrips:0,totalShipment:0,totalCost:0,totalPercent:0 };
-  const warehouseAliases=new Set(), vehicleAliases=new Set(), trips=[];
-  let periodExists=false, periodLabel="";
-  parts.forEach((part)=>{ const s=part.summary||{}; periodExists=periodExists||Boolean(part.periodExists); periodLabel=periodLabel||part.periodLabel||"";
-    ["tripCount","lineCount","ignoredCount","matchedCount","clientOnlyCount","unresolvedCount","redTrips","yellowTrips","greenTrips","totalShipment","totalCost"].forEach((key)=>{summary[key]+=Number(s[key]||0);});
-    (part.warehouseAliases||[]).forEach((value)=>warehouseAliases.add(value)); (part.vehicleAliases||[]).forEach((value)=>vehicleAliases.add(value)); trips.push(...(part.trips||[]));
-  });
-  summary.totalPercent=summary.totalShipment>0?(summary.totalCost/summary.totalShipment)*100:0;
-  return {periodExists,periodLabel,summary,warehouseAliases:[...warehouseAliases].sort(),vehicleAliases:[...vehicleAliases].sort(),trips};
-}
-function mergeLogisticsSummaries(items) {
-  return mergeLogisticsPreviewParts((items||[]).map((item)=>({summary:item.summary||item}))).summary;
-}
-async function requestLogisticsPreviewChunk(chunk, context) {
-  try {
-    return [await api("/admin/logistics-import",{
-      method:"POST",
-      body:JSON.stringify({
-        operation:"preview",
-        year:Number($("logistics-year").value),
-        month:Number($("logistics-month").value),
-        fileName:state.logistics.fileName,
-        trips:chunk,
-      }),
-      timeout:180000,
-    })];
-  } catch (error) {
-    if (chunk.length <= 1) {
-      const trip=chunk[0]||{};
-      throw new Error(`Не удалось обработать рейс ${trip.tripNumber||trip.tripId||context}: ${error.message}`);
+  const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true });
+  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+  if (!sheet) throw new Error("В файле нет листов.");
+  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "", raw: true });
+  if (rows.length < 7) throw new Error("Файл не содержит заданий на перевозку.");
+
+  const trips = [];
+  let current = null;
+  let pendingLine = null;
+  const isTripRow = (value) => /^Задание на перевозку\s+/i.test(String(value || "").trim());
+  const isClientRow = (row) => Boolean(String(row[4] ?? "").trim() || String(row[5] ?? "").trim() || String(row[6] ?? "").trim());
+
+  rows.forEach((row, index) => {
+    const sourceRow = index + 1;
+    const first = String(row[0] ?? "").trim();
+    if (!first) return;
+
+    if (isTripRow(first)) {
+      const number = (first.match(/Задание на перевозку\s+([^\s]+)/i) || [])[1] || first;
+      const date = (first.match(/от\s+(.+)$/i) || [])[1] || "";
+      current = {
+        tripId: `${number}-${sourceRow}`,
+        tripNumber: number,
+        tripDate: excelDateIso(date),
+        sourceRow,
+        vehicle: String(row[4] ?? row[1] ?? "").trim(),
+        warehouse: "",
+        shipment: logisticsNumber(row[7] ?? row[4]),
+        cost: logisticsNumber(row[8] ?? row[5]),
+        percent: logisticsNumber(row[10] ?? row[6]),
+        costShare: logisticsNumber(row[11]),
+        weight: logisticsNumber(row[12] ?? row[7]),
+        volume: logisticsNumber(row[13] ?? row[8]),
+        lines: [],
+      };
+      trips.push(current);
+      pendingLine = null;
+      return;
     }
-    const middle=Math.ceil(chunk.length/2);
-    const left=await requestLogisticsPreviewChunk(chunk.slice(0,middle),context);
-    const right=await requestLogisticsPreviewChunk(chunk.slice(middle),context);
+
+    if (!current) return;
+
+    if (isClientRow(row) || logisticsNormalizeMatchValue(first).startsWith("объект не найден")) {
+      const warehouse = String(row[6] ?? row[3] ?? "").trim();
+      if (warehouse && !current.warehouse) current.warehouse = warehouse;
+      pendingLine = {
+        rowNumber: sourceRow,
+        addressRowNumber: 0,
+        recipient: first,
+        address: "",
+        direction: String(row[4] ?? row[1] ?? "").trim(),
+        zone: String(row[5] ?? row[2] ?? "").trim(),
+        warehouse,
+        shipment: logisticsNumber(row[7] ?? row[4]),
+        cost: logisticsNumber(row[8] ?? row[5]),
+        percent: logisticsNumber(row[10] ?? row[6]),
+        costShare: logisticsNumber(row[11]),
+        weight: logisticsNumber(row[12] ?? row[7]),
+        volume: logisticsNumber(row[13] ?? row[8]),
+      };
+      current.lines.push(pendingLine);
+      return;
+    }
+
+    // В новом отчёте 1С адрес идёт отдельной строкой сразу после клиента.
+    // Числовые колонки могут дублироваться — это не новая доставка.
+    if (pendingLine && !pendingLine.address) {
+      pendingLine.address = first;
+      pendingLine.addressRowNumber = sourceRow;
+    }
+  });
+
+  if (!trips.length) throw new Error("Не найдены строки «Задание на перевозку». Проверьте структуру первого листа.");
+  return trips;
+}
+function resetLogisticsImport(clear=true) {
+  state.logistics.preview=null;
+  state.logistics.sourceTrips=[];
+  state.logistics.fileName="";
+  state.logistics.matchResults=new Map();
+  state.logistics.uniqueMatchItems=[];
+  $("logistics-import-result").hidden=true;
+  $("logistics-commit-button").disabled=true;
+  if(clear) $("logistics-file").value="";
+  $("logistics-preview-button").disabled=!$("logistics-file").files?.[0] || !isSystemAdmin();
+}
+const LOGISTICS_MATCH_BATCH_SIZE = 80;
+const LOGISTICS_MATCH_CONCURRENCY = 3;
+const LOGISTICS_COMMIT_CHUNK_SIZE = 10;
+function mergeLogisticsSummaries(items) {
+  const summary={tripCount:0,lineCount:0,ignoredCount:0,matchedCount:0,clientOnlyCount:0,unresolvedCount:0,redTrips:0,yellowTrips:0,greenTrips:0,totalShipment:0,totalCost:0,totalPercent:0};
+  (items||[]).forEach((item)=>{const source=item.summary||item||{}; Object.keys(summary).filter((key)=>key!=="totalPercent").forEach((key)=>{summary[key]+=Number(source[key]||0);});});
+  summary.totalPercent=summary.totalShipment>0?(summary.totalCost/summary.totalShipment)*100:0;
+  return summary;
+}
+function logisticsNormalizeMatchValue(value){
+  return String(value||"").toLowerCase().replaceAll("ё","е").replace(/[^a-zа-я0-9]+/gi," ").trim().replace(/\s+/g," ");
+}
+function logisticsLineIsIgnored(line){return logisticsNormalizeMatchValue(line?.recipient).startsWith("объект не найден");}
+function logisticsLineMatchKey(line){return `${logisticsNormalizeMatchValue(line?.recipient)}\u241f${logisticsNormalizeMatchValue(line?.address)}\u241f${logisticsNormalizeMatchValue(line?.direction)}`;}
+function logisticsLocalColor(percent){const value=Number(percent||0); return value>10?"red":value>=6?"yellow":"green";}
+function collectUniqueLogisticsMatches(trips){
+  const groups=new Map();
+  (trips||[]).forEach((trip)=>{(trip.lines||[]).forEach((line)=>{
+    if(logisticsLineIsIgnored(line)) return;
+    const key=logisticsLineMatchKey(line);
+    let group=groups.get(key);
+    if(!group){group={key,recipient:String(line.recipient||"").trim(),address:String(line.address||"").trim(),direction:String(line.direction||"").trim(),occurrences:0,totalCost:0,zones:new Set(),rows:[]};groups.set(key,group);}
+    group.occurrences+=1; group.totalCost+=Number(line.cost||0); if(line.zone)group.zones.add(String(line.zone)); if(line.rowNumber)group.rows.push(line.rowNumber);
+  });});
+  return [...groups.values()].map((group)=>({...group,zones:[...group.zones],rows:group.rows.slice(0,8)}));
+}
+async function requestLogisticsMatchBatch(items,context){
+  try{
+    const response=await api("/admin/logistics-import",{method:"POST",body:JSON.stringify({operation:"match_keys",year:Number($("logistics-year").value),month:Number($("logistics-month").value),items:items.map(({key,recipient,address,direction})=>({key,recipient,address,direction}))}),timeout:180000});
+    return response.matches||[];
+  }catch(error){
+    if(items.length<=1){const item=items[0]||{};throw new Error(`Не удалось сопоставить «${item.recipient||context}»: ${error.message}`);}
+    const middle=Math.ceil(items.length/2);
+    const left=await requestLogisticsMatchBatch(items.slice(0,middle),context);
+    const right=await requestLogisticsMatchBatch(items.slice(middle),context);
     return [...left,...right];
   }
 }
-async function previewLogisticsFile() {
-  const file=$("logistics-file").files?.[0];
-  if(!file) return;
-  const progress=$("logistics-import-progress");
-  progress.hidden=false;
-  $("logistics-preview-button").disabled=true;
-  $("logistics-error").hidden=true;
-  try {
-    const trips=await readLogisticsFile(file);
-    state.logistics.sourceTrips=trips;
-    state.logistics.fileName=file.name;
-    const chunks=[];
-    for(let start=0;start<trips.length;start+=LOGISTICS_PREVIEW_CHUNK_SIZE){
-      chunks.push({start,chunk:trips.slice(start,start+LOGISTICS_PREVIEW_CHUNK_SIZE)});
-    }
-    const partsByChunk=new Array(chunks.length);
-    let completed=0;
-    let nextChunkIndex=0;
-    const worker=async()=>{
-      while(true){
-        const chunkIndex=nextChunkIndex++;
-        if(chunkIndex>=chunks.length) return;
-        const {start,chunk}=chunks[chunkIndex];
-        const chunkParts=await requestLogisticsPreviewChunk(chunk,`${start+1}–${start+chunk.length}`);
-        partsByChunk[chunkIndex]=chunkParts;
-        completed+=chunk.length;
-        progress.textContent=`Сопоставлено ${completed} из ${trips.length} рейсов · одновременно до ${LOGISTICS_PREVIEW_CONCURRENCY} пакетов…`;
-      }
-    };
-    const workers=Array.from({length:Math.min(LOGISTICS_PREVIEW_CONCURRENCY,chunks.length)},()=>worker());
-    await Promise.all(workers);
-    const parts=partsByChunk.flat();
-    const data=mergeLogisticsPreviewParts(parts);
-    state.logistics.preview=data;
-    state.logistics.observedWarehouses=data.warehouseAliases||[];
-    state.logistics.observedVehicles=data.vehicleAliases||[];
-    renderLogisticsPreview();
-    $("logistics-error").hidden=true;
-  } catch(exc){
-    $("logistics-error").textContent=exc.message;
-    $("logistics-error").hidden=false;
-  } finally {
-    progress.textContent="Разбор и сопоставление файла…";
-    progress.hidden=true;
-    $("logistics-preview-button").disabled=false;
-  }
+function applyLogisticsMatchesToSource(){
+  (state.logistics.sourceTrips||[]).forEach((trip)=>{(trip.lines||[]).forEach((line)=>{
+    line._matchKey=logisticsLineMatchKey(line);
+    line.manualPointId=""; line.manualClientName="";
+    if(logisticsLineIsIgnored(line)){line.status="ignored";line.reason="Сторонний сборный груз";line.candidates=[];line.clientCandidates=[];return;}
+    const match=state.logistics.matchResults.get(line._matchKey)||{status:"unresolved",reason:"Сопоставление не выполнено",candidates:[],clientCandidates:[]};
+    Object.assign(line,match);
+    if(match.status==="matched"&&match.pointId)line.manualPointId=match.pointId;
+    if(match.status==="client_only"&&match.clientName)line.manualClientName=match.clientName;
+  });});
 }
-
-function renderLogisticsPreview() {
-  const data=state.logistics.preview, s=data.summary||{}; $("logistics-preview-trips").textContent=s.tripCount||0; $("logistics-preview-lines").textContent=s.lineCount||0; $("logistics-preview-matched").textContent=s.matchedCount||0; $("logistics-preview-client-only").textContent=s.clientOnlyCount||0; $("logistics-preview-ignored").textContent=s.ignoredCount||0; $("logistics-preview-unresolved").textContent=s.unresolvedCount||0;
+function buildLocalLogisticsPreview(){
+  const summary={tripCount:0,lineCount:0,ignoredCount:0,matchedCount:0,clientOnlyCount:0,unresolvedCount:0,redTrips:0,yellowTrips:0,greenTrips:0,totalShipment:0,totalCost:0,totalPercent:0};
+  const warehouseAliases=new Set(),vehicleAliases=new Set();
+  const trips=(state.logistics.sourceTrips||[]).map((trip)=>{
+    summary.tripCount+=1; summary.totalShipment+=Number(trip.shipment||0); summary.totalCost+=Number(trip.cost||0);
+    if(trip.warehouse)warehouseAliases.add(trip.warehouse); if(trip.vehicle)vehicleAliases.add(trip.vehicle);
+    let ignoredCount=0,unresolvedCount=0; const stops=new Set();
+    (trip.lines||[]).forEach((line)=>{summary.lineCount+=1;
+      if(line.status==="ignored"){summary.ignoredCount+=1;ignoredCount+=1;}
+      else if(line.status==="matched"){summary.matchedCount+=1;stops.add(`point:${line.pointId}`);}
+      else if(line.status==="client_only"){summary.clientOnlyCount+=1;stops.add(`client:${logisticsNormalizeMatchValue(line.clientName)}`);}
+      else{summary.unresolvedCount+=1;unresolvedCount+=1;}
+    });
+    const percent=Number(trip.percent||((Number(trip.shipment||0)>0)?Number(trip.cost||0)/Number(trip.shipment||0)*100:0)); const colorStatus=logisticsLocalColor(percent);
+    summary[`${colorStatus}Trips`]+=1;
+    return {...trip,percent,colorStatus,lineCount:(trip.lines||[]).length,ignoredCount,unresolvedCount,stopCount:stops.size};
+  });
+  summary.totalPercent=summary.totalShipment>0?summary.totalCost/summary.totalShipment*100:0;
+  const monthName=$("logistics-month")?.selectedOptions?.[0]?.textContent||String($("logistics-month")?.value||"");
+  return {periodExists:Number(state.logistics.summary?.tripCount||0)>0,periodLabel:`${monthName} ${$("logistics-year")?.value||""}`,summary,warehouseAliases:[...warehouseAliases].sort(),vehicleAliases:[...vehicleAliases].sort(),trips};
+}
+async function previewLogisticsFile(){
+  const file=$("logistics-file").files?.[0]; if(!file)return;
+  const progress=$("logistics-import-progress"); progress.hidden=false; $("logistics-preview-button").disabled=true; $("logistics-error").hidden=true;
+  try{
+    const trips=await readLogisticsFile(file); state.logistics.sourceTrips=trips; state.logistics.fileName=file.name;
+    const uniqueItems=collectUniqueLogisticsMatches(trips); state.logistics.uniqueMatchItems=uniqueItems; state.logistics.matchResults=new Map();
+    const chunks=[]; for(let start=0;start<uniqueItems.length;start+=LOGISTICS_MATCH_BATCH_SIZE)chunks.push(uniqueItems.slice(start,start+LOGISTICS_MATCH_BATCH_SIZE));
+    let next=0,completed=0; const resultsByChunk=new Array(chunks.length);
+    const worker=async()=>{while(true){const index=next++;if(index>=chunks.length)return;const chunk=chunks[index];const matches=await requestLogisticsMatchBatch(chunk,`${completed+1}–${completed+chunk.length}`);resultsByChunk[index]=matches;completed+=chunk.length;progress.textContent=`Сопоставлено ${completed} из ${uniqueItems.length} уникальных получателей · исходных строк ${trips.reduce((sum,t)=>sum+(t.lines||[]).length,0)}…`;}};
+    await Promise.all(Array.from({length:Math.min(LOGISTICS_MATCH_CONCURRENCY,chunks.length)},()=>worker()));
+    resultsByChunk.flat().forEach((match)=>state.logistics.matchResults.set(match.key,match));
+    applyLogisticsMatchesToSource();
+    const data=buildLocalLogisticsPreview(); state.logistics.preview=data; state.logistics.observedWarehouses=data.warehouseAliases||[]; state.logistics.observedVehicles=data.vehicleAliases||[];
+    renderLogisticsPreview(); $("logistics-error").hidden=true;
+  }catch(exc){$("logistics-error").textContent=exc.message;$("logistics-error").hidden=false;}
+  finally{progress.textContent="Разбор и сопоставление файла…";progress.hidden=true;$("logistics-preview-button").disabled=false;}
+}
+function unresolvedLogisticsGroups(){
+  const groups=new Map();
+  (state.logistics.preview?.trips||[]).forEach((trip)=>(trip.lines||[]).forEach((line)=>{if(line.status!=="unresolved")return;const key=line._matchKey||logisticsLineMatchKey(line);let group=groups.get(key);if(!group){const base=state.logistics.uniqueMatchItems.find((item)=>item.key===key)||{};group={key,recipient:line.recipient,direction:line.direction,zones:new Set(),rows:[],tripNumbers:new Set(),cost:0,occurrences:0,candidates:line.candidates||[],clientCandidates:line.clientCandidates||[],...base};group.zones=new Set(base.zones||[]);group.rows=[];group.tripNumbers=new Set();groups.set(key,group);}group.occurrences+=1;group.cost+=Number(line.cost||0);if(line.zone)group.zones.add(line.zone);if(line.rowNumber&&group.rows.length<8)group.rows.push(line.rowNumber);if(trip.tripNumber)group.tripNumbers.add(trip.tripNumber);}));
+  return [...groups.values()];
+}
+function renderLogisticsPreview(){
+  const data=state.logistics.preview,s=data.summary||{}; $("logistics-preview-trips").textContent=s.tripCount||0; $("logistics-preview-lines").textContent=s.lineCount||0; $("logistics-preview-matched").textContent=s.matchedCount||0; $("logistics-preview-client-only").textContent=s.clientOnlyCount||0; $("logistics-preview-ignored").textContent=s.ignoredCount||0; $("logistics-preview-unresolved").textContent=s.unresolvedCount||0;
   const warning=$("logistics-period-warning"); warning.hidden=!data.periodExists; warning.textContent=data.periodExists?`Данные за ${data.periodLabel} уже загружены. Новая загрузка заменит активную версию месяца.`:"";
-  const unresolved=[]; (data.trips||[]).forEach((trip)=>trip.lines.forEach((line)=>{if(line.status==="unresolved") unresolved.push({trip,line});}));
-  $("logistics-match-table").innerHTML=unresolved.map(({trip,line})=>`<tr><td>${line.rowNumber||"—"}</td><td><strong>${escapeHtml(line.recipient)}</strong><small>${escapeHtml(trip.tripNumber||"")}</small></td><td>${escapeHtml(line.direction||"—")}</td><td>${escapeHtml(line.zone||"—")}</td><td>${logisticsMoney(line.cost)}</td><td><select class="logistics-match-select" data-trip-id="${escapeHtml(trip.tripId)}" data-row-number="${line.rowNumber}"><option value="">Выберите ТРТ</option>${(line.candidates||[]).map((c)=>`<option value="point:${escapeHtml(c.pointId)}">ТРТ: ${escapeHtml(c.label)} · ${Math.round(Number(c.score||0)*100)}%</option>`).join("")}${(line.clientCandidates||[]).map((c)=>`<option value="client:${escapeHtml(c.clientName)}">Только клиент: ${escapeHtml(c.clientName)} · ${Math.round(Number(c.score||0)*100)}%</option>`).join("")}</select></td></tr>`).join("");
-  $("logistics-match-empty").hidden=Boolean(unresolved.length); $("logistics-import-result").hidden=false; $("logistics-commit-button").disabled=Boolean(unresolved.length);
-  populateLogisticsAliasSelects();
+  const unresolved=unresolvedLogisticsGroups();
+  $("logistics-match-table").innerHTML=unresolved.map((group)=>`<tr><td>${escapeHtml(group.rows.join(", ")||"—")}<small>${group.occurrences>1?`Повторов: ${group.occurrences}`:""}</small></td><td><strong>${escapeHtml(group.recipient)}</strong><small>${escapeHtml(group.address||"Адрес не указан")}</small><small>${escapeHtml([...group.tripNumbers].slice(0,3).join(", "))}</small></td><td>${escapeHtml(group.direction||"—")}</td><td>${escapeHtml([...group.zones].slice(0,4).join(", ")||"—")}</td><td>${logisticsMoney(group.cost)}</td><td><select class="logistics-match-select" data-match-key="${escapeHtml(encodeURIComponent(group.key))}"><option value="">Выберите ТРТ или клиента</option>${(group.candidates||[]).map((c)=>`<option value="point:${escapeHtml(c.pointId)}">ТРТ: ${escapeHtml(c.label)} · адрес ${Math.round(Number(c.addressScore||0)*100)}% · итог ${Math.round(Number(c.score||0)*100)}%</option>`).join("")}${(group.clientCandidates||[]).map((c)=>`<option value="client:${escapeHtml(c.clientName)}">Только клиент: ${escapeHtml(c.clientName)} · ${Math.round(Number(c.score||0)*100)}%</option>`).join("")}</select></td></tr>`).join("");
+  $("logistics-match-empty").hidden=Boolean(unresolved.length); $("logistics-import-result").hidden=false; $("logistics-commit-button").disabled=Boolean(unresolved.length); populateLogisticsAliasSelects();
 }
-function applyLogisticsManualMatch(select) { const trip=state.logistics.sourceTrips.find((item)=>item.tripId===select.dataset.tripId); const line=trip?.lines.find((item)=>String(item.rowNumber)===String(select.dataset.rowNumber)); if(line){ line.manualPointId=""; line.manualClientName=""; if(select.value.startsWith("point:")) line.manualPointId=select.value.slice(6); if(select.value.startsWith("client:")) line.manualClientName=select.value.slice(7); } const remaining=[...document.querySelectorAll(".logistics-match-select")].filter((item)=>!item.value).length; $("logistics-commit-button").disabled=remaining>0; }
+async function applyLogisticsManualMatch(select){
+  const key=decodeURIComponent(select.dataset.matchKey||""); const group=unresolvedLogisticsGroups().find((item)=>item.key===key); if(!group||!select.value)return;
+  select.disabled=true; const previous=state.logistics.matchResults.get(key); let match;
+  if(select.value.startsWith("point:")){const pointId=select.value.slice(6);const candidate=(group.candidates||[]).find((item)=>item.pointId===pointId)||{};match={status:"matched",pointId,clientName:candidate.clientName||"",reason:"Ручное сопоставление",manual:true,candidates:group.candidates||[],clientCandidates:group.clientCandidates||[]};}
+  else{const clientName=select.value.slice(7);match={status:"client_only",pointId:"",clientName,reason:"Ручное сопоставление с клиентом",manual:true,candidates:group.candidates||[],clientCandidates:group.clientCandidates||[]};}
+  try{
+    await api("/admin/logistics",{method:"POST",body:JSON.stringify({operation:"save_recipient_alias",sourceName:group.recipient,sourceAddress:group.address||"",direction:group.direction,pointId:match.pointId||"",clientName:match.clientName||""}),timeout:60000});
+    state.logistics.matchResults.set(key,match); applyLogisticsMatchesToSource(); state.logistics.preview=buildLocalLogisticsPreview(); renderLogisticsPreview(); showToast(`Сопоставление сохранено для ${group.occurrences} строк`);
+  }catch(exc){if(previous)state.logistics.matchResults.set(key,previous);else state.logistics.matchResults.delete(key);select.disabled=false;$("logistics-error").textContent=exc.message;$("logistics-error").hidden=false;}
+}
 async function commitLogisticsChunkAdaptive(importId, chunk, context) {
   try {
     return [await api("/admin/logistics-import",{
