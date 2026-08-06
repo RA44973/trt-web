@@ -3454,7 +3454,16 @@ function renderLogisticsPreview(){
   $("logistics-match-empty").hidden=Boolean(unresolved.length);
   $("logistics-import-result").hidden=false;
   const commitButton=$("logistics-commit-button");
-  commitButton.disabled=!(state.logistics.sourceTrips||[]).length;
+  const readyTrips=(Array.isArray(state.logistics.sourceTrips)&&state.logistics.sourceTrips.length)
+    ? state.logistics.sourceTrips
+    : (Array.isArray(state.logistics.preview?.trips)?state.logistics.preview.trips:[]);
+  // После успешного разбора файла кнопка всегда должна быть кликабельной.
+  // Проверка наличия рейсов выполняется уже внутри commitLogistics(),
+  // чтобы HTML-атрибут disabled не мог оставить кнопку «мёртвой».
+  commitButton.disabled=false;
+  commitButton.removeAttribute("disabled");
+  commitButton.setAttribute("aria-disabled","false");
+  commitButton.dataset.webVersion="7.10";
   commitButton.title=unresolved.length
     ? `Можно загрузить сейчас. Требуют сопоставления: ${Number(s.unresolvedCount||0)} строк.`
     : "Все рабочие строки сопоставлены и готовы к загрузке.";
@@ -3504,29 +3513,45 @@ async function commitLogisticsChunkAdaptive(importId, chunk, context) {
 async function commitLogistics() {
   const button=$("logistics-commit-button");
   const progress=$("logistics-import-progress");
-  const unresolvedCount=Number(state.logistics.preview?.summary?.unresolvedCount||0);
-  if(unresolvedCount>0){
-    const confirmed=window.confirm(
-      `В файле осталось ${unresolvedCount} несопоставленных строк. Они будут загружены со статусом «Не определено» и не попадут в аналитику по ТРТ/клиентам до исправления. Продолжить загрузку?`
-    );
-    if(!confirmed)return;
+  const errorBox=$("logistics-error");
+  if(!button || button.dataset.commitBusy==="1") return;
+
+  const trips=(Array.isArray(state.logistics.sourceTrips)&&state.logistics.sourceTrips.length)
+    ? state.logistics.sourceTrips
+    : (Array.isArray(state.logistics.preview?.trips)?state.logistics.preview.trips:[]);
+
+  if(!state.logistics.preview || !trips.length){
+    const message="Файл ещё не готов к загрузке. Нажмите «Другой файл», выберите Excel и дождитесь завершения проверки.";
+    if(errorBox){errorBox.textContent=message;errorBox.hidden=false;errorBox.scrollIntoView({block:"nearest"});}
+    showToast(message);
+    return;
   }
+
+  button.dataset.commitBusy="1";
   button.disabled=true;
-  button.textContent="Загрузка…";
+  button.textContent="Запускаем загрузку…";
   progress.hidden=false;
-  $("logistics-error").hidden=true;
+  progress.textContent="Подготовка загрузки логистики…";
+  if(errorBox) errorBox.hidden=true;
+
   try {
     const year=Number($("logistics-year").value);
     const month=Number($("logistics-month").value);
     const replace=Boolean(state.logistics.preview?.periodExists);
-    progress.textContent="Подготовка загрузки логистики…";
+    const unresolvedCount=Number(state.logistics.preview?.summary?.unresolvedCount||0);
+
+    if(unresolvedCount>0){
+      progress.textContent=`Подготовка загрузки. Несопоставленных строк: ${unresolvedCount}…`;
+    }
+
     const started=await api("/admin/logistics-import",{
       method:"POST",
       body:JSON.stringify({operation:"commit_start",year,month,fileName:state.logistics.fileName,replace}),
       timeout:60000,
     });
+    if(!started?.importId) throw new Error("Сервер не вернул идентификатор загрузки.");
+
     const results=[];
-    const trips=state.logistics.sourceTrips||[];
     let completed=0;
     for(let start=0;start<trips.length;start+=LOGISTICS_COMMIT_CHUNK_SIZE){
       const chunk=trips.slice(start,start+LOGISTICS_COMMIT_CHUNK_SIZE);
@@ -3536,6 +3561,7 @@ async function commitLogistics() {
       completed+=chunk.length;
       progress.textContent=`Загружено ${completed} из ${trips.length} рейсов…`;
     }
+
     const summary=mergeLogisticsSummaries(results);
     progress.textContent="Завершение месячной загрузки…";
     const result=await api("/admin/logistics-import",{
@@ -3546,19 +3572,31 @@ async function commitLogistics() {
       }),
       timeout:60000,
     });
+
     showToast(result.message||"Логистика загружена");
     resetLogisticsImport(true);
     state.logistics.loaded=false;
     await loadLogistics(true);
     setLogisticsTab("overview");
   } catch(exc){
-    $("logistics-error").textContent=exc.message;
-    $("logistics-error").hidden=false;
-    button.disabled=false;
+    const message=`Ошибка загрузки логистики: ${exc?.message||String(exc)}`;
+    if(errorBox){
+      errorBox.textContent=message;
+      errorBox.hidden=false;
+      errorBox.scrollIntoView({behavior:"smooth",block:"center"});
+    }
+    showToast(message);
+    window.alert(message);
   } finally {
+    delete button.dataset.commitBusy;
     progress.textContent="Разбор файла…";
     progress.hidden=true;
     button.textContent="Загрузить логистику";
+    if(state.logistics.preview && trips.length){
+      button.disabled=false;
+      button.removeAttribute("disabled");
+      button.setAttribute("aria-disabled","false");
+    }
   }
 }
 
@@ -3603,7 +3641,21 @@ $("logistics-color-filter")?.addEventListener("change",renderLogisticsTrips);
 $("logistics-file")?.addEventListener("change",()=>{resetLogisticsImport(false);$("logistics-preview-button").disabled=!$("logistics-file").files?.[0]||!isSystemAdmin();});
 $("logistics-preview-button")?.addEventListener("click",previewLogisticsFile);
 $("logistics-reset-button")?.addEventListener("click",()=>resetLogisticsImport(true));
-$("logistics-commit-button")?.addEventListener("click",commitLogistics);
+const logisticsCommitButton=$("logistics-commit-button");
+if(logisticsCommitButton){
+  logisticsCommitButton.dataset.webVersion="7.10";
+  logisticsCommitButton.addEventListener("click",(event)=>{
+    event.preventDefault();
+    commitLogistics();
+  });
+}
+// Резервный обработчик: защищает кнопку от потери прямого listener при повторной отрисовке DOM.
+document.addEventListener("click",(event)=>{
+  const button=event.target?.closest?.("#logistics-commit-button");
+  if(!button || event.defaultPrevented) return;
+  event.preventDefault();
+  commitLogistics();
+},true);
 $("logistics-match-table")?.addEventListener("change",(event)=>{if(event.target.matches(".logistics-match-select"))applyLogisticsManualMatch(event.target);});
 $("warehouse-geocode")?.addEventListener("click",geocodeWarehouse);
 $("warehouse-save")?.addEventListener("click",saveWarehouse);
