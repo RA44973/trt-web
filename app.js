@@ -3358,6 +3358,22 @@ async function loadLogisticsAliasCatalog(force=false){
   (data.suggestions||[]).forEach((item)=>state.logistics.suggestionMap.set(String(item.key||""),item.candidates||[]));
   return data;
 }
+function logisticsAutomaticSuggestion(candidates){
+  const ranked=[...(candidates||[])].filter((item)=>item?.pointId).sort((a,b)=>Number(b.score||0)-Number(a.score||0));
+  if(!ranked.length)return null;
+  const top=ranked[0];
+  const topScore=Number(top.score||0);
+  const topAddress=Number(top.addressScore||0);
+  const secondScore=ranked.length>1?Number(ranked[1].score||0):0;
+  const margin=topScore-secondScore;
+  // Автоматически принимаем только действительно очевидный вариант.
+  // Равные кандидаты по одному адресу всегда остаются на ручную проверку.
+  if(ranked.length===1 && (topScore>=0.92 || topAddress>=0.95))return top;
+  if(topScore>=0.98 && margin>=0.04)return top;
+  if(topAddress>=0.96 && topScore>=0.92 && margin>=0.05)return top;
+  if(topScore>=0.94 && margin>=0.10)return top;
+  return null;
+}
 function buildLogisticsMatchesFromCatalog(items){
   return (items||[]).map((item)=>{
     const saved=state.logistics.aliasMap.get(item.key);
@@ -3367,7 +3383,12 @@ function buildLogisticsMatchesFromCatalog(items){
     if(saved?.clientName){
       return {key:item.key,status:"client_only",pointId:"",clientName:saved.clientName,reason:"Готовая таблица соответствий (клиент)",savedAlias:true,candidates:[]};
     }
-    return {key:item.key,status:"unresolved",pointId:"",clientName:"",reason:"Нет записи в таблице соответствий",candidates:state.logistics.suggestionMap.get(item.key)||[],clientCandidates:[]};
+    const candidates=state.logistics.suggestionMap.get(item.key)||[];
+    const automatic=logisticsAutomaticSuggestion(candidates);
+    if(automatic){
+      return {key:item.key,status:"matched",pointId:automatic.pointId,clientName:automatic.clientName||"",reason:"Автоматически принято очевидное совпадение",automatic:true,score:Number(automatic.score||0),addressScore:Number(automatic.addressScore||0),candidates};
+    }
+    return {key:item.key,status:"unresolved",pointId:"",clientName:"",reason:"Требуется проверка неоднозначного совпадения",candidates,clientCandidates:[]};
   });
 }
 function applyLogisticsMatchesToSource(){
