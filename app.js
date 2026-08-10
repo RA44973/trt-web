@@ -1,6 +1,6 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.4";
+const VOG_WEB_VERSION = "8.5";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
@@ -2228,10 +2228,12 @@ function renderTrtSmartFilterChips() {
 }
 
 function applyTrtSmartFilters() {
-  state.trtFitRequested = false;
+  // После любого изменения умного фильтра карта сама показывает весь
+  // актуальный набор результатов, а не сохраняет прежний случайный масштаб.
+  state.trtFitRequested = true;
   persistTrtSmartFilters();
   renderTrtSmartFilterChips();
-  preserveTrtMapView(renderTrtMap);
+  renderTrtMap();
 }
 
 function addTrtSmartFilter(suggestion) {
@@ -2249,6 +2251,11 @@ function addTrtSmartFilter(suggestion) {
 
   const input = $("trt-smart-search-input");
   if (input) input.value = "";
+
+  // Поисковый фильтр всегда должен быть виден на карте. Если пользователь
+  // находился в режиме «только регионы», включаем совместный слой.
+  if ($("trt-map-mode")?.value === "regions") setTrtMapMode("both");
+
   applyTrtSmartFilters();
   closeTrtSmartSuggestions();
 
@@ -2455,11 +2462,19 @@ function openTrtCard(pointId, focusMap = true) {
   const point = state.trtPoints.find((item) => String(item.id) === String(pointId));
   if (!point) return;
 
+  // Если пользователь уже смотрел продажи другой ТРТ, новая ТРТ открывается
+  // в том же внутреннем экране инспектора. Для обычной карточки поведение такое же.
+  const keepSalesView = trtInspectorMode === "sales";
+  const keepTrtView = trtInspectorMode === "trt" || keepSalesView;
+  const inspector = $("map-inspector");
+  const previousScrollTop = keepTrtView && inspector ? inspector.scrollTop : 0;
+
   state.trtSelectedId = String(point.id);
   trtInspectorRegion = null;
   $("trt-map-empty").hidden = true;
   $("trt-map-card").hidden = false;
-  openTrtInspector();
+  mountTrtCardInInspector();
+  setMapInspectorView(keepSalesView ? "sales" : "trt");
   $("trt-card-name").textContent = point.client || point.holding || "ТРТ";
   $("trt-card-direction").textContent = point.direction || "—";
   $("trt-card-manager").textContent = shortPersonName(point.manager) || "—";
@@ -2480,9 +2495,22 @@ function openTrtCard(pointId, focusMap = true) {
   $("trt-sales-button").disabled = !hasSales;
   $("trt-sales-button").textContent = hasSales ? "Продажи" : "Продажи не найдены";
 
+  if (keepSalesView && hasSales) {
+    openTrtSales();
+  } else if (keepSalesView && !hasSales) {
+    // Если у новой точки нет продаж, остаёмся в карточке — пустой график не показываем.
+    setMapInspectorView("trt");
+  }
+
   if (focusMap && trtMap && Number.isFinite(Number(point.lat)) && Number.isFinite(Number(point.lon))) {
     setTrtMainView("map");
     trtMap.setView([Number(point.lat), Number(point.lon)], Math.max(trtMap.getZoom(), 14));
+  }
+
+  if (keepTrtView && inspector) {
+    window.requestAnimationFrame(() => {
+      inspector.scrollTop = previousScrollTop;
+    });
   }
 }
 
