@@ -1,6 +1,6 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.7";
+const VOG_WEB_VERSION = "8.8";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
@@ -48,6 +48,7 @@ let trtSmartFilters = [];
 let trtSmartSuggestions = [];
 let trtSmartSuggestionIndex = -1;
 let trtSalesChart = null;
+let trtCardSalesChart = null;
 let trtAnalyticsChart = null;
 let trtStructureChart = null;
 let trtMainView = "map";
@@ -142,18 +143,14 @@ function setNavGroupExpanded(groupName, expanded) {
 }
 
 function syncSidebarNavigation(page) {
-  const isTrt = page === "trt";
   const isSettings = page === "employees" || page === "sales-import" || page === "activity";
   const isAnalytics = page === "logistics";
-  if (isTrt) setNavGroupExpanded("trt", true);
   if (isSettings) setNavGroupExpanded("settings", true);
   if (isAnalytics) setNavGroupExpanded("analytics", true);
 
-  // В системе одно рабочее окно: только один основной раздел может быть активным.
   document.querySelectorAll(".main-nav > .nav-item, .main-nav .nav-parent").forEach((button) => {
     let active = false;
     if (button.dataset.page) active = button.dataset.page === page;
-    if (button.dataset.navGroup === "trt") active = isTrt;
     if (button.dataset.navGroup === "settings") active = isSettings;
     if (button.dataset.navGroup === "analytics") active = isAnalytics;
     button.classList.toggle("active", active);
@@ -161,8 +158,7 @@ function syncSidebarNavigation(page) {
   });
 
   document.querySelectorAll(".nav-subitem").forEach((button) => {
-    let active = button.dataset.page === page;
-    if (button.dataset.trtView) active = active && button.dataset.trtView === trtMainView;
+    const active = button.dataset.page === page;
     button.classList.toggle("active", active);
     button.setAttribute("aria-current", active ? "page" : "false");
   });
@@ -370,32 +366,32 @@ function setMapInspectorView(mode) {
   const inspector = $("map-inspector");
   if (!shell || !inspector) return;
 
-  const validMode = ["trt", "sales", "region"].includes(trtInspectorMode);
+  const validMode = ["trt", "region"].includes(trtInspectorMode);
   inspector.hidden = !validMode;
   shell.classList.toggle("map-inspector-active", validMode);
-  shell.classList.toggle("map-inspector-trt", trtInspectorMode === "trt" || trtInspectorMode === "sales");
+  shell.classList.toggle("map-inspector-trt", trtInspectorMode === "trt");
   shell.classList.toggle("map-inspector-region", trtInspectorMode === "region");
 
   $("trt-inspector-view").hidden = trtInspectorMode !== "trt";
-  $("trt-inspector-sales-view").hidden = trtInspectorMode !== "sales";
   $("region-inspector-view").hidden = trtInspectorMode !== "region";
 
   const kicker = $("map-inspector-kicker");
   const status = $("map-inspector-status");
-  if (kicker) kicker.textContent = trtInspectorMode === "region" ? "Карточка региона" : trtInspectorMode === "sales" ? "Продажи ТРТ" : "Карточка ТРТ";
+  if (kicker) kicker.textContent = trtInspectorMode === "region" ? "Карточка региона" : "Карточка ТРТ";
   if (status) status.textContent = trtInspectorMode === "region" ? "ЦФО · СЗФО" : "";
 
   const trtTools = document.querySelector(".main-sidebar-trt-tools");
   if (trtTools) trtTools.hidden = validMode || state.currentPage !== "trt";
 
-  window.setTimeout(() => trtMap?.invalidateSize(), 220);
+  window.setTimeout(() => trtMap?.invalidateSize(), 320);
 }
 
 function closeMapInspector() {
-  if (trtSalesChart) {
-    trtSalesChart.destroy();
-    trtSalesChart = null;
+  if (trtCardSalesChart) {
+    trtCardSalesChart.destroy();
+    trtCardSalesChart = null;
   }
+  if ($("trt-sales-modal") && !$("trt-sales-modal").hidden) closeTrtSales();
   trtInspectorRegion = null;
   state.trtSelectedId = "";
   if ($("trt-map-empty")) $("trt-map-empty").hidden = false;
@@ -450,6 +446,7 @@ function showPage(page, updateHash = true) {
   }
 
   if (nextPage === "trt") {
+    if (trtMainView !== "map") setTrtMainView("map");
     loadTrtMap();
     window.setTimeout(() => trtMap?.invalidateSize(), 80);
   }
@@ -1913,7 +1910,7 @@ function trtPointCity(point) {
 function trtPointCityKey(point) {
   const city = trtPointCity(point);
   if (!city) return "";
-  return `${normalizeRegionName(point?.region)}|||${normalizeText(city)}`;
+  return `${normalizeRegionName(trtCanonicalRegionName(point))}|||${normalizeText(city)}`;
 }
 
 function numberOrZero(value) {
@@ -2028,7 +2025,7 @@ function pruneTrtSmartFilters() {
   const validDirections = new Set(state.trtPoints.map((point) => String(point.direction || "")).filter(Boolean));
   const validManagers = new Set(state.trtPoints.map((point) => String(point.manager || "")).filter(Boolean));
   const validCities = new Set(state.trtPoints.map(trtPointCityKey).filter(Boolean));
-  const validRegions = new Set(state.trtPoints.map((point) => String(point.region || "")).filter(Boolean));
+  const validRegions = new Set(state.trtPoints.map(trtCanonicalRegionName).filter(Boolean));
   const validPoints = new Set(state.trtPoints.map((point) => String(point.id)));
   const before = trtSmartFilters.length;
   trtSmartFilters = trtSmartFilters.filter((token) => {
@@ -2097,14 +2094,14 @@ function buildTrtSmartSuggestions(query) {
     const city = trtPointCity(point);
     const key = trtPointCityKey(point);
     if (!city || !key || cityMap.has(key)) return;
-    cityMap.set(key, { city, region: String(point.region || "").trim() });
+    cityMap.set(key, { city, region: trtCanonicalRegionName(point) });
   });
   cityMap.forEach(({ city, region }, value) => {
     const score = trtSmartMatchScore(`${city} ${region}`, q);
     add({ type: "city", value, label: city, meta: ["Город", region].filter(Boolean).join(" · "), score });
   });
 
-  const regions = [...new Set(state.trtPoints.map((point) => String(point.region || "").trim()).filter(Boolean))];
+  const regions = [...new Set(state.trtPoints.map(trtCanonicalRegionName).filter(Boolean))];
   regions.forEach((value) => {
     const score = trtSmartMatchScore(value, q);
     add({ type: "region", value, label: value, meta: "Регион", score });
@@ -2113,12 +2110,12 @@ function buildTrtSmartSuggestions(query) {
   state.trtPoints.forEach((point) => {
     const fields = [
       ["ТРТ", point.client],
-      ["Холдинг", point.holding],
+      ["Клиент", point.holding],
       ["Адрес", point.address],
       ["Город", trtPointCity(point)],
       ["Менеджер", shortPersonName(point.manager)],
       ["Направление", point.direction],
-      ["Регион", point.region],
+      ["Регион", trtCanonicalRegionName(point)],
     ].filter(([, value]) => String(value || "").trim());
 
     let best = null;
@@ -2511,7 +2508,7 @@ function filteredTrtPoints() {
     if (smartDirections.size && !smartDirections.has(String(point.direction || ""))) return false;
     if (smartManagers.size && !smartManagers.has(String(point.manager || ""))) return false;
     if (smartCities.size && !smartCities.has(trtPointCityKey(point))) return false;
-    if (smartRegions.size && !smartRegions.has(String(point.region || ""))) return false;
+    if (smartRegions.size && !smartRegions.has(trtCanonicalRegionName(point))) return false;
     if (smartPoints.size && !smartPoints.has(String(point.id))) return false;
     return true;
   });
@@ -2526,31 +2523,81 @@ function trtMarkerIcon(point) {
   });
 }
 
+function trtSalesData(point) {
+  const sales2025 = (Array.isArray(point?.sales?.["2025"]) ? point.sales["2025"] : [])
+    .concat(Array(12).fill(null)).slice(0, 12);
+  const sales2026 = (Array.isArray(point?.sales?.["2026"]) ? point.sales["2026"] : [])
+    .concat(Array(12).fill(null)).slice(0, 12);
+  const unit = trtUnit(point);
+  const ytd2025 = sumSales(sales2025, 6);
+  const ytd2026 = sumSales(sales2026, 6);
+  const yoy = ytd2025 ? ((ytd2026 - ytd2025) / ytd2025) * 100 : null;
+  const hasSales = [...sales2025, ...sales2026].some((value) => value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value)));
+  return { sales2025, sales2026, unit, ytd2025, ytd2026, yoy, hasSales };
+}
+
+function renderTrtCardSalesChart(point) {
+  if (trtCardSalesChart) {
+    trtCardSalesChart.destroy();
+    trtCardSalesChart = null;
+  }
+  const preview = $("trt-card-sales-preview");
+  const empty = $("trt-card-sales-empty");
+  const canvas = $("trt-card-sales-chart");
+  if (!preview || !empty || !canvas) return;
+
+  const data = trtSalesData(point);
+  preview.hidden = !data.hasSales;
+  empty.hidden = data.hasSales;
+  preview.setAttribute("aria-disabled", data.hasSales ? "false" : "true");
+  if (!data.hasSales) return;
+
+  trtCardSalesChart = new Chart(canvas, {
+    type: "bar",
+    data: {
+      labels: analyticsMonthLabels(),
+      datasets: [
+        { label: "2025", data: data.sales2025, backgroundColor: "#c9deef", borderColor: "#a9c7df", borderWidth: 1, borderRadius: 5, maxBarThickness: 18 },
+        { label: "2026", data: data.sales2026, backgroundColor: "#384E86", borderColor: "#2b3f71", borderWidth: 1, borderRadius: 5, maxBarThickness: 18 },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 220, easing: "easeOutQuart" },
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { position: "top", align: "end", labels: { boxWidth: 18, boxHeight: 8, useBorderRadius: true, borderRadius: 3 } },
+        tooltip: { callbacks: { label(context) { return `${context.dataset.label}: ${Math.round(numberOrZero(context.parsed.y)).toLocaleString("ru-RU")} ${data.unit}`; } } },
+      },
+      scales: {
+        y: { beginAtZero: true, grace: "8%", ticks: { font: { size: 10 }, maxTicksLimit: 5, callback(value) { return Math.round(Number(value)).toLocaleString("ru-RU"); } }, grid: { color: "rgba(56,78,134,.08)" } },
+        x: { ticks: { font: { size: 10 }, maxRotation: 0 }, grid: { display: false } },
+      },
+    },
+  });
+}
+
 function openTrtCard(pointId, focusMap = true) {
   const point = state.trtPoints.find((item) => String(item.id) === String(pointId));
   if (!point) return;
 
-  // Если пользователь уже смотрел продажи другой ТРТ, новая ТРТ открывается
-  // в том же внутреннем экране инспектора. Для обычной карточки поведение такое же.
-  const keepSalesView = trtInspectorMode === "sales";
-  const keepTrtView = trtInspectorMode === "trt" || keepSalesView;
   const inspector = $("map-inspector");
-  const previousScrollTop = keepTrtView && inspector ? inspector.scrollTop : 0;
+  const previousScrollTop = trtInspectorMode === "trt" && inspector ? inspector.scrollTop : 0;
 
   state.trtSelectedId = String(point.id);
   trtInspectorRegion = null;
   $("trt-map-empty").hidden = true;
   $("trt-map-card").hidden = false;
   mountTrtCardInInspector();
-  setMapInspectorView(keepSalesView ? "sales" : "trt");
+  setMapInspectorView("trt");
+
   $("trt-card-name").textContent = trtDisplayName(point);
   $("trt-card-direction").textContent = point.direction || "—";
   $("trt-card-manager").textContent = shortPersonName(point.manager) || "—";
-  $("trt-card-holding").textContent = point.holding || "—";
+  $("trt-card-holding").textContent = point.holding || point.client || "—";
   $("trt-card-format").textContent = point.format || "—";
   $("trt-card-status").textContent = trtStatusLabel(point);
-  $("trt-card-abc").textContent = point.abcCategory || "—";
-  $("trt-card-region").textContent = point.region || "—";
   $("trt-card-address").textContent = point.address || "—";
   renderTrtFourP(point);
 
@@ -2558,28 +2605,15 @@ function openTrtCard(pointId, focusMap = true) {
   badge.textContent = formatTrtSize(point);
   badge.style.background = trtColor(point.size);
 
-  const hasSales = Object.values(point.sales || {}).some((values) => (
-    Array.isArray(values) && values.some((value) => Number.isFinite(Number(value)))
-  ));
-  $("trt-sales-button").disabled = !hasSales;
-  $("trt-sales-button").textContent = hasSales ? "Продажи" : "Продажи не найдены";
-
-  if (keepSalesView && hasSales) {
-    openTrtSales();
-  } else if (keepSalesView && !hasSales) {
-    // Если у новой точки нет продаж, остаёмся в карточке — пустой график не показываем.
-    setMapInspectorView("trt");
-  }
+  window.requestAnimationFrame(() => renderTrtCardSalesChart(point));
 
   if (focusMap && trtMap && Number.isFinite(Number(point.lat)) && Number.isFinite(Number(point.lon))) {
     setTrtMainView("map");
     trtMap.setView([Number(point.lat), Number(point.lon)], Math.max(trtMap.getZoom(), 14));
   }
 
-  if (keepTrtView && inspector) {
-    window.requestAnimationFrame(() => {
-      inspector.scrollTop = previousScrollTop;
-    });
+  if (inspector) {
+    window.requestAnimationFrame(() => { inspector.scrollTop = previousScrollTop; });
   }
 }
 
@@ -2704,6 +2738,86 @@ function normalizeRegionName(value) {
 }
 
 
+const TRT_REGION_CENTER_TO_KEY = Object.freeze({
+  "белгород":"Белгородская область","брянск":"Брянская область","владимир":"Владимирская область",
+  "воронеж":"Воронежская область","иваново":"Ивановская область","калуга":"Калужская область",
+  "кострома":"Костромская область","курск":"Курская область","липецк":"Липецкая область",
+  "москва":"Москва и Московская область","орел":"Орловская область","орёл":"Орловская область",
+  "рязань":"Рязанская область","смоленск":"Смоленская область","тамбов":"Тамбовская область",
+  "тверь":"Тверская область","тула":"Тульская область","ярославль":"Ярославская область",
+  "петрозаводск":"Республика Карелия","сыктывкар":"Республика Коми","архангельск":"Архангельская область",
+  "вологда":"Вологодская область","калининград":"Калининградская область","санкт-петербург":"Санкт-Петербург",
+  "санкт петербург":"Санкт-Петербург","мурманск":"Мурманская область","нарьян-мар":"Ненецкий автономный округ",
+  "нарьян мар":"Ненецкий автономный округ","великий новгород":"Новгородская область","псков":"Псковская область"
+});
+
+let trtRegionAliasCache = null;
+let trtCityRegionCache = null;
+let trtCityRegionCacheSize = -1;
+
+function normalizeRegionLookupText(value) {
+  return normalizeRegionName(value)
+    .replace(/\bобл\.?\b/g, "область")
+    .replace(/\bао\b/g, "автономный округ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function trtRegionAliasEntries() {
+  if (trtRegionAliasCache) return trtRegionAliasCache;
+  const entries = [];
+  Object.entries(TRT_REGION_DEFINITIONS).forEach(([featureName, config]) => {
+    const aliases = new Set([featureName, config.key, config.label, ...(config.pointAliases || [])].filter(Boolean));
+    [...aliases].forEach((alias) => {
+      const normalized = normalizeRegionLookupText(alias);
+      if (!normalized) return;
+      entries.push({ alias: normalized, key: config.key });
+      if (normalized.includes(" область")) {
+        entries.push({ alias: normalized.replace(" область", " обл"), key: config.key });
+      }
+    });
+  });
+  trtRegionAliasCache = entries.sort((a, b) => b.alias.length - a.alias.length);
+  return trtRegionAliasCache;
+}
+
+function inferTrtExplicitRegion(point) {
+  const candidates = [point?.region, point?.address].map(normalizeRegionLookupText).filter(Boolean);
+  for (const candidate of candidates) {
+    for (const entry of trtRegionAliasEntries()) {
+      if (candidate === entry.alias || candidate.includes(entry.alias)) return entry.key;
+    }
+  }
+  const city = normalizeText(trtPointCity(point)).replace(/ё/g, "е");
+  if (city && TRT_REGION_CENTER_TO_KEY[city]) return TRT_REGION_CENTER_TO_KEY[city];
+  return "";
+}
+
+function rebuildTrtCityRegionCache() {
+  const map = new Map();
+  state.trtPoints.forEach((point) => {
+    const city = normalizeText(trtPointCity(point));
+    const region = inferTrtExplicitRegion(point);
+    if (!city || !region) return;
+    if (!map.has(city)) map.set(city, new Set());
+    map.get(city).add(region);
+  });
+  const unique = new Map();
+  map.forEach((regions, city) => {
+    if (regions.size === 1) unique.set(city, [...regions][0]);
+  });
+  trtCityRegionCache = unique;
+  trtCityRegionCacheSize = state.trtPoints.length;
+}
+
+function trtCanonicalRegionName(point) {
+  const explicit = inferTrtExplicitRegion(point);
+  if (explicit) return explicit;
+  if (!trtCityRegionCache || trtCityRegionCacheSize !== state.trtPoints.length) rebuildTrtCityRegionCache();
+  const city = normalizeText(trtPointCity(point));
+  return (city && trtCityRegionCache.get(city)) || String(point?.region || "").trim();
+}
+
 function stableMockHash(value) {
   let hash = 2166136261;
   const text = String(value || "");
@@ -2724,7 +2838,7 @@ function trtPointsForRegionConfig(config, label = "") {
     .map(normalizeRegionName)
     .filter(Boolean);
   const aliasSet = new Set(aliases);
-  return state.trtPoints.filter((point) => aliasSet.has(normalizeRegionName(point.region)));
+  return state.trtPoints.filter((point) => aliasSet.has(normalizeRegionName(trtCanonicalRegionName(point))));
 }
 
 function mockTrtSalesMetrics(point) {
@@ -3497,98 +3611,90 @@ function setTrtAnalyticsTab(tab) {
   renderActiveAnalyticsTab();
 }
 
-function openTrtSales() {
+function openTrtSales(sourceElement = $("trt-card-sales-preview")) {
   const point = selectedTrtPoint();
   if (!point) return;
+  const data = trtSalesData(point);
+  if (!data.hasSales) return;
 
-  const sales2025 = (Array.isArray(point.sales?.["2025"]) ? point.sales["2025"] : [])
-    .concat(Array(12).fill(null)).slice(0, 12);
-  const sales2026 = (Array.isArray(point.sales?.["2026"]) ? point.sales["2026"] : [])
-    .concat(Array(12).fill(null)).slice(0, 12);
-  const unit = trtUnit(point);
-  const ytd2025 = sumSales(sales2025, 6);
-  const ytd2026 = sumSales(sales2026, 6);
-  const yoy = ytd2025 ? ((ytd2026 - ytd2025) / ytd2025) * 100 : null;
+  const modal = $("trt-sales-modal");
+  const dialog = modal?.querySelector(".sales-modal");
+  if (!modal || !dialog) return;
+  const sourceRect = sourceElement?.getBoundingClientRect?.();
 
-  $("trt-inspector-sales-title").textContent = `Продажи: ${trtDisplayName(point)}`;
-  $("trt-inspector-sales-subtitle").textContent = `Сравнение 2025 и 2026 годов · ${unit}`;
-  $("trt-inspector-sales-ytd-2025").textContent = formatSales(ytd2025, unit);
-  $("trt-inspector-sales-ytd-2026").textContent = formatSales(ytd2026, unit);
-  $("trt-inspector-sales-yoy").textContent = yoy === null
-    ? "—"
-    : `${yoy >= 0 ? "+" : ""}${yoy.toFixed(1).replace(".", ",")}%`;
+  $("trt-sales-modal-title").textContent = trtDisplayName(point);
+  $("trt-sales-modal-subtitle").textContent = `Сравнение 2025 и 2026 годов · ${data.unit}`;
+  $("trt-sales-ytd-2025").textContent = formatSales(data.ytd2025, data.unit);
+  $("trt-sales-ytd-2026").textContent = formatSales(data.ytd2026, data.unit);
+  $("trt-sales-yoy").textContent = data.yoy === null ? "—" : `${data.yoy >= 0 ? "+" : ""}${data.yoy.toFixed(1).replace(".", ",")}%`;
 
-  const yoyBox = $("trt-inspector-sales-yoy-box");
+  const yoyBox = $("trt-sales-yoy-box");
   yoyBox.classList.remove("sales-yoy-positive", "sales-yoy-negative", "sales-yoy-neutral");
-  if (yoy === null || yoy === 0) yoyBox.classList.add("sales-yoy-neutral");
-  else if (yoy > 0) yoyBox.classList.add("sales-yoy-positive");
+  if (data.yoy === null || data.yoy === 0) yoyBox.classList.add("sales-yoy-neutral");
+  else if (data.yoy > 0) yoyBox.classList.add("sales-yoy-positive");
   else yoyBox.classList.add("sales-yoy-negative");
 
-  setMapInspectorView("sales");
-  window.setTimeout(() => {
+  modal.classList.remove("chart-expand-run");
+  modal.hidden = false;
+
+  window.requestAnimationFrame(() => {
+    const targetRect = dialog.getBoundingClientRect();
+    if (sourceRect && sourceRect.width > 0 && sourceRect.height > 0 && targetRect.width > 0 && targetRect.height > 0) {
+      const sourceCx = sourceRect.left + sourceRect.width / 2;
+      const sourceCy = sourceRect.top + sourceRect.height / 2;
+      const targetCx = targetRect.left + targetRect.width / 2;
+      const targetCy = targetRect.top + targetRect.height / 2;
+      const scale = Math.max(.28, Math.min(.92, Math.min(sourceRect.width / targetRect.width, sourceRect.height / targetRect.height)));
+      dialog.style.setProperty("--chart-expand-x", `${sourceCx - targetCx}px`);
+      dialog.style.setProperty("--chart-expand-y", `${sourceCy - targetCy}px`);
+      dialog.style.setProperty("--chart-expand-scale", String(scale));
+    } else {
+      dialog.style.setProperty("--chart-expand-x", "0px");
+      dialog.style.setProperty("--chart-expand-y", "10px");
+      dialog.style.setProperty("--chart-expand-scale", ".96");
+    }
+    void dialog.offsetWidth;
+    modal.classList.add("chart-expand-run");
+
     if (trtSalesChart) trtSalesChart.destroy();
-    trtSalesChart = new Chart($("trt-inspector-sales-chart"), {
+    trtSalesChart = new Chart($("trt-sales-chart"), {
       type: "bar",
       data: {
         labels: analyticsMonthLabels(),
         datasets: [
-          {
-            label: "2025",
-            data: sales2025,
-            backgroundColor: "#c9deef",
-            borderColor: "#a9c7df",
-            borderWidth: 1,
-            borderRadius: 5,
-            maxBarThickness: 28,
-          },
-          {
-            label: "2026",
-            data: sales2026,
-            backgroundColor: "#384E86",
-            borderColor: "#2b3f71",
-            borderWidth: 1,
-            borderRadius: 5,
-            maxBarThickness: 28,
-          },
+          { label: "2025", data: data.sales2025, backgroundColor: "#c9deef", borderColor: "#a9c7df", borderWidth: 1, borderRadius: 6, maxBarThickness: 30 },
+          { label: "2026", data: data.sales2026, backgroundColor: "#384E86", borderColor: "#2b3f71", borderWidth: 1, borderRadius: 6, maxBarThickness: 30 },
         ],
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        animation: { duration: 180, easing: "linear" },
+        animation: { duration: 260, easing: "easeOutQuart" },
         interaction: { mode: "index", intersect: false },
         datasets: { bar: { categoryPercentage: 0.72, barPercentage: 0.86 } },
         plugins: {
           legend: { position: "top", align: "end" },
-          tooltip: {
-            callbacks: {
-              label(context) {
-                return `${context.dataset.label}: ${Math.round(numberOrZero(context.parsed.y)).toLocaleString("ru-RU")} ${unit}`;
-              },
-            },
-          },
+          tooltip: { callbacks: { label(context) { return `${context.dataset.label}: ${Math.round(numberOrZero(context.parsed.y)).toLocaleString("ru-RU")} ${data.unit}`; } } },
         },
         scales: {
-          y: {
-            beginAtZero: true,
-            grace: "10%",
-            ticks: { callback(value) { return Math.round(Number(value)).toLocaleString("ru-RU"); } },
-            title: { display: true, text: unit },
-          },
+          y: { beginAtZero: true, grace: "10%", ticks: { callback(value) { return Math.round(Number(value)).toLocaleString("ru-RU"); } }, title: { display: true, text: data.unit } },
           x: { title: { display: true, text: "Месяц" } },
         },
       },
     });
-  }, 30);
+  });
 }
 
 function closeTrtSales() {
+  const modal = $("trt-sales-modal");
   if (trtSalesChart) {
     trtSalesChart.destroy();
     trtSalesChart = null;
   }
-  if (selectedTrtPoint()) setMapInspectorView("trt");
-  else closeMapInspector();
+  if (modal) {
+    modal.classList.remove("chart-expand-run");
+    modal.hidden = true;
+  }
 }
 
 
@@ -4070,13 +4176,17 @@ $("analytics-format-clear").addEventListener("click", () => {
 });
 document.addEventListener("click", closeAnalyticsFormatMenu);
 
-$("trt-sales-button").addEventListener("click", openTrtSales);
+$("trt-card-sales-preview")?.addEventListener("click", (event) => openTrtSales(event.currentTarget));
+$("trt-card-sales-preview")?.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  event.preventDefault();
+  openTrtSales(event.currentTarget);
+});
 $("trt-sales-modal-close").addEventListener("click", closeTrtSales);
 $("trt-sales-modal").addEventListener("click", (event) => {
   if (event.target === $("trt-sales-modal")) closeTrtSales();
 });
 $("map-inspector-close")?.addEventListener("click", closeMapInspector);
-$("trt-inspector-sales-back")?.addEventListener("click", closeTrtSales);
 $("region-inspector-city-body")?.addEventListener("click", (event) => {
   const button = event.target.closest("[data-region-city-toggle]");
   if (!button) return;
@@ -4098,7 +4208,8 @@ document.querySelectorAll("[data-nav-group]").forEach((button) => {
 document.querySelectorAll("[data-page]").forEach((button) => {
   button.addEventListener("click", () => {
     showPage(button.dataset.page, true);
-    if (button.dataset.trtView) setTrtMainView(button.dataset.trtView);
+    if (button.dataset.page === "trt") setTrtMainView("map");
+    else if (button.dataset.trtView) setTrtMainView(button.dataset.trtView);
   });
 });
 

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#384e86">
-  <meta name="vog-web-version" content="8.0">
+  <meta name="vog-web-version" content="8.8">
   <title>ТК ВОГ Офис</title>
   <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=20260810-gdebenz-v8-0">
   <link rel="apple-touch-icon" sizes="192x192" href="icon-192.png?v=20260810-gdebenz-v8-0">
@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
-  <link rel="stylesheet" href="styles.css?v=20260810-ui-v8-7">
+  <link rel="stylesheet" href="styles.css?v=20260810-ui-v8-8">
 </head>
 <body>
   <div id="toast" class="toast" hidden></div>
@@ -67,19 +67,10 @@
           <span class="nav-icon nav-icon-svg" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 21s6-5.4 6-11a6 6 0 1 0-12 0c0 5.6 6 11 6 11Z"/><circle cx="12" cy="10" r="2.2"/></svg></span>
           <span class="nav-label">Визиты</span>
         </button>
-
-        <div class="nav-group" data-nav-group-container="trt">
-          <button class="nav-item nav-parent" type="button" data-nav-group="trt" aria-expanded="false">
-            <span class="nav-icon nav-icon-svg" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 10.5 6 5h12l2 5.5"/><path d="M5 10.5V20h14v-9.5"/><path d="M9 20v-5h6v5"/><path d="M3.5 10.5h17"/></svg></span>
-            <span class="nav-label">ТРТ</span>
-            <span class="nav-chevron" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="m6.5 8 3.5 3.5L13.5 8"/></svg></span>
-          </button>
-          <div class="nav-submenu" data-nav-submenu="trt" hidden>
-            <button class="nav-subitem" type="button" data-page="trt" data-trt-view="map">Карта</button>
-            <button class="nav-subitem" type="button" data-page="trt" data-trt-view="analytics">Аналитика</button>
-          </div>
-        </div>
-
+        <button class="nav-item" type="button" data-page="trt">
+          <span class="nav-icon nav-icon-svg" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 10.5 6 5h12l2 5.5"/><path d="M5 10.5V20h14v-9.5"/><path d="M9 20v-5h6v5"/><path d="M3.5 10.5h17"/></svg></span>
+          <span class="nav-label">ТРТ</span>
+        </button>
 
         <div id="analytics-nav-group" class="nav-group" data-nav-group-container="analytics">
           <button class="nav-item nav-parent" type="button" data-nav-group="analytics" aria-expanded="false">
@@ -120,20 +111,6 @@
 
       <section id="trt-inspector-view" class="map-inspector-view" hidden>
         <div id="trt-inspector-card-host"></div>
-      </section>
-
-      <section id="trt-inspector-sales-view" class="map-inspector-view" hidden>
-        <button id="trt-inspector-sales-back" class="map-inspector-back" type="button">← Карточка ТРТ</button>
-        <div class="trt-inspector-sales-head">
-          <h2 id="trt-inspector-sales-title">Продажи</h2>
-          <p id="trt-inspector-sales-subtitle" class="map-inspector-muted"></p>
-        </div>
-        <div class="trt-inspector-sales-chart"><canvas id="trt-inspector-sales-chart"></canvas></div>
-        <div class="trt-inspector-sales-summary">
-          <article><span>Январь–июнь 2025</span><strong id="trt-inspector-sales-ytd-2025">—</strong></article>
-          <article><span>Январь–июнь 2026</span><strong id="trt-inspector-sales-ytd-2026">—</strong></article>
-          <article id="trt-inspector-sales-yoy-box" class="sales-yoy-box sales-yoy-neutral"><span>Изменение год к году</span><strong id="trt-inspector-sales-yoy">—</strong></article>
-        </div>
       </section>
 
       <section id="region-inspector-view" class="map-inspector-view region-inspector-view" hidden>
@@ -665,54 +642,55 @@
                 <div id="trt-map-empty" class="legacy-hint">
                   Выберите ТРТ или регион на карте, чтобы открыть подробную карточку.
                 </div>
-
                 <div id="trt-map-card" hidden>
-                  <div class="trt-card-title-row">
-                    <h3 id="trt-card-name" class="legacy-point-name">—</h3>
-                    <strong id="trt-card-rating" class="trt-card-rating" title="Рейтинг ТРТ">—</strong>
+                  <div class="trt-card-header-grid">
+                    <div class="trt-card-header-main">
+                      <h3 id="trt-card-name" class="legacy-point-name">—</h3>
+
+                      <div class="legacy-field trt-card-client-field">
+                        <div class="legacy-label">Клиент</div>
+                        <div id="trt-card-holding">—</div>
+                      </div>
+
+                      <div class="legacy-field trt-card-address-field">
+                        <div class="legacy-label">Адрес</div>
+                        <div id="trt-card-address">—</div>
+                      </div>
+                    </div>
+
+                    <div class="trt-card-side-meta" aria-label="Рейтинг, формат и статус ТРТ">
+                      <strong id="trt-card-rating" class="trt-card-rating" title="Рейтинг ТРТ">—</strong>
+                      <div class="trt-card-format-status">
+                        <span id="trt-card-format">—</span><span class="trt-meta-dot">·</span><span id="trt-card-status">—</span>
+                      </div>
+                    </div>
                   </div>
 
-                  <div class="trt-card-meta-row" aria-label="Формат и статус ТРТ">
-                    <span class="trt-card-meta-item"><small>Формат</small><strong id="trt-card-format">—</strong></span>
-                    <span class="trt-card-meta-item"><small>Статус</small><strong id="trt-card-status">—</strong></span>
+                  <div class="trt-card-two-column">
+                    <div class="legacy-field">
+                      <div class="legacy-label">Направление</div>
+                      <div id="trt-card-direction">—</div>
+                    </div>
+                    <div class="legacy-field trt-card-manager-field">
+                      <div class="legacy-label">Менеджер</div>
+                      <div id="trt-card-manager">—</div>
+                    </div>
                   </div>
 
-                  <div class="legacy-field">
-                    <div class="legacy-label">Направление</div>
-                    <div id="trt-card-direction">—</div>
-                  </div>
+                  <section id="trt-card-sales-block" class="trt-card-sales-block">
+                    <div id="trt-card-sales-preview" class="trt-card-sales-preview" role="button" tabindex="0" aria-label="Увеличить график продаж">
+                      <canvas id="trt-card-sales-chart"></canvas>
+                      <span class="trt-card-sales-expand-hint" aria-hidden="true">
+                        <svg viewBox="0 0 24 24"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></svg>
+                      </span>
+                    </div>
+                    <div id="trt-card-sales-empty" class="trt-card-sales-empty" hidden>Продажи по этой ТРТ пока не загружены.</div>
 
-                  <div class="legacy-field">
-                    <div class="legacy-label">Среднемесячные продажи</div>
-                    <div><span id="trt-card-size-badge" class="legacy-size-badge">—</span></div>
-                  </div>
-
-                  <div class="legacy-field">
-                    <div class="legacy-label">Менеджер</div>
-                    <div id="trt-card-manager">—</div>
-                  </div>
-
-                  <div class="legacy-field">
-                    <div class="legacy-label">Холдинг</div>
-                    <div id="trt-card-holding">—</div>
-                  </div>
-
-                  <div class="legacy-field">
-                    <div class="legacy-label">Категория ABC</div>
-                    <div id="trt-card-abc">—</div>
-                  </div>
-
-                  <div class="legacy-field">
-                    <div class="legacy-label">Регион</div>
-                    <div id="trt-card-region">—</div>
-                  </div>
-
-                  <div class="legacy-field">
-                    <div class="legacy-label">Адрес</div>
-                    <div id="trt-card-address">—</div>
-                  </div>
-
-                  <button id="trt-sales-button" class="legacy-sales-button" type="button">Продажи</button>
+                    <div class="legacy-field trt-card-average-sales">
+                      <div class="legacy-label">Среднемесячные продажи</div>
+                      <div><span id="trt-card-size-badge" class="legacy-size-badge">—</span></div>
+                    </div>
+                  </section>
                 </div>
               </section>
             </div>
@@ -1071,8 +1049,7 @@
     <section class="sales-modal" role="dialog" aria-modal="true" aria-labelledby="trt-sales-modal-title">
       <header class="sales-modal-header">
         <div>
-          <p class="eyebrow">Продажи ТРТ</p>
-          <h2 id="trt-sales-modal-title">Продажи</h2>
+          <h2 id="trt-sales-modal-title">ТРТ</h2>
           <p id="trt-sales-modal-subtitle" class="sales-modal-subtitle"></p>
         </div>
         <button id="trt-sales-modal-close" class="icon-button sales-modal-close" type="button" aria-label="Закрыть">×</button>
@@ -1092,6 +1069,6 @@
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <script src="app.js?v=20260810-ui-v8-7"></script>
+  <script src="app.js?v=20260810-ui-v8-8"></script>
 </body>
 </html>
