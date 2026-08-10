@@ -1,6 +1,6 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.0";
+const VOG_WEB_VERSION = "8.1";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
@@ -2023,53 +2023,118 @@ function trtRegionFeatureName(feature) {
   return String(properties.name || properties.NAME || properties.name_en || properties.NAME_1 || "").trim();
 }
 
+const TRT_REGION_DEFINITIONS = Object.freeze({
+  // Центральный федеральный округ — 18 субъектов.
+  "Белгородская область": { key: "Белгородская область", district: "ЦФО" },
+  "Брянская область": { key: "Брянская область", district: "ЦФО" },
+  "Владимирская область": { key: "Владимирская область", district: "ЦФО" },
+  "Воронежская область": { key: "Воронежская область", district: "ЦФО" },
+  "Ивановская область": { key: "Ивановская область", district: "ЦФО" },
+  "Калужская область": { key: "Калужская область", district: "ЦФО" },
+  "Костромская область": { key: "Костромская область", district: "ЦФО" },
+  "Курская область": { key: "Курская область", district: "ЦФО" },
+  "Липецкая область": { key: "Липецкая область", district: "ЦФО" },
+  "Москва": {
+    key: "Москва и Московская область",
+    label: "Москва",
+    district: "ЦФО",
+    pointAliases: ["Москва", "Москва и Московская область"],
+  },
+  "Московская область": {
+    key: "Москва и Московская область",
+    district: "ЦФО",
+    pointAliases: ["Московская область", "Москва и Московская область"],
+  },
+  "Орловская область": { key: "Орловская область", district: "ЦФО" },
+  "Рязанская область": { key: "Рязанская область", district: "ЦФО" },
+  "Смоленская область": { key: "Смоленская область", district: "ЦФО" },
+  "Тамбовская область": { key: "Тамбовская область", district: "ЦФО" },
+  "Тверская область": { key: "Тверская область", district: "ЦФО" },
+  "Тульская область": { key: "Тульская область", district: "ЦФО" },
+  "Ярославская область": { key: "Ярославская область", district: "ЦФО" },
+
+  // Сибирский федеральный округ — 10 субъектов.
+  "Алтай": {
+    key: "Республика Алтай",
+    label: "Республика Алтай",
+    district: "СФО",
+    pointAliases: ["Алтай", "Республика Алтай"],
+  },
+  "Тыва": {
+    key: "Республика Тыва",
+    label: "Республика Тыва",
+    district: "СФО",
+    pointAliases: ["Тыва", "Тува", "Республика Тыва", "Республика Тува"],
+  },
+  "Республика Хакасия": {
+    key: "Республика Хакасия",
+    district: "СФО",
+    pointAliases: ["Хакасия", "Республика Хакасия"],
+  },
+  "Алтайский край": { key: "Алтайский край", district: "СФО" },
+  "Красноярский край": { key: "Красноярский край", district: "СФО" },
+  "Иркутская область": { key: "Иркутская область", district: "СФО" },
+  "Кемеровская область": {
+    key: "Кемеровская область",
+    label: "Кемеровская область — Кузбасс",
+    district: "СФО",
+    pointAliases: ["Кемеровская область", "Кемеровская область - Кузбасс", "Кемеровская область — Кузбасс", "Кузбасс"],
+  },
+  "Новосибирская область": { key: "Новосибирская область", district: "СФО" },
+  "Омская область": { key: "Омская область", district: "СФО" },
+  "Томская область": { key: "Томская область", district: "СФО" },
+});
+
+const TRT_REGION_FILL_COLOR = "#4293C4";
+const TRT_REGION_BORDER_COLOR = "#384E86";
+
+function trtRegionConfig(feature) {
+  return TRT_REGION_DEFINITIONS[trtRegionFeatureName(feature)] || null;
+}
+
 function trtRegionKey(feature) {
-  const name = trtRegionFeatureName(feature).toLowerCase();
-  if (
-    name === "moscow"
-    || name === "moskva"
-    || name === "москва"
-    || name.includes("moscow city")
-    || name.includes("moscow oblast")
-    || name.includes("moskovskaya")
-    || name.includes("московская область")
-  ) return "Москва и Московская область";
-
-  if (
-    name.includes("nizhny novgorod")
-    || name.includes("nizhegorod")
-    || name.includes("нижегород")
-  ) return "Нижегородская область";
-
-  return null;
+  return trtRegionConfig(feature)?.key || null;
 }
 
 function trtRegionStyle(feature) {
-  const stats = recalculateTrtRegionStats();
-  const key = trtRegionKey(feature);
-  const item = key ? stats[key] : null;
+  const config = trtRegionConfig(feature);
   return {
-    color: "#334155",
-    weight: 1.7,
-    fillColor: item ? regionResultColor(item.yoy) : "#e2e8f0",
-    fillOpacity: item ? 0.45 : 0.05,
+    color: TRT_REGION_BORDER_COLOR,
+    weight: 1.8,
+    fillColor: config ? TRT_REGION_FILL_COLOR : "transparent",
+    fillOpacity: config ? 0.30 : 0,
   };
 }
 
+function normalizeRegionName(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/[—–]/g, "-")
+    .replace(/\s+/g, " ");
+}
+
 function bindTrtRegion(feature, layer) {
-  const key = trtRegionKey(feature);
-  if (!key) return;
-  layer.bindTooltip(key);
+  const config = trtRegionConfig(feature);
+  if (!config) return;
+
+  const label = config.label || trtRegionFeatureName(feature) || config.key;
+  layer.bindTooltip(`${label} · ${config.district}`);
   layer.on({
     mouseover(event) {
-      event.target.setStyle({ weight: 3, fillOpacity: 0.62 });
+      event.target.setStyle({ weight: 3, fillOpacity: 0.52 });
       event.target.bringToFront();
     },
     mouseout(event) {
       trtRegionLayer?.resetStyle(event.target);
     },
     click() {
-      const rows = state.trtPoints.filter((point) => point.region === key);
+      const aliases = [config.key, label, ...(config.pointAliases || [])]
+        .map(normalizeRegionName)
+        .filter(Boolean);
+      const aliasSet = new Set(aliases);
+      const rows = state.trtPoints.filter((point) => aliasSet.has(normalizeRegionName(point.region)));
       const coordinates = rows
         .filter((point) => Number.isFinite(Number(point.lat)) && Number.isFinite(Number(point.lon)))
         .map((point) => [Number(point.lat), Number(point.lon)]);
