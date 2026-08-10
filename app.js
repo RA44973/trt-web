@@ -1,5 +1,8 @@
 "use strict";
 
+const VOG_WEB_VERSION = "8.0";
+document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
+
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
 const SESSION_KEY = "trt_web_session";
 const TRT_MAP_VIEW_KEY = "trt_web_map_view";
@@ -1905,9 +1908,10 @@ function initTrtMap() {
     savedView?.zoom ?? TRT_MAP_DEFAULT_ZOOM
   );
   trtMap.on("moveend zoomend", saveTrtMapView);
-  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    maxZoom: 18,
-    attribution: "© OpenStreetMap contributors",
+  L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
+    subdomains: "abcd",
+    maxZoom: 20,
+    attribution: "© OpenStreetMap contributors · © CARTO",
   }).addTo(trtMap);
   trtMap.attributionControl.setPrefix("");
 
@@ -3606,7 +3610,7 @@ function populateLogisticsAliasSelects(){ const wa=new Set(state.logistics.obser
 function renderLogisticsDictionaries(){ const d=state.logistics.dictionaries||{}; const wa=d.warehouseAliases||[], va=d.vehicleAliases||[];
   $("warehouses-table").innerHTML=(d.warehouses||[]).map(w=>`<tr data-warehouse-id="${escapeHtml(w.warehouseId)}"><td><strong>${escapeHtml(w.officialName)}</strong></td><td>${escapeHtml(w.address)}</td><td>${logisticsDecimal(w.lat,6)}, ${logisticsDecimal(w.lon,6)}</td><td>${wa.filter(a=>a.warehouseId===w.warehouseId).map(a=>escapeHtml(a.sourceAlias)).join("<br>")||"—"}</td></tr>`).join(""); $("warehouses-empty").hidden=Boolean((d.warehouses||[]).length);
   $("vehicles-table").innerHTML=(d.vehicles||[]).map(v=>`<tr><td><strong>${escapeHtml(v.officialName)}</strong></td><td>${logisticsDecimal(v.capacityTons,1)} т</td><td>${logisticsDecimal(v.volumeM3,1)} м³</td><td>${va.filter(a=>a.vehicleId===v.vehicleId).map(a=>escapeHtml(a.sourceAlias)).join("<br>")||"—"}</td></tr>`).join(""); $("vehicles-empty").hidden=Boolean((d.vehicles||[]).length); populateLogisticsAliasSelects(); renderWarehouseMarkers(); }
-function initializeWarehouseMap(){ if(warehouseMap){warehouseMap.invalidateSize();return;} const el=$("warehouse-map"); if(!el||!window.L)return; warehouseMap=L.map(el).setView([55.75,37.62],5); L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{attribution:"© OpenStreetMap"}).addTo(warehouseMap); warehouseMap.on("click",({latlng})=>setWarehousePoint(latlng.lat,latlng.lng)); renderWarehouseMarkers(); }
+function initializeWarehouseMap(){ if(warehouseMap){warehouseMap.invalidateSize();return;} const el=$("warehouse-map"); if(!el||!window.L)return; warehouseMap=L.map(el).setView([55.75,37.62],5); L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",{subdomains:"abcd",maxZoom:20,attribution:"© OpenStreetMap contributors · © CARTO"}).addTo(warehouseMap); warehouseMap.on("click",({latlng})=>setWarehousePoint(latlng.lat,latlng.lng)); renderWarehouseMarkers(); }
 function setWarehousePoint(lat,lon){ $("warehouse-lat").value=Number(lat).toFixed(6); $("warehouse-lon").value=Number(lon).toFixed(6); if(!warehouseMap)return; if(warehouseMarker)warehouseMarker.remove(); warehouseMarker=L.marker([lat,lon]).addTo(warehouseMap); warehouseMap.setView([lat,lon],14); }
 function renderWarehouseMarkers(){ if(!warehouseMap||!state.logistics.dictionaries)return; (state.logistics.dictionaries.warehouses||[]).forEach(w=>L.circleMarker([w.lat,w.lon],{radius:7}).addTo(warehouseMap).bindPopup(`<strong>${escapeHtml(w.officialName)}</strong><br>${escapeHtml(w.address)}`)); }
 async function geocodeWarehouse(){ const address=$("warehouse-address").value.trim(); if(!address)return showToast("Введите адрес склада"); try{const response=await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&accept-language=ru&q=${encodeURIComponent(address)}`,{headers:{"Accept":"application/json"}}); const rows=await response.json(); if(!rows.length)throw new Error("Адрес не найден"); setWarehousePoint(Number(rows[0].lat),Number(rows[0].lon));}catch(exc){showToast(exc.message||"Не удалось найти адрес");} }
