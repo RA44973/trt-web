@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
-  <link rel="stylesheet" href="styles.css?v=20260810-gdebenz-v8-0">
+  <link rel="stylesheet" href="styles.css?v=20260810-mapfilters-v8-3">
 </head>
 <body>
   <div id="toast" class="toast" hidden></div>
@@ -585,27 +585,22 @@
             </div>
 
             <div class="legacy-map-only">
-              <section class="legacy-card">
-                <label class="legacy-filter-label" for="trt-direction-filter">Направление</label>
-                <select id="trt-direction-filter">
+              <!-- Совместимые служебные элементы фильтрации. Пользовательские фильтры перенесены на карту. -->
+              <section class="trt-map-control-bridge" hidden aria-hidden="true">
+                <select id="trt-direction-filter" tabindex="-1">
                   <option value="">Все направления</option>
                 </select>
-
-                <label class="legacy-filter-label" for="trt-manager-filter" style="margin-top:12px;">Менеджер</label>
-                <select id="trt-manager-filter">
+                <select id="trt-manager-filter" tabindex="-1">
                   <option value="">Все менеджеры</option>
                 </select>
-
-                <label class="legacy-filter-label" for="trt-map-mode" style="margin-top:12px;">Отображение карты</label>
-                <select id="trt-map-mode">
-                  <option value="points">Точки ТРТ</option>
-                  <option value="regions">Результат регионов</option>
-                  <option value="both" selected>Точки + регионы</option>
+                <select id="trt-map-mode" tabindex="-1">
+                  <option value="points">ТРТ</option>
+                  <option value="regions">Регионы</option>
+                  <option value="both" selected>ТРТ + регионы</option>
                 </select>
-
-                <div id="trt-visible-count" class="legacy-counter">Загрузка данных…</div>
-                <div id="trt-data-status" class="legacy-counter"></div>
-                <div id="trt-region-load-status" class="legacy-counter"></div>
+                <div id="trt-visible-count">Загрузка данных…</div>
+                <div id="trt-data-status"></div>
+                <div id="trt-region-load-status"></div>
               </section>
 
               <section class="legacy-card">
@@ -753,6 +748,38 @@
 
           <div class="legacy-trt-main">
             <div id="trt-map" aria-label="Карта торгово-розничных точек"></div>
+
+            <div id="trt-smart-search-control" class="trt-smart-search-control" role="search" aria-label="Умный поиск и фильтрация ТРТ">
+              <div id="trt-smart-search-shell" class="trt-smart-search-shell">
+                <svg class="trt-smart-search-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <circle cx="11" cy="11" r="6.5"></circle>
+                  <path d="m16 16 4 4"></path>
+                </svg>
+                <div id="trt-smart-filter-chips" class="trt-smart-filter-chips" aria-label="Выбранные фильтры"></div>
+                <input id="trt-smart-search-input" class="trt-smart-search-input" type="search" autocomplete="off" spellcheck="false"
+                  placeholder="ТРТ, направление, менеджер или адрес" aria-label="Поиск по карте"
+                  aria-controls="trt-smart-search-suggestions" aria-expanded="false">
+                <span id="trt-search-result-count" class="trt-search-result-count">—</span>
+                <button id="trt-smart-filter-clear" class="trt-smart-filter-clear" type="button" aria-label="Очистить все фильтры" hidden>×</button>
+              </div>
+              <div id="trt-smart-search-suggestions" class="trt-smart-search-suggestions" role="listbox" hidden></div>
+            </div>
+
+            <div class="trt-display-control">
+              <div id="trt-display-panel" class="trt-display-panel" aria-label="Что отображать на карте" aria-hidden="true">
+                <button class="trt-display-option" type="button" data-trt-map-mode-value="points">ТРТ</button>
+                <button class="trt-display-option" type="button" data-trt-map-mode-value="regions">Регионы</button>
+                <button class="trt-display-option active" type="button" data-trt-map-mode-value="both">ТРТ + регионы</button>
+              </div>
+              <button id="trt-display-toggle" class="trt-display-toggle" type="button" aria-label="Выбор отображения на карте" aria-expanded="false" aria-controls="trt-display-panel" title="Отображение на карте">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 3.5 4 7.7l8 4.2 8-4.2-8-4.2Z"></path>
+                  <path d="m5.6 11.5-1.6.8 8 4.2 8-4.2-1.6-.8"></path>
+                  <path d="m5.6 16.1-1.6.8 8 4.1 8-4.1-1.6-.8"></path>
+                </svg>
+              </button>
+            </div>
+
             <section id="trt-analytics-view" class="legacy-analytics-view" hidden aria-hidden="true">
               <div id="analytics-report-content" class="legacy-chart-host">
                 <div class="legacy-analytics-empty">Выберите направление, чтобы построить динамику продаж.</div>
@@ -1016,6 +1043,6 @@
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <script src="app.js?v=20260810-regions-v8-2"></script>
+  <script src="app.js?v=20260810-mapfilters-v8-3"></script>
 </body>
 </html>

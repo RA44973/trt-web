@@ -1,11 +1,13 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.2";
+const VOG_WEB_VERSION = "8.3";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
 const SESSION_KEY = "trt_web_session";
 const TRT_MAP_VIEW_KEY = "trt_web_map_view";
+const TRT_MAP_FILTER_KEY = "trt_web_map_filters_v1";
+const TRT_MAP_MODE_KEY = "trt_web_map_mode_v1";
 const TRT_MAP_DEFAULT_CENTER = [55.7558, 37.6173];
 const TRT_MAP_DEFAULT_ZOOM = 10;
 const PAGES = new Set(["employees", "sales-import", "activity", "tasks", "visits", "trt", "logistics"]);
@@ -40,6 +42,9 @@ let trtMap = null;
 let trtMarkerLayer = null;
 let trtRegionLayer = null;
 let trtRegionsLoading = false;
+let trtSmartFilters = [];
+let trtSmartSuggestions = [];
+let trtSmartSuggestionIndex = -1;
 let trtSalesChart = null;
 let trtAnalyticsChart = null;
 let trtStructureChart = null;
@@ -1869,7 +1874,313 @@ function fillTrtFilters() {
 
   populateSelect("trt-direction-filter", directions, "Все направления");
   populateSelect("trt-manager-filter", managers, "Все менеджеры", shortPersonName);
+  pruneTrtSmartFilters();
   populateAnalyticsFilters(true);
+}
+
+function trtSmartFilterTypeLabel(type) {
+  return {
+    direction: "Направление",
+    manager: "Менеджер",
+    region: "Регион",
+    point: "ТРТ",
+  }[type] || "Фильтр";
+}
+
+function trtSmartFilterTokenKey(token) {
+  return `${token?.type || ""}:${String(token?.value ?? "")}`;
+}
+
+function sanitizeTrtSmartFilterToken(token) {
+  if (!token || !["direction", "manager", "region", "point"].includes(token.type)) return null;
+  const value = String(token.value ?? "").trim();
+  const label = String(token.label ?? "").trim();
+  if (!value || !label) return null;
+  return { type: token.type, value, label };
+}
+
+function restoreTrtSmartFilters() {
+  try {
+    const raw = sessionStorage.getItem(TRT_MAP_FILTER_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    trtSmartFilters = Array.isArray(parsed)
+      ? parsed.map(sanitizeTrtSmartFilterToken).filter(Boolean)
+      : [];
+  } catch {
+    trtSmartFilters = [];
+  }
+  renderTrtSmartFilterChips();
+}
+
+function persistTrtSmartFilters() {
+  sessionStorage.setItem(TRT_MAP_FILTER_KEY, JSON.stringify(trtSmartFilters));
+}
+
+function pruneTrtSmartFilters() {
+  if (!state.trtLoaded || !trtSmartFilters.length) {
+    renderTrtSmartFilterChips();
+    return;
+  }
+  const validDirections = new Set(state.trtPoints.map((point) => String(point.direction || "")).filter(Boolean));
+  const validManagers = new Set(state.trtPoints.map((point) => String(point.manager || "")).filter(Boolean));
+  const validRegions = new Set(state.trtPoints.map((point) => String(point.region || "")).filter(Boolean));
+  const validPoints = new Set(state.trtPoints.map((point) => String(point.id)));
+  const before = trtSmartFilters.length;
+  trtSmartFilters = trtSmartFilters.filter((token) => {
+    if (token.type === "direction") return validDirections.has(token.value);
+    if (token.type === "manager") return validManagers.has(token.value);
+    if (token.type === "region") return validRegions.has(token.value);
+    if (token.type === "point") return validPoints.has(token.value);
+    return false;
+  });
+  if (trtSmartFilters.length !== before) persistTrtSmartFilters();
+  renderTrtSmartFilterChips();
+}
+
+function trtSmartFilterValues(type) {
+  return new Set(
+    trtSmartFilters
+      .filter((token) => token.type === type)
+      .map((token) => String(token.value))
+  );
+}
+
+function trtSmartMatchScore(value, query) {
+  const haystack = normalizeText(value).replace(/[^a-zа-я0-9]+/gi, " ").trim();
+  const needle = normalizeText(query).replace(/[^a-zа-я0-9]+/gi, " ").trim();
+  if (!haystack || !needle) return Number.POSITIVE_INFINITY;
+  const words = needle.split(/\s+/).filter(Boolean);
+  if (!words.every((word) => haystack.includes(word))) return Number.POSITIVE_INFINITY;
+  if (haystack === needle) return 0;
+  if (haystack.startsWith(needle)) return 1;
+  if (haystack.split(/\s+/).some((word) => word.startsWith(needle))) return 2;
+  if (words.every((word) => haystack.split(/\s+/).some((candidate) => candidate.startsWith(word)))) return 3;
+  return 4;
+}
+
+function trtSmartPointTitle(point) {
+  return String(point?.client || point?.holding || point?.address || "ТРТ").trim() || "ТРТ";
+}
+
+function buildTrtSmartSuggestions(query) {
+  const q = String(query || "").trim();
+  if (!q || !state.trtLoaded) return [];
+
+  const suggestions = [];
+  const selectedKeys = new Set(trtSmartFilters.map(trtSmartFilterTokenKey));
+  const add = (item) => {
+    if (!item || !Number.isFinite(item.score)) return;
+    if (selectedKeys.has(`${item.type}:${String(item.value)}`)) return;
+    suggestions.push(item);
+  };
+
+  const directions = [...new Set(state.trtPoints.map((point) => String(point.direction || "").trim()).filter(Boolean))];
+  directions.forEach((value) => {
+    const score = trtSmartMatchScore(value, q);
+    add({ type: "direction", value, label: value, meta: "Направление", score });
+  });
+
+  const managers = [...new Set(state.trtPoints.map((point) => String(point.manager || "").trim()).filter(Boolean))];
+  managers.forEach((value) => {
+    const score = trtSmartMatchScore(`${shortPersonName(value)} ${value}`, q);
+    add({ type: "manager", value, label: shortPersonName(value), meta: "Менеджер", score });
+  });
+
+  const regions = [...new Set(state.trtPoints.map((point) => String(point.region || "").trim()).filter(Boolean))];
+  regions.forEach((value) => {
+    const score = trtSmartMatchScore(value, q);
+    add({ type: "region", value, label: value, meta: "Регион", score });
+  });
+
+  state.trtPoints.forEach((point) => {
+    const fields = [
+      ["ТРТ", point.client],
+      ["Холдинг", point.holding],
+      ["Адрес", point.address],
+      ["Менеджер", shortPersonName(point.manager)],
+      ["Направление", point.direction],
+      ["Регион", point.region],
+    ].filter(([, value]) => String(value || "").trim());
+
+    let best = null;
+    fields.forEach(([field, value]) => {
+      const score = trtSmartMatchScore(value, q);
+      if (!Number.isFinite(score)) return;
+      if (!best || score < best.score) best = { field, value: String(value), score };
+    });
+    if (!best) return;
+
+    const pointId = String(point.id);
+    const title = trtSmartPointTitle(point);
+    const address = String(point.address || "").trim();
+    const secondary = best.field === "Адрес"
+      ? address
+      : [best.field !== "ТРТ" ? `${best.field}: ${best.value}` : "", address].filter(Boolean).join(" · ");
+    add({
+      type: "point",
+      value: pointId,
+      label: title,
+      meta: secondary || "ТРТ",
+      score: best.score + 0.35,
+    });
+  });
+
+  const typePriority = { direction: 0, manager: 1, region: 2, point: 3 };
+  const deduped = [];
+  const seen = new Set();
+  suggestions
+    .sort((a, b) => a.score - b.score || typePriority[a.type] - typePriority[b.type] || a.label.localeCompare(b.label, "ru"))
+    .forEach((item) => {
+      const key = `${item.type}:${String(item.value)}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      deduped.push(item);
+    });
+  return deduped.slice(0, 14);
+}
+
+function closeTrtSmartSuggestions() {
+  const list = $("trt-smart-search-suggestions");
+  const input = $("trt-smart-search-input");
+  if (!list || !input) return;
+  list.hidden = true;
+  input.setAttribute("aria-expanded", "false");
+  trtSmartSuggestions = [];
+  trtSmartSuggestionIndex = -1;
+}
+
+function renderTrtSmartSuggestions(query = $("trt-smart-search-input")?.value || "") {
+  const list = $("trt-smart-search-suggestions");
+  const input = $("trt-smart-search-input");
+  if (!list || !input) return;
+  const q = String(query || "").trim();
+  if (!q) {
+    closeTrtSmartSuggestions();
+    return;
+  }
+
+  trtSmartSuggestions = buildTrtSmartSuggestions(q);
+  if (!trtSmartSuggestions.length) {
+    list.innerHTML = `<div class="trt-smart-search-empty">Ничего не найдено. Попробуйте название ТРТ, адрес, направление или фамилию менеджера.</div>`;
+    list.hidden = false;
+    input.setAttribute("aria-expanded", "true");
+    trtSmartSuggestionIndex = -1;
+    return;
+  }
+
+  if (trtSmartSuggestionIndex >= trtSmartSuggestions.length) trtSmartSuggestionIndex = trtSmartSuggestions.length - 1;
+  list.innerHTML = trtSmartSuggestions.map((item, index) => `
+    <button class="trt-smart-suggestion${index === trtSmartSuggestionIndex ? " active" : ""}" type="button" role="option"
+      aria-selected="${index === trtSmartSuggestionIndex ? "true" : "false"}" data-trt-suggestion-index="${index}">
+      <span class="trt-smart-suggestion-type">${escapeHtml(trtSmartFilterTypeLabel(item.type))}</span>
+      <span class="trt-smart-suggestion-copy">
+        <strong>${escapeHtml(item.label)}</strong>
+        <small>${escapeHtml(item.meta || "")}</small>
+      </span>
+    </button>
+  `).join("");
+  list.hidden = false;
+  input.setAttribute("aria-expanded", "true");
+}
+
+function renderTrtSmartFilterChips() {
+  const host = $("trt-smart-filter-chips");
+  const input = $("trt-smart-search-input");
+  const clear = $("trt-smart-filter-clear");
+  if (!host || !input || !clear) return;
+
+  host.innerHTML = trtSmartFilters.map((token) => `
+    <span class="trt-smart-filter-chip" title="${escapeHtml(trtSmartFilterTypeLabel(token.type))}">
+      <span>${escapeHtml(token.label)}</span>
+      <button type="button" aria-label="Убрать фильтр ${escapeHtml(token.label)}" data-trt-filter-remove="${escapeHtml(trtSmartFilterTokenKey(token))}">×</button>
+    </span>
+  `).join("");
+  clear.hidden = trtSmartFilters.length === 0;
+  input.placeholder = trtSmartFilters.length
+    ? "Добавить фильтр…"
+    : "ТРТ, направление, менеджер или адрес";
+}
+
+function applyTrtSmartFilters() {
+  state.trtFitRequested = false;
+  persistTrtSmartFilters();
+  renderTrtSmartFilterChips();
+  preserveTrtMapView(renderTrtMap);
+}
+
+function addTrtSmartFilter(suggestion) {
+  if (!suggestion) return;
+  const token = sanitizeTrtSmartFilterToken({
+    type: suggestion.type,
+    value: suggestion.value,
+    label: suggestion.label,
+  });
+  if (!token) return;
+  const key = trtSmartFilterTokenKey(token);
+  if (!trtSmartFilters.some((item) => trtSmartFilterTokenKey(item) === key)) {
+    trtSmartFilters.push(token);
+  }
+
+  const input = $("trt-smart-search-input");
+  if (input) input.value = "";
+  applyTrtSmartFilters();
+  closeTrtSmartSuggestions();
+
+  if (token.type === "point") {
+    const point = state.trtPoints.find((item) => String(item.id) === token.value);
+    if (point) window.setTimeout(() => openTrtCard(point.id, true), 30);
+  }
+}
+
+function removeTrtSmartFilter(key) {
+  const next = trtSmartFilters.filter((token) => trtSmartFilterTokenKey(token) !== key);
+  if (next.length === trtSmartFilters.length) return;
+  trtSmartFilters = next;
+  applyTrtSmartFilters();
+}
+
+function clearTrtSmartFilters() {
+  if (!trtSmartFilters.length) return;
+  trtSmartFilters = [];
+  applyTrtSmartFilters();
+  $("trt-smart-search-input")?.focus();
+}
+
+function restoreTrtMapMode() {
+  const select = $("trt-map-mode");
+  if (!select) return;
+  const saved = sessionStorage.getItem(TRT_MAP_MODE_KEY);
+  if (["points", "regions", "both"].includes(saved)) select.value = saved;
+  syncTrtDisplayControl();
+}
+
+function syncTrtDisplayControl() {
+  const mode = $("trt-map-mode")?.value || "both";
+  document.querySelectorAll("[data-trt-map-mode-value]").forEach((button) => {
+    const active = button.dataset.trtMapModeValue === mode;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", active ? "true" : "false");
+  });
+}
+
+function setTrtMapMode(mode) {
+  if (!["points", "regions", "both"].includes(mode)) return;
+  const select = $("trt-map-mode");
+  if (!select) return;
+  select.value = mode;
+  sessionStorage.setItem(TRT_MAP_MODE_KEY, mode);
+  syncTrtDisplayControl();
+  preserveTrtMapView(updateTrtMapMode);
+}
+
+function setTrtDisplayPanel(open) {
+  const control = document.querySelector(".trt-display-control");
+  const toggle = $("trt-display-toggle");
+  const panel = $("trt-display-panel");
+  if (!control || !toggle || !panel) return;
+  control.classList.toggle("open", Boolean(open));
+  toggle.setAttribute("aria-expanded", open ? "true" : "false");
+  panel.setAttribute("aria-hidden", open ? "false" : "true");
 }
 
 function readTrtMapView() {
@@ -1943,10 +2254,18 @@ function initTrtMap() {
 function filteredTrtPoints() {
   const direction = $("trt-direction-filter").value;
   const manager = $("trt-manager-filter").value;
+  const smartDirections = trtSmartFilterValues("direction");
+  const smartManagers = trtSmartFilterValues("manager");
+  const smartRegions = trtSmartFilterValues("region");
+  const smartPoints = trtSmartFilterValues("point");
 
   return state.trtPoints.filter((point) => {
     if (direction && point.direction !== direction) return false;
     if (manager && point.manager !== manager) return false;
+    if (smartDirections.size && !smartDirections.has(String(point.direction || ""))) return false;
+    if (smartManagers.size && !smartManagers.has(String(point.manager || ""))) return false;
+    if (smartRegions.size && !smartRegions.has(String(point.region || ""))) return false;
+    if (smartPoints.size && !smartPoints.has(String(point.id))) return false;
     return true;
   });
 }
@@ -2204,6 +2523,8 @@ function renderTrtMap() {
   updateTrtMapMode();
   $("trt-visible-count").textContent = `Показано ТРТ: ${visible.length}`;
   $("trt-data-status").textContent = `Всего в базе: ${state.trtPoints.length}`;
+  const searchCount = $("trt-search-result-count");
+  if (searchCount) searchCount.textContent = `${visible.length} ТРТ`;
 
   if (state.trtFitRequested && visible.length) {
     trtMap.fitBounds(L.latLngBounds(coordinates).pad(0.08), { maxZoom: 13 });
@@ -2268,6 +2589,13 @@ function setTrtMainView(view) {
   $("trt-map").hidden = !mapView;
   $("trt-analytics-view").hidden = mapView;
   $("trt-analytics-view").setAttribute("aria-hidden", mapView ? "true" : "false");
+  if ($("trt-smart-search-control")) $("trt-smart-search-control").hidden = !mapView;
+  const displayControl = document.querySelector(".trt-display-control");
+  if (displayControl) displayControl.hidden = !mapView;
+  if (!mapView) {
+    closeTrtSmartSuggestions();
+    setTrtDisplayPanel(false);
+  }
 
   closeAnalyticsFormatMenu();
 
@@ -3185,8 +3513,90 @@ function preserveTrtMapView(action) {
 });
 
 $("trt-map-mode").addEventListener("change", () => {
+  const mode = $("trt-map-mode").value;
+  if (["points", "regions", "both"].includes(mode)) sessionStorage.setItem(TRT_MAP_MODE_KEY, mode);
+  syncTrtDisplayControl();
   preserveTrtMapView(updateTrtMapMode);
 });
+const trtSmartSearchInput = $("trt-smart-search-input");
+if (trtSmartSearchInput) {
+  trtSmartSearchInput.addEventListener("input", () => {
+    trtSmartSuggestionIndex = -1;
+    renderTrtSmartSuggestions(trtSmartSearchInput.value);
+  });
+  trtSmartSearchInput.addEventListener("focus", () => {
+    if (trtSmartSearchInput.value.trim()) renderTrtSmartSuggestions(trtSmartSearchInput.value);
+  });
+  trtSmartSearchInput.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      if (!trtSmartSuggestions.length) renderTrtSmartSuggestions(trtSmartSearchInput.value);
+      if (trtSmartSuggestions.length) {
+        trtSmartSuggestionIndex = Math.min(trtSmartSuggestionIndex + 1, trtSmartSuggestions.length - 1);
+        renderTrtSmartSuggestions(trtSmartSearchInput.value);
+      }
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      if (trtSmartSuggestions.length) {
+        trtSmartSuggestionIndex = Math.max(trtSmartSuggestionIndex - 1, 0);
+        renderTrtSmartSuggestions(trtSmartSearchInput.value);
+      }
+      return;
+    }
+    if (event.key === "Enter") {
+      if (!trtSmartSuggestions.length) return;
+      event.preventDefault();
+      const index = trtSmartSuggestionIndex >= 0 ? trtSmartSuggestionIndex : 0;
+      addTrtSmartFilter(trtSmartSuggestions[index]);
+      return;
+    }
+    if (event.key === "Escape") {
+      closeTrtSmartSuggestions();
+      trtSmartSearchInput.blur();
+      return;
+    }
+    if (event.key === "Backspace" && !trtSmartSearchInput.value && trtSmartFilters.length) {
+      removeTrtSmartFilter(trtSmartFilterTokenKey(trtSmartFilters[trtSmartFilters.length - 1]));
+    }
+  });
+}
+
+$("trt-smart-search-suggestions")?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-trt-suggestion-index]");
+  if (!button) return;
+  const suggestion = trtSmartSuggestions[Number(button.dataset.trtSuggestionIndex)];
+  addTrtSmartFilter(suggestion);
+});
+
+$("trt-smart-filter-chips")?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-trt-filter-remove]");
+  if (!button) return;
+  removeTrtSmartFilter(button.dataset.trtFilterRemove);
+});
+
+$("trt-smart-filter-clear")?.addEventListener("click", clearTrtSmartFilters);
+
+$("trt-display-toggle")?.addEventListener("click", (event) => {
+  event.stopPropagation();
+  closeTrtSmartSuggestions();
+  const open = !document.querySelector(".trt-display-control")?.classList.contains("open");
+  setTrtDisplayPanel(open);
+});
+
+document.querySelectorAll("[data-trt-map-mode-value]").forEach((button) => {
+  button.addEventListener("click", () => {
+    setTrtMapMode(button.dataset.trtMapModeValue);
+    setTrtDisplayPanel(false);
+  });
+});
+
+document.addEventListener("click", (event) => {
+  if (!event.target.closest("#trt-smart-search-control")) closeTrtSmartSuggestions();
+  if (!event.target.closest(".trt-display-control")) setTrtDisplayPanel(false);
+});
+
 $("view-map-button").addEventListener("click", () => setTrtMainView("map"));
 $("view-analytics-button").addEventListener("click", () => setTrtMainView("analytics"));
 
@@ -3734,4 +4144,6 @@ window.addEventListener("hashchange", () => {
 });
 
 mountTrtToolsInMainSidebar();
+restoreTrtSmartFilters();
+restoreTrtMapMode();
 restoreSession();
