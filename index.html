@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
-  <link rel="stylesheet" href="styles.css?v=20260810-mapflow-v8-5">
+  <link rel="stylesheet" href="styles.css?v=20260810-ui-v8-7">
 </head>
 <body>
   <div id="toast" class="toast" hidden></div>
@@ -72,7 +72,7 @@
           <button class="nav-item nav-parent" type="button" data-nav-group="trt" aria-expanded="false">
             <span class="nav-icon nav-icon-svg" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 10.5 6 5h12l2 5.5"/><path d="M5 10.5V20h14v-9.5"/><path d="M9 20v-5h6v5"/><path d="M3.5 10.5h17"/></svg></span>
             <span class="nav-label">ТРТ</span>
-            <span class="nav-chevron" aria-hidden="true">⌄</span>
+            <span class="nav-chevron" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="m6.5 8 3.5 3.5L13.5 8"/></svg></span>
           </button>
           <div class="nav-submenu" data-nav-submenu="trt" hidden>
             <button class="nav-subitem" type="button" data-page="trt" data-trt-view="map">Карта</button>
@@ -83,7 +83,7 @@
 
         <div id="analytics-nav-group" class="nav-group" data-nav-group-container="analytics">
           <button class="nav-item nav-parent" type="button" data-nav-group="analytics" aria-expanded="false">
-            <span class="nav-icon nav-icon-svg" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 19V9M12 19V5M19 19v-7"/><path d="M3 19h18"/></svg></span><span class="nav-label">Аналитика</span><span class="nav-chevron" aria-hidden="true">⌄</span>
+            <span class="nav-icon nav-icon-svg" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 19V9M12 19V5M19 19v-7"/><path d="M3 19h18"/></svg></span><span class="nav-label">Аналитика</span><span class="nav-chevron" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="m6.5 8 3.5 3.5L13.5 8"/></svg></span>
           </button>
           <div class="nav-submenu" data-nav-submenu="analytics" hidden>
             <button class="nav-subitem" type="button" data-page="logistics">Логистика</button>
@@ -94,7 +94,7 @@
           <button class="nav-item nav-parent" type="button" data-nav-group="settings" aria-expanded="false">
             <span class="nav-icon nav-icon-svg" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 13.5v-3l-2-.6a7 7 0 0 0-.8-1.8l1-1.8-2.1-2.1-1.8 1A7 7 0 0 0 11.5 4L11 2H8l-.6 2a7 7 0 0 0-1.8.8l-1.8-1L1.7 5.9l1 1.8A7 7 0 0 0 2 9.5L0 10v3l2 .6a7 7 0 0 0 .8 1.8l-1 1.8 2.1 2.1 1.8-1a7 7 0 0 0 1.8.8L8 21h3l.6-2a7 7 0 0 0 1.8-.8l1.8 1 2.1-2.1-1-1.8a7 7 0 0 0 .8-1.8l1.9-.5Z" transform="translate(1 0) scale(.92)"/></svg></span>
             <span class="nav-label">Настройки</span>
-            <span class="nav-chevron" aria-hidden="true">⌄</span>
+            <span class="nav-chevron" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="m6.5 8 3.5 3.5L13.5 8"/></svg></span>
           </button>
           <div class="nav-submenu" data-nav-submenu="settings" hidden>
             <button class="nav-subitem" type="button" data-page="employees">Сотрудники</button>
@@ -667,7 +667,15 @@
                 </div>
 
                 <div id="trt-map-card" hidden>
-                  <h3 id="trt-card-name" class="legacy-point-name">—</h3>
+                  <div class="trt-card-title-row">
+                    <h3 id="trt-card-name" class="legacy-point-name">—</h3>
+                    <strong id="trt-card-rating" class="trt-card-rating" title="Рейтинг ТРТ">—</strong>
+                  </div>
+
+                  <div class="trt-card-meta-row" aria-label="Формат и статус ТРТ">
+                    <span class="trt-card-meta-item"><small>Формат</small><strong id="trt-card-format">—</strong></span>
+                    <span class="trt-card-meta-item"><small>Статус</small><strong id="trt-card-status">—</strong></span>
+                  </div>
 
                   <div class="legacy-field">
                     <div class="legacy-label">Направление</div>
@@ -690,11 +698,6 @@
                   </div>
 
                   <div class="legacy-field">
-                    <div class="legacy-label">Формат ТРТ</div>
-                    <div id="trt-card-format">—</div>
-                  </div>
-
-                  <div class="legacy-field">
                     <div class="legacy-label">Категория ABC</div>
                     <div id="trt-card-abc">—</div>
                   </div>
@@ -708,18 +711,6 @@
                     <div class="legacy-label">Адрес</div>
                     <div id="trt-card-address">—</div>
                   </div>
-
-                  <section id="trt-fourp-card" class="trt-fourp-card" hidden>
-                    <div class="trt-fourp-head">
-                      <div class="legacy-label">Рейтинг ТРТ</div>
-                      <strong id="trt-fourp-total" class="trt-fourp-total">0,0</strong>
-                    </div>
-                    <p id="trt-fourp-empty" class="legacy-hint">Рейтинг ещё не заполнен.</p>
-                    <div id="trt-fourp-content" hidden>
-                      <div id="trt-fourp-details" class="trt-fourp-details"></div>
-                      <div id="trt-fourp-date" class="legacy-counter"></div>
-                    </div>
-                  </section>
 
                   <button id="trt-sales-button" class="legacy-sales-button" type="button">Продажи</button>
                 </div>
@@ -1058,12 +1049,12 @@
         <button id="media-preview-close" class="icon-button" type="button" aria-label="Закрыть">×</button>
       </header>
       <div id="media-preview-stage" class="media-preview-stage">
-        <button id="media-preview-prev" class="media-preview-arrow media-preview-arrow-prev" type="button" aria-label="Предыдущее фото">‹</button>
+        <button id="media-preview-prev" class="media-preview-arrow media-preview-arrow-prev" type="button" aria-label="Предыдущее фото"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14.5 6.5-5.5 5.5 5.5 5.5"/></svg></button>
         <div class="media-preview-body">
           <p id="media-preview-loading" class="media-preview-loading">Загрузка превью…</p>
           <img id="media-preview-image" alt="Просмотр фотографии" hidden>
         </div>
-        <button id="media-preview-next" class="media-preview-arrow media-preview-arrow-next" type="button" aria-label="Следующее фото">›</button>
+        <button id="media-preview-next" class="media-preview-arrow media-preview-arrow-next" type="button" aria-label="Следующее фото"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9.5 6.5 5.5 5.5-5.5 5.5"/></svg></button>
       </div>
       <section class="media-preview-information" aria-label="Информация о фотографии">
         <h3>Информация о фотографии</h3>
@@ -1101,6 +1092,6 @@
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <script src="app.js?v=20260810-mapflow-v8-5"></script>
+  <script src="app.js?v=20260810-ui-v8-7"></script>
 </body>
 </html>

@@ -2463,18 +2463,23 @@ path.leaflet-interactive:focus{
   transform:translate(-50%,-50%);
   display:block;
   color:#42516a;
-  font-size:11px;
-  font-weight:750;
+  font-size:10.5px;
+  font-weight:680;
   line-height:1;
   white-space:nowrap;
   text-shadow:
-    -2px -2px 0 rgba(255,255,255,.95),
-     2px -2px 0 rgba(255,255,255,.95),
-    -2px  2px 0 rgba(255,255,255,.95),
-     2px  2px 0 rgba(255,255,255,.95),
-     0 0 5px rgba(255,255,255,.98);
+    -2px -2px 0 rgba(255,255,255,.96),
+     2px -2px 0 rgba(255,255,255,.96),
+    -2px  2px 0 rgba(255,255,255,.96),
+     2px  2px 0 rgba(255,255,255,.96),
+     0 0 4px rgba(255,255,255,.98);
   opacity:.9;
 }
+.trt-city-label-major{font-size:13px;font-weight:800;color:#33415d;opacity:.98;}
+.trt-city-label-regional{font-size:11.5px;font-weight:760;color:#38475f;opacity:.95;}
+.trt-city-label-large{font-size:11px;font-weight:720;}
+.trt-city-label-medium{font-size:10.5px;}
+.trt-city-label-small,.trt-city-label-local{font-size:10px;font-weight:650;opacity:.86;}
 
 /* При открытой карточке основное меню становится компактной полосой. */
 .app-shell.map-inspector-active{
@@ -2848,4 +2853,196 @@ path.leaflet-interactive:focus{
   .region-top-metrics article:first-child{grid-column:1/-1}
   .region-table-wrap{overflow-x:auto}
   .region-city-table{min-width:570px}
+}
+
+
+/* =====================================================================
+   VOG Web v8.7 — unified motion, windows and TRT card
+   ===================================================================== */
+:root{
+  --vog-radius-window:24px;
+  --vog-radius-card:18px;
+  --vog-radius-control:14px;
+  --vog-motion-fast:160ms;
+  --vog-motion-ui:240ms;
+  --vog-motion-panel:300ms;
+  --vog-ease-standard:cubic-bezier(.22,.8,.22,1);
+}
+
+/* Единственная активная кнопка меню. Раскрытие подменю не равно активности. */
+.nav-item.active{
+  color:#fff;
+  background:linear-gradient(135deg,var(--vog-navy),#4869a2);
+  box-shadow:0 8px 20px rgba(56,78,134,.18);
+}
+.nav-parent[aria-expanded="true"]:not(.active){
+  color:#526078;
+  background:rgba(255,255,255,.52);
+  box-shadow:none;
+}
+.nav-item.active .nav-icon{background:rgba(255,255,255,.16)}
+.nav-parent[aria-expanded="true"]:not(.active) .nav-icon{background:rgba(56,78,134,.07)}
+.nav-parent .nav-chevron{
+  width:30px;height:30px;display:grid;place-items:center;flex:0 0 30px;
+  margin-left:auto;border:1px solid rgba(56,78,134,.08);border-radius:10px;
+  color:#738198;background:rgba(56,78,134,.055);
+  transition:background var(--vog-motion-fast) var(--vog-ease-standard),
+             color var(--vog-motion-fast) var(--vog-ease-standard),
+             border-color var(--vog-motion-fast) var(--vog-ease-standard),
+             transform var(--vog-motion-ui) var(--vog-ease-standard);
+}
+.nav-parent .nav-chevron svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;transition:transform var(--vog-motion-ui) var(--vog-ease-standard)}
+.nav-parent[aria-expanded="true"] .nav-chevron svg{transform:rotate(180deg)}
+.nav-parent.active .nav-chevron{color:#fff;border-color:rgba(255,255,255,.18);background:rgba(255,255,255,.14)}
+.nav-item,.nav-icon,.nav-subitem,.nav-submenu,.text-button{
+  transition-duration:var(--vog-motion-fast);
+  transition-timing-function:var(--vog-ease-standard);
+}
+
+/* Единый сценарий крупных окон. */
+.employee-dialog,.task-modal,.sales-modal,.media-preview-dialog,.map-inspector{
+  border-radius:var(--vog-radius-window);
+}
+.employee-dialog,.task-modal,.sales-modal,.media-preview-dialog{
+  clip-path:inset(0 round var(--vog-radius-window));
+}
+.task-modal-backdrop:not([hidden]),.sales-modal-backdrop:not([hidden]),.media-preview-backdrop:not([hidden]){
+  animation:vogBackdropIn var(--vog-motion-ui) var(--vog-ease-standard) both;
+}
+.task-modal-backdrop:not([hidden]) .task-modal,
+.sales-modal-backdrop:not([hidden]) .sales-modal,
+.media-preview-backdrop:not([hidden]) .media-preview-dialog{
+  animation:vogWindowIn var(--vog-motion-panel) var(--vog-ease-standard) both;
+}
+@keyframes vogBackdropIn{from{opacity:0}to{opacity:1}}
+@keyframes vogWindowIn{from{opacity:0;transform:translateY(8px) scale(.992)}to{opacity:1;transform:none}}
+
+/* Плавное сжатие меню и выезд инспектора. На десктопе инспектор всегда
+   занимает вторую grid-колонку: закрытое состояние имеет ширину 0. */
+@media (min-width:821px){
+  .app-shell{
+    grid-template-columns:300px 0 minmax(0,1fr);
+    transition:grid-template-columns var(--vog-motion-panel) var(--vog-ease-standard);
+  }
+  .app-shell>.sidebar{grid-column:1;transition:padding var(--vog-motion-panel) var(--vog-ease-standard),box-shadow var(--vog-motion-ui) var(--vog-ease-standard)}
+  .app-shell>.map-inspector{grid-column:2}
+  .app-shell>.main-content{grid-column:3;min-width:0}
+  .app-shell.map-inspector-active{grid-template-columns:76px 580px minmax(0,1fr)}
+  .app-shell.map-inspector-region{grid-template-columns:76px 650px minmax(0,1fr)}
+  .map-inspector,
+  .map-inspector[hidden]{
+    display:block!important;
+    width:calc(100% - 12px);
+    min-width:0;
+    height:calc(100vh - 20px);
+    margin:10px 6px;
+    border:1px solid rgba(56,78,134,.10);
+    opacity:0;
+    visibility:hidden;
+    pointer-events:none;
+    transform:translateX(-14px);
+    transition:opacity var(--vog-motion-ui) var(--vog-ease-standard),
+               transform var(--vog-motion-panel) var(--vog-ease-standard),
+               visibility 0s linear var(--vog-motion-panel);
+  }
+  .app-shell.map-inspector-active>.map-inspector:not([hidden]){
+    opacity:1;visibility:visible;pointer-events:auto;transform:none;
+    transition-delay:0s;
+  }
+  .app-shell.map-inspector-active .sidebar-brand-copy,
+  .app-shell.map-inspector-active .nav-label,
+  .app-shell.map-inspector-active .nav-chevron,
+  .app-shell.map-inspector-active .sidebar-user,
+  .app-shell.map-inspector-active .main-sidebar-trt-tools{
+    opacity:0;
+    transition:opacity calc(var(--vog-motion-fast) * .75) ease;
+  }
+}
+
+.map-inspector{overflow:hidden auto;background:rgba(250,252,254,.985)}
+.map-inspector-header{border-radius:var(--vog-radius-window) var(--vog-radius-window) 0 0}
+.map-inspector-view{transition:opacity var(--vog-motion-ui) var(--vog-ease-standard),transform var(--vog-motion-ui) var(--vog-ease-standard)}
+.map-inspector-close,.map-inspector-back,.trt-display-toggle,.trt-smart-search-control,.leaflet-control-zoom{
+  transition:transform var(--vog-motion-fast) var(--vog-ease-standard),box-shadow var(--vog-motion-fast) var(--vog-ease-standard),background var(--vog-motion-fast) var(--vog-ease-standard);
+}
+.map-inspector-close:hover,.map-inspector-back:hover{transform:translateY(-1px)}
+
+/* Карточка ТРТ: название отдельно от формата, рейтинг — только цифрой справа. */
+#trt-inspector-card-host #trt-map-card{padding:4px 4px 12px}
+.trt-card-title-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:18px;margin-bottom:10px}
+#trt-inspector-card-host .legacy-point-name{margin:0;color:var(--vog-ink);font-size:28px;font-weight:820;line-height:1.13;letter-spacing:-.035em}
+.trt-card-rating{min-width:44px;text-align:right;color:var(--vog-ink);font-size:27px;font-weight:850;line-height:1.05;letter-spacing:-.035em}
+.trt-card-meta-row{display:flex;flex-wrap:wrap;gap:9px;margin:0 0 14px}
+.trt-card-meta-item{display:inline-flex;align-items:baseline;gap:7px;min-height:34px;padding:7px 10px;border:1px solid rgba(56,78,134,.09);border-radius:12px;background:rgba(255,255,255,.74)}
+.trt-card-meta-item small{color:#8a95a7;font-size:11px;font-weight:500}
+.trt-card-meta-item strong{color:var(--vog-ink);font-size:14px;font-weight:800}
+#trt-inspector-card-host .legacy-field{margin:0;padding:13px 0;border-bottom:1px solid #edf1f5;color:var(--vog-ink)}
+#trt-inspector-card-host .legacy-field .legacy-label{
+  margin:0 0 4px;color:#8792a5;font-size:14px;font-weight:450;line-height:1.25;letter-spacing:0;text-transform:none;
+}
+#trt-inspector-card-host .legacy-field>div:not(.legacy-label){color:var(--vog-ink);font-size:18px;font-weight:760;line-height:1.35;letter-spacing:-.012em}
+#trt-inspector-card-host #trt-card-address{font-size:17px;font-weight:720;line-height:1.42}
+#trt-inspector-card-host .legacy-size-badge{height:auto;min-height:34px;border-radius:12px;padding:6px 11px;font-size:17px;font-weight:850}
+#trt-inspector-card-host .legacy-sales-button{height:50px;margin-top:20px;border-radius:15px;font-size:17px}
+#trt-inspector-card-host .trt-fourp-card{display:none!important}
+
+/* Просмотрщик медиа: метаданные справочные, а навигация — стандартные SVG controls. */
+.media-preview-information{padding:12px 18px 15px;background:#fff}
+.media-preview-information h3{margin:0 0 8px;color:#7a8699;font-size:12px;font-weight:650}
+.media-preview-metadata{grid-template-columns:repeat(3,minmax(0,1fr));column-gap:22px;row-gap:9px}
+.media-preview-meta-item{min-width:0;padding:0;border:0;border-radius:0;background:transparent}
+.media-preview-meta-item span{margin-bottom:2px;color:#9aa4b3;font-size:9.5px;font-weight:650;letter-spacing:.035em}
+.media-preview-meta-item strong{color:#657187;font-size:11.5px;font-weight:600;line-height:1.3}
+.media-preview-arrow{width:44px;height:44px;border:1px solid rgba(255,255,255,.50);background:rgba(255,255,255,.94);font-size:0}
+.media-preview-arrow svg{width:22px;height:22px;fill:none;stroke:#344054;stroke-width:2.25;stroke-linecap:round;stroke-linejoin:round}
+.media-preview-arrow:hover{background:#fff;transform:translateY(-50%) scale(1.04)}
+.media-preview-arrow:active{transform:translateY(-50%) scale(.98)}
+
+@media (max-width:820px){
+  .map-inspector,.map-inspector[hidden]{
+    display:block!important;
+    inset:8px;
+    width:calc(100% - 16px);
+    height:calc(100dvh - 16px);
+    border:1px solid rgba(56,78,134,.10);
+    border-radius:20px;
+    opacity:0;visibility:hidden;pointer-events:none;transform:translateY(10px);
+    transition:opacity var(--vog-motion-ui) var(--vog-ease-standard),transform var(--vog-motion-panel) var(--vog-ease-standard),visibility 0s linear var(--vog-motion-panel);
+  }
+  .app-shell.map-inspector-active>.map-inspector:not([hidden]){opacity:1;visibility:visible;pointer-events:auto;transform:none;transition-delay:0s}
+  .map-inspector-header{border-radius:20px 20px 0 0}
+  .trt-card-title-row{gap:10px}
+  #trt-inspector-card-host .legacy-point-name{font-size:23px}
+  .trt-card-rating{font-size:23px}
+  .media-preview-metadata{grid-template-columns:1fr 1fr;column-gap:16px}
+  .media-preview-dialog{border-radius:20px;clip-path:inset(0 round 20px)}
+}
+@media (max-width:520px){.media-preview-metadata{grid-template-columns:1fr}}
+
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;scroll-behavior:auto!important}
+}
+
+/* Дополнительное сглаживание перестроения основного меню. */
+@media (min-width:821px){
+  .sidebar-brand-copy{max-width:220px;opacity:1;overflow:hidden;transition:max-width var(--vog-motion-panel) var(--vog-ease-standard),opacity var(--vog-motion-fast) var(--vog-ease-standard)}
+  .nav-label{display:block;max-width:180px;opacity:1;overflow:hidden;white-space:nowrap;transition:max-width var(--vog-motion-panel) var(--vog-ease-standard),opacity var(--vog-motion-fast) var(--vog-ease-standard)}
+  .nav-item{transition:width var(--vog-motion-panel) var(--vog-ease-standard),min-width var(--vog-motion-panel) var(--vog-ease-standard),padding var(--vog-motion-panel) var(--vog-ease-standard),background var(--vog-motion-fast) var(--vog-ease-standard),color var(--vog-motion-fast) var(--vog-ease-standard),border-color var(--vog-motion-fast) var(--vog-ease-standard),transform var(--vog-motion-fast) var(--vog-ease-standard)}
+  .app-shell.map-inspector-active .sidebar-brand-copy,
+  .app-shell.map-inspector-active .nav-label{display:block!important;max-width:0;opacity:0;pointer-events:none}
+}
+
+/* Современные браузеры умеют анимировать появление/исчезновение display:none. */
+.task-modal-backdrop,.sales-modal-backdrop,.media-preview-backdrop{
+  opacity:1;
+  transition:opacity var(--vog-motion-ui) var(--vog-ease-standard),display var(--vog-motion-ui) allow-discrete;
+  transition-behavior:allow-discrete;
+}
+.task-modal-backdrop[hidden],.sales-modal-backdrop[hidden],.media-preview-backdrop[hidden]{opacity:0}
+@starting-style{
+  .task-modal-backdrop:not([hidden]),.sales-modal-backdrop:not([hidden]),.media-preview-backdrop:not([hidden]){opacity:0}
+}
+@media (max-width:1200px) and (min-width:821px){
+  .app-shell.map-inspector-active{grid-template-columns:76px 500px minmax(0,1fr)}
+  .app-shell.map-inspector-region{grid-template-columns:76px 560px minmax(0,1fr)}
 }

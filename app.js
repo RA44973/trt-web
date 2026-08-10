@@ -1,15 +1,14 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.5";
+const VOG_WEB_VERSION = "8.7";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
 const SESSION_KEY = "trt_web_session";
-const TRT_MAP_VIEW_KEY = "trt_web_map_view_v2";
+const TRT_MAP_VIEW_KEY = "trt_web_map_view_v3";
 const TRT_MAP_FILTER_KEY = "trt_web_map_filters_v1";
 const TRT_MAP_MODE_KEY = "trt_web_map_mode_v1";
-const TRT_MAP_DEFAULT_CENTER = [58.3, 47.0];
-const TRT_MAP_DEFAULT_ZOOM = 5;
+const DEFAULT_MAP_VIEW = Object.freeze({ center: [58.3, 47.0], zoom: 5 });
 const PAGES = new Set(["employees", "sales-import", "activity", "tasks", "visits", "trt", "logistics"]);
 
 const state = {
@@ -150,18 +149,17 @@ function syncSidebarNavigation(page) {
   if (isSettings) setNavGroupExpanded("settings", true);
   if (isAnalytics) setNavGroupExpanded("analytics", true);
 
-  document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && trtInspectorMode && state.currentPage === "trt") {
-    event.preventDefault();
-    closeMapInspector();
-  }
-});
-
-document.querySelectorAll("[data-nav-group]").forEach((button) => {
-    const group = button.dataset.navGroup;
-    const active = (group === "trt" && isTrt) || (group === "settings" && isSettings) || (group === "analytics" && isAnalytics);
+  // В системе одно рабочее окно: только один основной раздел может быть активным.
+  document.querySelectorAll(".main-nav > .nav-item, .main-nav .nav-parent").forEach((button) => {
+    let active = false;
+    if (button.dataset.page) active = button.dataset.page === page;
+    if (button.dataset.navGroup === "trt") active = isTrt;
+    if (button.dataset.navGroup === "settings") active = isSettings;
+    if (button.dataset.navGroup === "analytics") active = isAnalytics;
     button.classList.toggle("active", active);
+    button.setAttribute("aria-current", active ? "page" : "false");
   });
+
   document.querySelectorAll(".nav-subitem").forEach((button) => {
     let active = button.dataset.page === page;
     if (button.dataset.trtView) active = active && button.dataset.trtView === trtMainView;
@@ -1273,33 +1271,28 @@ function renderVisitFourP(visit) {
   $("visit-fourp-display").textContent = fourPScoreText(promotion.consumerPromoScore);
 }
 
+function trtDisplayName(point) {
+  const raw = String(point?.client || point?.holding || "ТРТ").trim();
+  const format = String(point?.format || "").trim();
+  if (!format) return raw;
+  const escaped = format.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return raw.replace(new RegExp(`\\s*[—–-]\\s*${escaped}\\s*$`, "i"), "").trim() || raw;
+}
+
+function trtStatusLabel(point) {
+  const raw = String(
+    point?.trtStatus || point?.clientStatus || point?.customerStatus || point?.status || "АКБ"
+  ).trim();
+  const normalized = normalizeText(raw).replace(/[^a-zа-я0-9]/g, "");
+  const aliases = { akb: "АКБ", tsakb: "ЦАКБ", nakb: "НАКБ", tsnakb: "ЦНАКБ" };
+  return aliases[normalized] || raw || "АКБ";
+}
+
 function renderTrtFourP(point) {
   const visit = latestFourPVisit(point?.id);
   const assessment = fourPAssessment(visit);
-  const section = $("trt-fourp-card");
-  const empty = $("trt-fourp-empty");
-  const content = $("trt-fourp-content");
-
-  section.hidden = false;
-  empty.hidden = Boolean(assessment);
-  content.hidden = !assessment;
-  $("trt-fourp-total").textContent = fourPScoreText(assessment?.totalScore);
-  if (!assessment) return;
-
-  const product = assessment.product || {};
-  const promotion = assessment.promotion || {};
-  const commercial = promotion.commercialTermsScore == null
-    ? (promotion.commercialTermsStatus || "Ожидает данных КУ")
-    : fourPScoreText(promotion.commercialTermsScore);
-  $("trt-fourp-details").innerHTML = `
-    <span>Местоположение ТРТ <b>${fourPScoreText(assessment.place?.locationScore)}</b></span>
-    <span>Местоположение ВОГ <b>${fourPScoreText(assessment.place?.vogPlacementScore)}</b></span>
-    <span>Ассортимент <b>${Number(product.skuCount || 0).toLocaleString("ru-RU")} SKU · ${fourPScoreText(product.assortmentScore)}</b></span>
-    <span>SKU от ВОГ в ассортименте ТРТ <b>${product.vogSkuCount == null ? "—" : Number(product.vogSkuCount).toLocaleString("ru-RU")} SKU · ${String(product.vogSharePercent ?? 0).replace(".", ",")}% · ${fourPScoreText(product.vogShareScore)}</b></span>
-    <span>Коммерческие условия <b>${escapeHtml(commercial)}</b></span>
-    <span>Мотивация <b>${promotion.sellerCount == null ? fourPScoreText(promotion.sellerMotivationScore) : `${promotion.vogClubParticipants ?? 0}/${promotion.sellerCount} · ${fourPScoreText(promotion.sellerMotivationScore)}`}</b></span>
-    <span>Качество выставки ВОГ <b>${fourPScoreText(promotion.consumerPromoScore)}</b></span>`;
-  $("trt-fourp-date").textContent = `Последняя оценка: ${formatVisitDateTime(visit)}`;
+  const rating = $("trt-card-rating");
+  if (rating) rating.textContent = fourPScoreText(assessment?.totalScore);
 }
 
 async function ensureVisitsData(force = false) {
@@ -2227,13 +2220,31 @@ function renderTrtSmartFilterChips() {
     : "ТРТ, город, регион, направление, менеджер или адрес";
 }
 
+function hasActiveTrtFilters() {
+  return trtSmartFilters.length > 0
+    || Boolean($("trt-direction-filter")?.value)
+    || Boolean($("trt-manager-filter")?.value);
+}
+
+function resetTrtMapToDefaultView(animate = true) {
+  state.trtFitRequested = false;
+  if (!trtMap) return;
+  const options = animate ? { animate: true, duration: 0.55 } : { animate: false };
+  if (animate && typeof trtMap.flyTo === "function") {
+    trtMap.flyTo(DEFAULT_MAP_VIEW.center, DEFAULT_MAP_VIEW.zoom, options);
+  } else {
+    trtMap.setView(DEFAULT_MAP_VIEW.center, DEFAULT_MAP_VIEW.zoom, options);
+  }
+}
+
 function applyTrtSmartFilters() {
-  // После любого изменения умного фильтра карта сама показывает весь
-  // актуальный набор результатов, а не сохраняет прежний случайный масштаб.
-  state.trtFitRequested = true;
+  // fitBounds нужен только для реального фильтра. После очистки возвращаем
+  // согласованный стартовый вид ЦФО + основной части СЗФО.
+  state.trtFitRequested = hasActiveTrtFilters();
   persistTrtSmartFilters();
   renderTrtSmartFilterChips();
   renderTrtMap();
+  if (!hasActiveTrtFilters()) resetTrtMapToDefaultView(true);
 }
 
 function addTrtSmartFilter(suggestion) {
@@ -2344,6 +2355,36 @@ function saveTrtMapView() {
 }
 
 
+const TRT_MAJOR_CITY_LABELS = new Set([
+  "москва", "санкт-петербург", "санкт петербург", "воронеж"
+]);
+
+const TRT_REGIONAL_CENTER_LABELS = new Set([
+  "белгород", "брянск", "владимир", "воронеж", "иваново", "калуга", "кострома", "курск",
+  "липецк", "орел", "орёл", "рязань", "смоленск", "тамбов", "тверь", "тула", "ярославль",
+  "москва", "санкт-петербург", "санкт петербург", "петрозаводск", "сыктывкар", "архангельск",
+  "вологда", "калининград", "мурманск", "нарьян-мар", "нарьян мар", "великий новгород", "псков"
+]);
+
+function trtIsAdministrativeLabel(value) {
+  const city = cleanTrtCityName(value);
+  if (!city) return true;
+  const normalized = normalizeText(city);
+  if (!normalized) return true;
+  return /(?:^|\s)(?:область|обл\.?|республика|край|автономный\s+округ|автономная\s+область|ао)(?:$|\s)/i.test(city)
+    || /^(?:республика\s+|область\s+)/i.test(city);
+}
+
+function trtCityLabelProfile(row) {
+  const city = normalizeText(row?.city);
+  if (TRT_MAJOR_CITY_LABELS.has(city)) return { minZoom: 4, tier: "major", priority: 0 };
+  if (TRT_REGIONAL_CENTER_LABELS.has(city)) return { minZoom: 5, tier: "regional", priority: 1 };
+  if (row.count >= 18) return { minZoom: 6, tier: "large", priority: 2 };
+  if (row.count >= 7) return { minZoom: 7, tier: "medium", priority: 3 };
+  if (row.count >= 3) return { minZoom: 8, tier: "small", priority: 4 };
+  return { minZoom: 9, tier: "local", priority: 5 };
+}
+
 function buildTrtCityLabelData() {
   const groups = new Map();
   state.trtPoints.forEach((point) => {
@@ -2351,7 +2392,7 @@ function buildTrtCityLabelData() {
     const key = trtPointCityKey(point);
     const lat = Number(point?.lat);
     const lon = Number(point?.lon);
-    if (!city || !key || !Number.isFinite(lat) || !Number.isFinite(lon)) return;
+    if (!city || !key || trtIsAdministrativeLabel(city) || !Number.isFinite(lat) || !Number.isFinite(lon)) return;
     if (!groups.has(key)) groups.set(key, { key, city, region: String(point.region || ""), latSum: 0, lonSum: 0, count: 0 });
     const row = groups.get(key);
     row.latSum += lat;
@@ -2359,24 +2400,51 @@ function buildTrtCityLabelData() {
     row.count += 1;
   });
   return [...groups.values()]
-    .map((row) => ({ ...row, lat: row.latSum / row.count, lon: row.lonSum / row.count }))
-    .sort((a, b) => b.count - a.count || a.city.localeCompare(b.city, "ru"));
+    .map((row) => {
+      const result = { ...row, lat: row.latSum / row.count, lon: row.lonSum / row.count };
+      return { ...result, ...trtCityLabelProfile(result) };
+    })
+    .sort((a, b) => a.priority - b.priority || b.count - a.count || a.city.localeCompare(b.city, "ru"));
+}
+
+function trtCityLabelBox(row, point) {
+  const widthFactor = row.tier === "major" ? 7.8 : row.tier === "regional" ? 7.0 : 6.2;
+  const width = Math.max(36, Math.min(170, row.city.length * widthFactor + 18));
+  const height = row.tier === "major" ? 23 : row.tier === "regional" ? 20 : 18;
+  return {
+    left: point.x - width / 2 - 5,
+    right: point.x + width / 2 + 5,
+    top: point.y - height / 2 - 4,
+    bottom: point.y + height / 2 + 4,
+  };
+}
+
+function trtCityLabelBoxesOverlap(a, b) {
+  return !(a.right < b.left || a.left > b.right || a.bottom < b.top || a.top > b.bottom);
 }
 
 function refreshTrtCityLabels() {
   if (!trtMap || !trtCityLabelLayer || !state.trtLoaded) return;
   trtCityLabelLayer.clearLayers();
   const zoom = trtMap.getZoom();
-  const rows = buildTrtCityLabelData();
-  const limit = zoom <= 4 ? 18 : zoom === 5 ? 34 : zoom === 6 ? 60 : zoom === 7 ? 110 : rows.length;
-  rows.slice(0, limit).forEach((row) => {
+  const mapSize = trtMap.getSize();
+  const occupied = [];
+  const rows = buildTrtCityLabelData().filter((row) => zoom >= row.minZoom);
+
+  rows.forEach((row) => {
+    const point = trtMap.latLngToContainerPoint([row.lat, row.lon]);
+    if (point.x < -80 || point.y < -40 || point.x > mapSize.x + 80 || point.y > mapSize.y + 40) return;
+    const box = trtCityLabelBox(row, point);
+    if (occupied.some((existing) => trtCityLabelBoxesOverlap(existing, box))) return;
+    occupied.push(box);
+
     const marker = L.marker([row.lat, row.lon], {
       interactive: false,
       keyboard: false,
       zIndexOffset: -250,
       icon: L.divIcon({
         className: "trt-city-label-icon",
-        html: `<span class="trt-city-label">${escapeHtml(row.city)}</span>`,
+        html: `<span class="trt-city-label trt-city-label-${row.tier}">${escapeHtml(row.city)}</span>`,
         iconSize: null,
       }),
     });
@@ -2389,11 +2457,11 @@ function initTrtMap() {
 
   const savedView = readTrtMapView();
   trtMap = L.map("trt-map").setView(
-    savedView?.center || TRT_MAP_DEFAULT_CENTER,
-    savedView?.zoom ?? TRT_MAP_DEFAULT_ZOOM
+    savedView?.center || DEFAULT_MAP_VIEW.center,
+    savedView?.zoom ?? DEFAULT_MAP_VIEW.zoom
   );
-  trtMap.on("moveend", saveTrtMapView);
-  trtMap.on("zoomend", () => { saveTrtMapView(); refreshTrtCityLabels(); });
+  trtMap.on("moveend", () => { saveTrtMapView(); refreshTrtCityLabels(); });
+  trtMap.on("zoomend", saveTrtMapView);
   L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png", {
     subdomains: "abcd",
     maxZoom: 20,
@@ -2475,11 +2543,12 @@ function openTrtCard(pointId, focusMap = true) {
   $("trt-map-card").hidden = false;
   mountTrtCardInInspector();
   setMapInspectorView(keepSalesView ? "sales" : "trt");
-  $("trt-card-name").textContent = point.client || point.holding || "ТРТ";
+  $("trt-card-name").textContent = trtDisplayName(point);
   $("trt-card-direction").textContent = point.direction || "—";
   $("trt-card-manager").textContent = shortPersonName(point.manager) || "—";
   $("trt-card-holding").textContent = point.holding || "—";
   $("trt-card-format").textContent = point.format || "—";
+  $("trt-card-status").textContent = trtStatusLabel(point);
   $("trt-card-abc").textContent = point.abcCategory || "—";
   $("trt-card-region").textContent = point.region || "—";
   $("trt-card-address").textContent = point.address || "—";
@@ -2884,8 +2953,10 @@ function renderTrtMap() {
   const searchCount = $("trt-search-result-count");
   if (searchCount) searchCount.textContent = `${visible.length} ТРТ`;
 
-  if (state.trtFitRequested && visible.length) {
-    trtMap.fitBounds(L.latLngBounds(coordinates).pad(0.08), { maxZoom: 13 });
+  if (state.trtFitRequested && hasActiveTrtFilters() && visible.length) {
+    trtMap.flyToBounds(L.latLngBounds(coordinates).pad(0.08), { maxZoom: 13, duration: 0.48 });
+    state.trtFitRequested = false;
+  } else if (state.trtFitRequested && !hasActiveTrtFilters()) {
     state.trtFitRequested = false;
   }
 
@@ -3439,7 +3510,7 @@ function openTrtSales() {
   const ytd2026 = sumSales(sales2026, 6);
   const yoy = ytd2025 ? ((ytd2026 - ytd2025) / ytd2025) * 100 : null;
 
-  $("trt-inspector-sales-title").textContent = `Продажи: ${point.client || point.holding || "ТРТ"}`;
+  $("trt-inspector-sales-title").textContent = `Продажи: ${trtDisplayName(point)}`;
   $("trt-inspector-sales-subtitle").textContent = `Сравнение 2025 и 2026 годов · ${unit}`;
   $("trt-inspector-sales-ytd-2025").textContent = formatSales(ytd2025, unit);
   $("trt-inspector-sales-ytd-2026").textContent = formatSales(ytd2026, unit);
@@ -3847,7 +3918,11 @@ document.addEventListener("keydown", (event) => {
     if (event.key === "ArrowRight") { event.preventDefault(); moveMediaPreview(1); return; }
     if (event.key === "Escape") { event.preventDefault(); closeMediaPreview(); return; }
   }
-  if (event.key === "Escape" && !$("visit-detail-modal").hidden) closeVisitDetail();
+  if (event.key === "Escape" && !$("visit-detail-modal").hidden) { closeVisitDetail(); return; }
+  if (event.key === "Escape" && trtInspectorMode && state.currentPage === "trt") {
+    event.preventDefault();
+    closeMapInspector();
+  }
 });
 
 function preserveTrtMapView(action) {
@@ -3868,8 +3943,9 @@ function preserveTrtMapView(action) {
 
 ["trt-direction-filter", "trt-manager-filter"].forEach((id) => {
   $(id).addEventListener("change", () => {
-    state.trtFitRequested = false;
-    preserveTrtMapView(renderTrtMap);
+    state.trtFitRequested = hasActiveTrtFilters();
+    renderTrtMap();
+    if (!hasActiveTrtFilters()) resetTrtMapToDefaultView(true);
   });
 });
 
