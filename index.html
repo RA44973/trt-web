@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
-  <link rel="stylesheet" href="styles.css?v=20260810-mapfilters-v8-3">
+  <link rel="stylesheet" href="styles.css?v=20260810-regionpanel-v8-4">
 </head>
 <body>
   <div id="toast" class="toast" hidden></div>
@@ -60,17 +60,17 @@
 
       <nav class="main-nav" aria-label="Основная навигация">
         <button class="nav-item" type="button" data-page="tasks">
-          <span class="nav-icon">З</span>
+          <span class="nav-icon nav-icon-svg" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 6h11M8 12h11M8 18h11"/><path d="m3.5 6 1.3 1.3L6.8 5M3.5 12l1.3 1.3 2-2.3M3.5 18l1.3 1.3 2-2.3"/></svg></span>
           <span class="nav-label">Задачи</span>
         </button>
         <button class="nav-item" type="button" data-page="visits">
-          <span class="nav-icon">В</span>
+          <span class="nav-icon nav-icon-svg" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 21s6-5.4 6-11a6 6 0 1 0-12 0c0 5.6 6 11 6 11Z"/><circle cx="12" cy="10" r="2.2"/></svg></span>
           <span class="nav-label">Визиты</span>
         </button>
 
         <div class="nav-group" data-nav-group-container="trt">
           <button class="nav-item nav-parent" type="button" data-nav-group="trt" aria-expanded="false">
-            <span class="nav-icon">Т</span>
+            <span class="nav-icon nav-icon-svg" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 10.5 6 5h12l2 5.5"/><path d="M5 10.5V20h14v-9.5"/><path d="M9 20v-5h6v5"/><path d="M3.5 10.5h17"/></svg></span>
             <span class="nav-label">ТРТ</span>
             <span class="nav-chevron" aria-hidden="true">⌄</span>
           </button>
@@ -83,7 +83,7 @@
 
         <div id="analytics-nav-group" class="nav-group" data-nav-group-container="analytics">
           <button class="nav-item nav-parent" type="button" data-nav-group="analytics" aria-expanded="false">
-            <span class="nav-icon">А</span><span class="nav-label">Аналитика</span><span class="nav-chevron" aria-hidden="true">⌄</span>
+            <span class="nav-icon nav-icon-svg" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 19V9M12 19V5M19 19v-7"/><path d="M3 19h18"/></svg></span><span class="nav-label">Аналитика</span><span class="nav-chevron" aria-hidden="true">⌄</span>
           </button>
           <div class="nav-submenu" data-nav-submenu="analytics" hidden>
             <button class="nav-subitem" type="button" data-page="logistics">Логистика</button>
@@ -92,7 +92,7 @@
 
         <div id="settings-nav-group" class="nav-group" data-nav-group-container="settings" hidden>
           <button class="nav-item nav-parent" type="button" data-nav-group="settings" aria-expanded="false">
-            <span class="nav-icon">Н</span>
+            <span class="nav-icon nav-icon-svg" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 13.5v-3l-2-.6a7 7 0 0 0-.8-1.8l1-1.8-2.1-2.1-1.8 1A7 7 0 0 0 11.5 4L11 2H8l-.6 2a7 7 0 0 0-1.8.8l-1.8-1L1.7 5.9l1 1.8A7 7 0 0 0 2 9.5L0 10v3l2 .6a7 7 0 0 0 .8 1.8l-1 1.8 2.1 2.1 1.8-1a7 7 0 0 0 1.8.8L8 21h3l.6-2a7 7 0 0 0 1.8-.8l1.8 1 2.1-2.1-1-1.8a7 7 0 0 0 .8-1.8l1.9-.5Z" transform="translate(1 0) scale(.92)"/></svg></span>
             <span class="nav-label">Настройки</span>
             <span class="nav-chevron" aria-hidden="true">⌄</span>
           </button>
@@ -107,6 +107,64 @@
       <div class="sidebar-user">
         <button id="logout-button" class="text-button" type="button">Выйти</button>
       </div>
+    </aside>
+
+    <aside id="map-inspector" class="map-inspector" hidden aria-label="Карточка объекта на карте">
+      <header class="map-inspector-header">
+        <div>
+          <p id="map-inspector-kicker" class="map-inspector-kicker">Карта</p>
+          <div id="map-inspector-status" class="map-inspector-status"></div>
+        </div>
+        <button id="map-inspector-close" class="map-inspector-close" type="button" aria-label="Закрыть карточку">×</button>
+      </header>
+
+      <section id="trt-inspector-view" class="map-inspector-view" hidden>
+        <div id="trt-inspector-card-host"></div>
+      </section>
+
+      <section id="trt-inspector-sales-view" class="map-inspector-view" hidden>
+        <button id="trt-inspector-sales-back" class="map-inspector-back" type="button">← Карточка ТРТ</button>
+        <div class="trt-inspector-sales-head">
+          <h2 id="trt-inspector-sales-title">Продажи</h2>
+          <p id="trt-inspector-sales-subtitle" class="map-inspector-muted"></p>
+        </div>
+        <div class="trt-inspector-sales-chart"><canvas id="trt-inspector-sales-chart"></canvas></div>
+        <div class="trt-inspector-sales-summary">
+          <article><span>Январь–июнь 2025</span><strong id="trt-inspector-sales-ytd-2025">—</strong></article>
+          <article><span>Январь–июнь 2026</span><strong id="trt-inspector-sales-ytd-2026">—</strong></article>
+          <article id="trt-inspector-sales-yoy-box" class="sales-yoy-box sales-yoy-neutral"><span>Изменение год к году</span><strong id="trt-inspector-sales-yoy">—</strong></article>
+        </div>
+      </section>
+
+      <section id="region-inspector-view" class="map-inspector-view region-inspector-view" hidden>
+        <div class="region-inspector-title-row">
+          <div>
+            <span class="region-mock-badge">Макет данных</span>
+            <h2 id="region-inspector-name">Регион</h2>
+            <p class="map-inspector-muted">Население: <strong id="region-inspector-population">—</strong></p>
+          </div>
+          <div class="region-top-metrics">
+            <article><span>Средние продажи ВОГ / мес.<small>последние 3 месяца</small></span><strong id="region-inspector-sales">—</strong></article>
+            <article><span>Потенциал / мес.</span><strong id="region-inspector-potential">—</strong></article>
+            <article><span>Доля ВОГ</span><strong id="region-inspector-share">—</strong></article>
+          </div>
+        </div>
+        <p class="region-inspector-note">Цифры в этой карточке пока демонстрационные. Структура и взаимодействие уже рабочие; далее подключим таблицу с реальными данными.</p>
+        <div class="region-table-wrap">
+          <table class="region-city-table">
+            <thead>
+              <tr>
+                <th>Город</th>
+                <th>Население</th>
+                <th>Потенциал / мес.</th>
+                <th>Продажи ВОГ / мес.<small>среднее за 3 мес.</small></th>
+                <th>Доля ВОГ</th>
+              </tr>
+            </thead>
+            <tbody id="region-inspector-city-body"></tbody>
+          </table>
+        </div>
+      </section>
     </aside>
 
     <main class="main-content">
@@ -605,7 +663,7 @@
 
               <section class="legacy-card">
                 <div id="trt-map-empty" class="legacy-hint">
-                  Нажмите на конкретную точку на карте, чтобы открыть карточку ТРТ.
+                  Выберите ТРТ или регион на карте, чтобы открыть подробную карточку.
                 </div>
 
                 <div id="trt-map-card" hidden>
@@ -757,7 +815,7 @@
                 </svg>
                 <div id="trt-smart-filter-chips" class="trt-smart-filter-chips" aria-label="Выбранные фильтры"></div>
                 <input id="trt-smart-search-input" class="trt-smart-search-input" type="search" autocomplete="off" spellcheck="false"
-                  placeholder="ТРТ, направление, менеджер или адрес" aria-label="Поиск по карте"
+                  placeholder="ТРТ, город, регион, направление, менеджер или адрес" aria-label="Поиск по карте"
                   aria-controls="trt-smart-search-suggestions" aria-expanded="false">
                 <span id="trt-search-result-count" class="trt-search-result-count">—</span>
                 <button id="trt-smart-filter-clear" class="trt-smart-filter-clear" type="button" aria-label="Очистить все фильтры" hidden>×</button>
@@ -1043,6 +1101,6 @@
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <script src="app.js?v=20260810-mapfilters-v8-3"></script>
+  <script src="app.js?v=20260810-regionpanel-v8-4"></script>
 </body>
 </html>

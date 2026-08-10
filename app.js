@@ -1,15 +1,15 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.3";
+const VOG_WEB_VERSION = "8.4";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
 const SESSION_KEY = "trt_web_session";
-const TRT_MAP_VIEW_KEY = "trt_web_map_view";
+const TRT_MAP_VIEW_KEY = "trt_web_map_view_v2";
 const TRT_MAP_FILTER_KEY = "trt_web_map_filters_v1";
 const TRT_MAP_MODE_KEY = "trt_web_map_mode_v1";
-const TRT_MAP_DEFAULT_CENTER = [55.7558, 37.6173];
-const TRT_MAP_DEFAULT_ZOOM = 10;
+const TRT_MAP_DEFAULT_CENTER = [58.3, 47.0];
+const TRT_MAP_DEFAULT_ZOOM = 5;
 const PAGES = new Set(["employees", "sales-import", "activity", "tasks", "visits", "trt", "logistics"]);
 
 const state = {
@@ -41,7 +41,10 @@ const state = {
 let trtMap = null;
 let trtMarkerLayer = null;
 let trtRegionLayer = null;
+let trtCityLabelLayer = null;
 let trtRegionsLoading = false;
+let trtInspectorMode = "";
+let trtInspectorRegion = null;
 let trtSmartFilters = [];
 let trtSmartSuggestions = [];
 let trtSmartSuggestionIndex = -1;
@@ -147,7 +150,14 @@ function syncSidebarNavigation(page) {
   if (isSettings) setNavGroupExpanded("settings", true);
   if (isAnalytics) setNavGroupExpanded("analytics", true);
 
-  document.querySelectorAll("[data-nav-group]").forEach((button) => {
+  document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && trtInspectorMode && state.currentPage === "trt") {
+    event.preventDefault();
+    closeMapInspector();
+  }
+});
+
+document.querySelectorAll("[data-nav-group]").forEach((button) => {
     const group = button.dataset.navGroup;
     const active = (group === "trt" && isTrt) || (group === "settings" && isSettings) || (group === "analytics" && isAnalytics);
     button.classList.toggle("active", active);
@@ -210,7 +220,10 @@ function clearSession() {
     trtMap = null;
     trtMarkerLayer = null;
     trtRegionLayer = null;
+    trtCityLabelLayer = null;
     trtRegionsLoading = false;
+    trtInspectorMode = "";
+    trtInspectorRegion = null;
   }
 }
 
@@ -345,10 +358,62 @@ function mountTrtToolsInMainSidebar() {
   trtTools.hidden = state.currentPage !== "trt";
 }
 
+
+function mountTrtCardInInspector() {
+  const card = $("trt-map-card");
+  const host = $("trt-inspector-card-host");
+  if (!card || !host || card.parentElement === host) return;
+  host.append(card);
+}
+
+function setMapInspectorView(mode) {
+  trtInspectorMode = mode || "";
+  const shell = $("app-shell");
+  const inspector = $("map-inspector");
+  if (!shell || !inspector) return;
+
+  const validMode = ["trt", "sales", "region"].includes(trtInspectorMode);
+  inspector.hidden = !validMode;
+  shell.classList.toggle("map-inspector-active", validMode);
+  shell.classList.toggle("map-inspector-trt", trtInspectorMode === "trt" || trtInspectorMode === "sales");
+  shell.classList.toggle("map-inspector-region", trtInspectorMode === "region");
+
+  $("trt-inspector-view").hidden = trtInspectorMode !== "trt";
+  $("trt-inspector-sales-view").hidden = trtInspectorMode !== "sales";
+  $("region-inspector-view").hidden = trtInspectorMode !== "region";
+
+  const kicker = $("map-inspector-kicker");
+  const status = $("map-inspector-status");
+  if (kicker) kicker.textContent = trtInspectorMode === "region" ? "Карточка региона" : trtInspectorMode === "sales" ? "Продажи ТРТ" : "Карточка ТРТ";
+  if (status) status.textContent = trtInspectorMode === "region" ? "ЦФО · СЗФО" : "";
+
+  const trtTools = document.querySelector(".main-sidebar-trt-tools");
+  if (trtTools) trtTools.hidden = validMode || state.currentPage !== "trt";
+
+  window.setTimeout(() => trtMap?.invalidateSize(), 220);
+}
+
+function closeMapInspector() {
+  if (trtSalesChart) {
+    trtSalesChart.destroy();
+    trtSalesChart = null;
+  }
+  trtInspectorRegion = null;
+  state.trtSelectedId = "";
+  if ($("trt-map-empty")) $("trt-map-empty").hidden = false;
+  setMapInspectorView("");
+}
+
+function openTrtInspector() {
+  mountTrtCardInInspector();
+  setMapInspectorView("trt");
+}
+
 function showPage(page, updateHash = true) {
   let nextPage = PAGES.has(page) ? page : "trt";
   if (["employees", "sales-import", "activity"].includes(nextPage) && !isSystemAdmin()) nextPage = "trt";
   state.currentPage = nextPage;
+  if (nextPage !== "trt" && trtInspectorMode) closeMapInspector();
   mountTrtToolsInMainSidebar();
   const trtTools = document.querySelector(".main-sidebar-trt-tools");
   if (trtTools) trtTools.hidden = nextPage !== "trt";
@@ -1813,6 +1878,51 @@ function normalizeText(value) {
     .replace(/ё/g, "е");
 }
 
+
+function cleanTrtCityName(value) {
+  return String(value || "")
+    .trim()
+    .replace(/^[\s\d-]+/, "")
+    .replace(/^(?:г(?:ород)?\.?|г\.\s*о\.|городской округ|пгт\.?|пос\.?|поселок|посёлок)\s*/i, "")
+    .replace(/\s+/g, " ")
+    .replace(/[.;]+$/, "")
+    .trim();
+}
+
+function trtPointCity(point) {
+  const explicit = point?.city || point?.town || point?.locality || point?.settlement;
+  if (explicit) return cleanTrtCityName(explicit);
+
+  const address = String(point?.address || "").trim();
+  if (!address) return "";
+
+  const prefixed = address.match(/(?:^|[,;]\s*|\s)(?:г(?:ород)?\.?|г\.\s*о\.)\s*([А-ЯЁA-Z][^,;]{1,50})/i);
+  if (prefixed?.[1]) {
+    const candidate = cleanTrtCityName(prefixed[1].split(/\b(?:ул\.?|улица|пр-т|проспект|ш\.?|шоссе|д\.?|дом|мкр\.?|микрорайон)\b/i)[0]);
+    if (candidate) return candidate;
+  }
+
+  const parts = address.split(/[,;]/).map((part) => cleanTrtCityName(part)).filter(Boolean);
+  const regionNorm = normalizeText(point?.region);
+  const blocked = /\b(?:обл(?:асть)?|край|республика|район|р-н|улица|ул\.?|проспект|пр-т|шоссе|ш\.?|дом|д\.?|корпус|корп\.?|строение|стр\.?|мкр\.?|микрорайон)\b/i;
+  for (const part of parts) {
+    const normalized = normalizeText(part);
+    if (!normalized || /^\d{5,6}$/.test(normalized)) continue;
+    if (normalized === "россия" || normalized === "рф") continue;
+    if (["москва", "санкт-петербург", "санкт петербург"].includes(normalized)) return part;
+    if (regionNorm && (normalized === regionNorm || regionNorm.includes(normalized) || normalized.includes(regionNorm))) continue;
+    if (blocked.test(part)) continue;
+    if (part.length > 2 && part.length < 55) return part;
+  }
+  return "";
+}
+
+function trtPointCityKey(point) {
+  const city = trtPointCity(point);
+  if (!city) return "";
+  return `${normalizeRegionName(point?.region)}|||${normalizeText(city)}`;
+}
+
 function numberOrZero(value) {
   const number = Number(value);
   return Number.isFinite(number) ? number : 0;
@@ -1882,6 +1992,7 @@ function trtSmartFilterTypeLabel(type) {
   return {
     direction: "Направление",
     manager: "Менеджер",
+    city: "Город",
     region: "Регион",
     point: "ТРТ",
   }[type] || "Фильтр";
@@ -1892,7 +2003,7 @@ function trtSmartFilterTokenKey(token) {
 }
 
 function sanitizeTrtSmartFilterToken(token) {
-  if (!token || !["direction", "manager", "region", "point"].includes(token.type)) return null;
+  if (!token || !["direction", "manager", "city", "region", "point"].includes(token.type)) return null;
   const value = String(token.value ?? "").trim();
   const label = String(token.label ?? "").trim();
   if (!value || !label) return null;
@@ -1923,12 +2034,14 @@ function pruneTrtSmartFilters() {
   }
   const validDirections = new Set(state.trtPoints.map((point) => String(point.direction || "")).filter(Boolean));
   const validManagers = new Set(state.trtPoints.map((point) => String(point.manager || "")).filter(Boolean));
+  const validCities = new Set(state.trtPoints.map(trtPointCityKey).filter(Boolean));
   const validRegions = new Set(state.trtPoints.map((point) => String(point.region || "")).filter(Boolean));
   const validPoints = new Set(state.trtPoints.map((point) => String(point.id)));
   const before = trtSmartFilters.length;
   trtSmartFilters = trtSmartFilters.filter((token) => {
     if (token.type === "direction") return validDirections.has(token.value);
     if (token.type === "manager") return validManagers.has(token.value);
+    if (token.type === "city") return validCities.has(token.value);
     if (token.type === "region") return validRegions.has(token.value);
     if (token.type === "point") return validPoints.has(token.value);
     return false;
@@ -1986,6 +2099,18 @@ function buildTrtSmartSuggestions(query) {
     add({ type: "manager", value, label: shortPersonName(value), meta: "Менеджер", score });
   });
 
+  const cityMap = new Map();
+  state.trtPoints.forEach((point) => {
+    const city = trtPointCity(point);
+    const key = trtPointCityKey(point);
+    if (!city || !key || cityMap.has(key)) return;
+    cityMap.set(key, { city, region: String(point.region || "").trim() });
+  });
+  cityMap.forEach(({ city, region }, value) => {
+    const score = trtSmartMatchScore(`${city} ${region}`, q);
+    add({ type: "city", value, label: city, meta: ["Город", region].filter(Boolean).join(" · "), score });
+  });
+
   const regions = [...new Set(state.trtPoints.map((point) => String(point.region || "").trim()).filter(Boolean))];
   regions.forEach((value) => {
     const score = trtSmartMatchScore(value, q);
@@ -1997,6 +2122,7 @@ function buildTrtSmartSuggestions(query) {
       ["ТРТ", point.client],
       ["Холдинг", point.holding],
       ["Адрес", point.address],
+      ["Город", trtPointCity(point)],
       ["Менеджер", shortPersonName(point.manager)],
       ["Направление", point.direction],
       ["Регион", point.region],
@@ -2025,7 +2151,7 @@ function buildTrtSmartSuggestions(query) {
     });
   });
 
-  const typePriority = { direction: 0, manager: 1, region: 2, point: 3 };
+  const typePriority = { direction: 0, manager: 1, city: 2, region: 3, point: 4 };
   const deduped = [];
   const seen = new Set();
   suggestions
@@ -2061,7 +2187,7 @@ function renderTrtSmartSuggestions(query = $("trt-smart-search-input")?.value ||
 
   trtSmartSuggestions = buildTrtSmartSuggestions(q);
   if (!trtSmartSuggestions.length) {
-    list.innerHTML = `<div class="trt-smart-search-empty">Ничего не найдено. Попробуйте название ТРТ, адрес, направление или фамилию менеджера.</div>`;
+    list.innerHTML = `<div class="trt-smart-search-empty">Ничего не найдено. Попробуйте город, регион, название ТРТ, адрес, направление или фамилию менеджера.</div>`;
     list.hidden = false;
     input.setAttribute("aria-expanded", "true");
     trtSmartSuggestionIndex = -1;
@@ -2098,7 +2224,7 @@ function renderTrtSmartFilterChips() {
   clear.hidden = trtSmartFilters.length === 0;
   input.placeholder = trtSmartFilters.length
     ? "Добавить фильтр…"
-    : "ТРТ, направление, менеджер или адрес";
+    : "ТРТ, город, регион, направление, менеджер или адрес";
 }
 
 function applyTrtSmartFilters() {
@@ -2210,6 +2336,47 @@ function saveTrtMapView() {
   }));
 }
 
+
+function buildTrtCityLabelData() {
+  const groups = new Map();
+  state.trtPoints.forEach((point) => {
+    const city = trtPointCity(point);
+    const key = trtPointCityKey(point);
+    const lat = Number(point?.lat);
+    const lon = Number(point?.lon);
+    if (!city || !key || !Number.isFinite(lat) || !Number.isFinite(lon)) return;
+    if (!groups.has(key)) groups.set(key, { key, city, region: String(point.region || ""), latSum: 0, lonSum: 0, count: 0 });
+    const row = groups.get(key);
+    row.latSum += lat;
+    row.lonSum += lon;
+    row.count += 1;
+  });
+  return [...groups.values()]
+    .map((row) => ({ ...row, lat: row.latSum / row.count, lon: row.lonSum / row.count }))
+    .sort((a, b) => b.count - a.count || a.city.localeCompare(b.city, "ru"));
+}
+
+function refreshTrtCityLabels() {
+  if (!trtMap || !trtCityLabelLayer || !state.trtLoaded) return;
+  trtCityLabelLayer.clearLayers();
+  const zoom = trtMap.getZoom();
+  const rows = buildTrtCityLabelData();
+  const limit = zoom <= 4 ? 18 : zoom === 5 ? 34 : zoom === 6 ? 60 : zoom === 7 ? 110 : rows.length;
+  rows.slice(0, limit).forEach((row) => {
+    const marker = L.marker([row.lat, row.lon], {
+      interactive: false,
+      keyboard: false,
+      zIndexOffset: -250,
+      icon: L.divIcon({
+        className: "trt-city-label-icon",
+        html: `<span class="trt-city-label">${escapeHtml(row.city)}</span>`,
+        iconSize: null,
+      }),
+    });
+    trtCityLabelLayer.addLayer(marker);
+  });
+}
+
 function initTrtMap() {
   if (trtMap || typeof window.L === "undefined") return;
 
@@ -2218,8 +2385,9 @@ function initTrtMap() {
     savedView?.center || TRT_MAP_DEFAULT_CENTER,
     savedView?.zoom ?? TRT_MAP_DEFAULT_ZOOM
   );
-  trtMap.on("moveend zoomend", saveTrtMapView);
-  L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
+  trtMap.on("moveend", saveTrtMapView);
+  trtMap.on("zoomend", () => { saveTrtMapView(); refreshTrtCityLabels(); });
+  L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png", {
     subdomains: "abcd",
     maxZoom: 20,
     attribution: "© OpenStreetMap contributors · © CARTO",
@@ -2249,6 +2417,8 @@ function initTrtMap() {
     : L.layerGroup();
 
   trtMarkerLayer.addTo(trtMap);
+  trtCityLabelLayer = L.layerGroup().addTo(trtMap);
+  refreshTrtCityLabels();
 }
 
 function filteredTrtPoints() {
@@ -2256,6 +2426,7 @@ function filteredTrtPoints() {
   const manager = $("trt-manager-filter").value;
   const smartDirections = trtSmartFilterValues("direction");
   const smartManagers = trtSmartFilterValues("manager");
+  const smartCities = trtSmartFilterValues("city");
   const smartRegions = trtSmartFilterValues("region");
   const smartPoints = trtSmartFilterValues("point");
 
@@ -2264,6 +2435,7 @@ function filteredTrtPoints() {
     if (manager && point.manager !== manager) return false;
     if (smartDirections.size && !smartDirections.has(String(point.direction || ""))) return false;
     if (smartManagers.size && !smartManagers.has(String(point.manager || ""))) return false;
+    if (smartCities.size && !smartCities.has(trtPointCityKey(point))) return false;
     if (smartRegions.size && !smartRegions.has(String(point.region || ""))) return false;
     if (smartPoints.size && !smartPoints.has(String(point.id))) return false;
     return true;
@@ -2284,8 +2456,10 @@ function openTrtCard(pointId, focusMap = true) {
   if (!point) return;
 
   state.trtSelectedId = String(point.id);
+  trtInspectorRegion = null;
   $("trt-map-empty").hidden = true;
   $("trt-map-card").hidden = false;
+  openTrtInspector();
   $("trt-card-name").textContent = point.client || point.holding || "ТРТ";
   $("trt-card-direction").textContent = point.direction || "—";
   $("trt-card-manager").textContent = shortPersonName(point.manager) || "—";
@@ -2432,6 +2606,169 @@ function normalizeRegionName(value) {
     .replace(/\s+/g, " ");
 }
 
+
+function stableMockHash(value) {
+  let hash = 2166136261;
+  const text = String(value || "");
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function stableMockRange(seed, min, max) {
+  const hash = stableMockHash(seed);
+  return min + (hash % Math.max(1, max - min + 1));
+}
+
+function trtPointsForRegionConfig(config, label = "") {
+  const aliases = [config?.key, label, ...(config?.pointAliases || [])]
+    .map(normalizeRegionName)
+    .filter(Boolean);
+  const aliasSet = new Set(aliases);
+  return state.trtPoints.filter((point) => aliasSet.has(normalizeRegionName(point.region)));
+}
+
+function mockTrtSalesMetrics(point) {
+  const seed = `${point?.id}|${point?.client}|${point?.address}`;
+  const plan = Math.round(stableMockRange(`${seed}|plan`, 45, 260) / 5) * 5;
+  const ratio = stableMockRange(`${seed}|ratio`, 68, 126) / 100;
+  const fact = Math.max(1, Math.round(plan * ratio));
+  return { plan, fact, completion: plan ? (fact / plan) * 100 : 0 };
+}
+
+function buildRegionMockModel(config, label) {
+  const points = trtPointsForRegionConfig(config, label);
+  const groups = new Map();
+  points.forEach((point) => {
+    const city = trtPointCity(point) || "Прочие населённые пункты";
+    const key = `${normalizeText(city)}|||${normalizeRegionName(point.region)}`;
+    if (!groups.has(key)) groups.set(key, { key, city, points: [] });
+    groups.get(key).points.push(point);
+  });
+
+  let cities = [...groups.values()];
+  if (!cities.length) {
+    cities = ["Административный центр", "Город 2", "Город 3"].map((city, index) => ({
+      key: `mock-${index}`,
+      city,
+      points: [],
+      synthetic: true,
+    }));
+  }
+
+  cities = cities.map((cityRow, cityIndex) => {
+    const trtRows = cityRow.points.map((point) => ({ point, ...mockTrtSalesMetrics(point) }));
+    if (!trtRows.length) {
+      const syntheticCount = stableMockRange(`${label}|${cityRow.city}|count`, 2, 5);
+      for (let index = 0; index < syntheticCount; index += 1) {
+        const plan = Math.round(stableMockRange(`${label}|${cityRow.city}|${index}|plan`, 50, 220) / 5) * 5;
+        const ratio = stableMockRange(`${label}|${cityRow.city}|${index}|ratio`, 72, 121) / 100;
+        const fact = Math.round(plan * ratio);
+        trtRows.push({
+          point: { id: `mock-${cityIndex}-${index}`, client: `ТРТ ${index + 1} · макет`, direction: index % 2 ? "Плитка" : "Обои", manager: "—" },
+          plan,
+          fact,
+          completion: plan ? (fact / plan) * 100 : 0,
+          synthetic: true,
+        });
+      }
+    }
+
+    const sales = trtRows.reduce((sum, row) => sum + row.fact, 0);
+    const targetShare = stableMockRange(`${label}|${cityRow.city}|share`, 8, 27) / 100;
+    const potential = Math.max(sales + 1, Math.round(sales / targetShare));
+    const basePopulation = stableMockRange(`${label}|${cityRow.city}|population`, 65000, 780000);
+    const population = Math.round((basePopulation + trtRows.length * 8500) / 1000) * 1000;
+    return {
+      ...cityRow,
+      trtRows,
+      sales,
+      potential,
+      share: potential ? (sales / potential) * 100 : 0,
+      population,
+    };
+  }).sort((a, b) => b.population - a.population || a.city.localeCompare(b.city, "ru"));
+
+  const sales = cities.reduce((sum, city) => sum + city.sales, 0);
+  const potential = cities.reduce((sum, city) => sum + city.potential, 0);
+  const population = Math.round(cities.reduce((sum, city) => sum + city.population, 0) * 1.18 / 1000) * 1000;
+  return {
+    label,
+    district: config?.district || "",
+    cities,
+    population,
+    sales,
+    potential,
+    share: potential ? (sales / potential) * 100 : 0,
+  };
+}
+
+function formatRegionMockNumber(value) {
+  return Math.round(Number(value || 0)).toLocaleString("ru-RU");
+}
+
+function renderRegionInspector(config, label) {
+  const model = buildRegionMockModel(config, label);
+  trtInspectorRegion = { config, label, model };
+  $("region-inspector-name").textContent = label;
+  $("region-inspector-population").textContent = `${formatRegionMockNumber(model.population)} чел.`;
+  $("region-inspector-sales").textContent = `${formatRegionMockNumber(model.sales)} ед.`;
+  $("region-inspector-potential").textContent = `${formatRegionMockNumber(model.potential)} ед.`;
+  $("region-inspector-share").textContent = `${model.share.toFixed(1).replace(".", ",")}%`;
+
+  $("region-inspector-city-body").innerHTML = model.cities.map((city, index) => {
+    const detailId = `region-city-detail-${index}`;
+    const trtRows = city.trtRows.map((row) => {
+      const pointTitle = row.point?.client || row.point?.holding || row.point?.address || "ТРТ";
+      const secondary = [row.point?.direction, shortPersonName(row.point?.manager)].filter((value) => value && value !== "—").join(" · ");
+      const completionClass = row.completion >= 100 ? "is-good" : row.completion >= 85 ? "is-mid" : "is-low";
+      return `<tr>
+        <td><strong>${escapeHtml(pointTitle)}</strong>${secondary ? `<small>${escapeHtml(secondary)}</small>` : ""}</td>
+        <td>${formatRegionMockNumber(row.plan)}</td>
+        <td>${formatRegionMockNumber(row.fact)}</td>
+        <td><span class="region-plan-pill ${completionClass}">${row.completion.toFixed(0)}%</span></td>
+      </tr>`;
+    }).join("");
+    return `<tr class="region-city-row">
+      <td>
+        <button class="region-city-expand" type="button" data-region-city-toggle="${detailId}" aria-expanded="false" aria-label="Развернуть список ТРТ">+</button>
+        <strong>${escapeHtml(city.city)}</strong>
+        <small>${city.trtRows.length} ТРТ</small>
+      </td>
+      <td>${formatRegionMockNumber(city.population)}</td>
+      <td>${formatRegionMockNumber(city.potential)}</td>
+      <td>${formatRegionMockNumber(city.sales)}</td>
+      <td><strong>${city.share.toFixed(1).replace(".", ",")}%</strong></td>
+    </tr>
+    <tr id="${detailId}" class="region-city-detail" hidden>
+      <td colspan="5">
+        <div class="region-trt-subtable-wrap">
+          <table class="region-trt-subtable">
+            <thead><tr><th>ТРТ</th><th>План / мес.</th><th>Факт / мес.<small>среднее за 3 мес.</small></th><th>Выполнение</th></tr></thead>
+            <tbody>${trtRows}</tbody>
+          </table>
+        </div>
+      </td>
+    </tr>`;
+  }).join("");
+  setMapInspectorView("region");
+}
+
+function openRegionInspector(feature, layer) {
+  const config = trtRegionConfig(feature);
+  if (!config) return;
+  const label = config.label || trtRegionFeatureName(feature) || config.key;
+  state.trtSelectedId = "";
+  renderRegionInspector(config, label);
+  if (layer?.getBounds && trtMap) {
+    window.setTimeout(() => {
+      try { trtMap.fitBounds(layer.getBounds().pad(0.06), { maxZoom: 7 }); } catch {}
+    }, 230);
+  }
+}
+
 function bindTrtRegion(feature, layer) {
   const config = trtRegionConfig(feature);
   if (!config) return;
@@ -2447,15 +2784,7 @@ function bindTrtRegion(feature, layer) {
       trtRegionLayer?.resetStyle(event.target);
     },
     click() {
-      const aliases = [config.key, label, ...(config.pointAliases || [])]
-        .map(normalizeRegionName)
-        .filter(Boolean);
-      const aliasSet = new Set(aliases);
-      const rows = state.trtPoints.filter((point) => aliasSet.has(normalizeRegionName(point.region)));
-      const coordinates = rows
-        .filter((point) => Number.isFinite(Number(point.lat)) && Number.isFinite(Number(point.lon)))
-        .map((point) => [Number(point.lat), Number(point.lon)]);
-      if (coordinates.length) trtMap.fitBounds(L.latLngBounds(coordinates).pad(0.08));
+      openRegionInspector(feature, layer);
     },
   });
 }
@@ -2521,6 +2850,7 @@ function renderTrtMap() {
   });
 
   updateTrtMapMode();
+  refreshTrtCityLabels();
   $("trt-visible-count").textContent = `Показано ТРТ: ${visible.length}`;
   $("trt-data-status").textContent = `Всего в базе: ${state.trtPoints.length}`;
   const searchCount = $("trt-search-result-count");
@@ -2595,6 +2925,7 @@ function setTrtMainView(view) {
   if (!mapView) {
     closeTrtSmartSuggestions();
     setTrtDisplayPanel(false);
+    if (trtInspectorMode) closeMapInspector();
   }
 
   closeAnalyticsFormatMenu();
@@ -3080,83 +3411,85 @@ function openTrtSales() {
   const ytd2026 = sumSales(sales2026, 6);
   const yoy = ytd2025 ? ((ytd2026 - ytd2025) / ytd2025) * 100 : null;
 
-  $("trt-sales-modal-title").textContent = `Продажи: ${point.client || point.holding || "ТРТ"}`;
-  $("trt-sales-modal-subtitle").textContent = `Сравнение 2025 и 2026 годов, единица: ${unit}`;
-  $("trt-sales-ytd-2025").textContent = formatSales(ytd2025, unit);
-  $("trt-sales-ytd-2026").textContent = formatSales(ytd2026, unit);
-  $("trt-sales-yoy").textContent = yoy === null
+  $("trt-inspector-sales-title").textContent = `Продажи: ${point.client || point.holding || "ТРТ"}`;
+  $("trt-inspector-sales-subtitle").textContent = `Сравнение 2025 и 2026 годов · ${unit}`;
+  $("trt-inspector-sales-ytd-2025").textContent = formatSales(ytd2025, unit);
+  $("trt-inspector-sales-ytd-2026").textContent = formatSales(ytd2026, unit);
+  $("trt-inspector-sales-yoy").textContent = yoy === null
     ? "—"
     : `${yoy >= 0 ? "+" : ""}${yoy.toFixed(1).replace(".", ",")}%`;
 
-  const yoyBox = $("trt-sales-yoy-box");
+  const yoyBox = $("trt-inspector-sales-yoy-box");
   yoyBox.classList.remove("sales-yoy-positive", "sales-yoy-negative", "sales-yoy-neutral");
   if (yoy === null || yoy === 0) yoyBox.classList.add("sales-yoy-neutral");
   else if (yoy > 0) yoyBox.classList.add("sales-yoy-positive");
   else yoyBox.classList.add("sales-yoy-negative");
 
-  if (trtSalesChart) trtSalesChart.destroy();
-  trtSalesChart = new Chart($("trt-sales-chart"), {
-    type: "bar",
-    data: {
-      labels: analyticsMonthLabels(),
-      datasets: [
-        {
-          label: "2025",
-          data: sales2025,
-          backgroundColor: "#b9dcff",
-          borderColor: "#8fc5f5",
-          borderWidth: 1,
-          borderRadius: 5,
-          maxBarThickness: 34,
-        },
-        {
-          label: "2026",
-          data: sales2026,
-          backgroundColor: "#1677ff",
-          borderColor: "#0b5ed7",
-          borderWidth: 1,
-          borderRadius: 5,
-          maxBarThickness: 34,
-        },
-      ],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      animation: { duration: 180, easing: "linear" },
-      interaction: { mode: "index", intersect: false },
-      datasets: { bar: { categoryPercentage: 0.72, barPercentage: 0.86 } },
-      plugins: {
-        legend: { position: "top", align: "end" },
-        tooltip: {
-          callbacks: {
-            label(context) {
-              return `${context.dataset.label}: ${Math.round(numberOrZero(context.parsed.y)).toLocaleString("ru-RU")} ${unit}`;
+  setMapInspectorView("sales");
+  window.setTimeout(() => {
+    if (trtSalesChart) trtSalesChart.destroy();
+    trtSalesChart = new Chart($("trt-inspector-sales-chart"), {
+      type: "bar",
+      data: {
+        labels: analyticsMonthLabels(),
+        datasets: [
+          {
+            label: "2025",
+            data: sales2025,
+            backgroundColor: "#c9deef",
+            borderColor: "#a9c7df",
+            borderWidth: 1,
+            borderRadius: 5,
+            maxBarThickness: 28,
+          },
+          {
+            label: "2026",
+            data: sales2026,
+            backgroundColor: "#384E86",
+            borderColor: "#2b3f71",
+            borderWidth: 1,
+            borderRadius: 5,
+            maxBarThickness: 28,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: { duration: 180, easing: "linear" },
+        interaction: { mode: "index", intersect: false },
+        datasets: { bar: { categoryPercentage: 0.72, barPercentage: 0.86 } },
+        plugins: {
+          legend: { position: "top", align: "end" },
+          tooltip: {
+            callbacks: {
+              label(context) {
+                return `${context.dataset.label}: ${Math.round(numberOrZero(context.parsed.y)).toLocaleString("ru-RU")} ${unit}`;
+              },
             },
           },
         },
-      },
-      scales: {
-        y: {
-          beginAtZero: true,
-          grace: "10%",
-          ticks: {
-            callback(value) {
-              return Math.round(Number(value)).toLocaleString("ru-RU");
-            },
+        scales: {
+          y: {
+            beginAtZero: true,
+            grace: "10%",
+            ticks: { callback(value) { return Math.round(Number(value)).toLocaleString("ru-RU"); } },
+            title: { display: true, text: unit },
           },
-          title: { display: true, text: unit },
+          x: { title: { display: true, text: "Месяц" } },
         },
-        x: { title: { display: true, text: "Месяц" } },
       },
-    },
-  });
-
-  $("trt-sales-modal").hidden = false;
+    });
+  }, 30);
 }
 
 function closeTrtSales() {
-  $("trt-sales-modal").hidden = true;
+  if (trtSalesChart) {
+    trtSalesChart.destroy();
+    trtSalesChart = null;
+  }
+  if (selectedTrtPoint()) setMapInspectorView("trt");
+  else closeMapInspector();
 }
 
 
@@ -3637,6 +3970,18 @@ $("trt-sales-button").addEventListener("click", openTrtSales);
 $("trt-sales-modal-close").addEventListener("click", closeTrtSales);
 $("trt-sales-modal").addEventListener("click", (event) => {
   if (event.target === $("trt-sales-modal")) closeTrtSales();
+});
+$("map-inspector-close")?.addEventListener("click", closeMapInspector);
+$("trt-inspector-sales-back")?.addEventListener("click", closeTrtSales);
+$("region-inspector-city-body")?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-region-city-toggle]");
+  if (!button) return;
+  const detail = $(button.dataset.regionCityToggle);
+  if (!detail) return;
+  const expanded = detail.hidden;
+  detail.hidden = !expanded;
+  button.textContent = expanded ? "−" : "+";
+  button.setAttribute("aria-expanded", expanded ? "true" : "false");
 });
 
 document.querySelectorAll("[data-nav-group]").forEach((button) => {
