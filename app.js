@@ -4451,16 +4451,175 @@ function analysisManualMatchControl(kind, row) {
   return `<select class="analysis-manual-match-select" data-analysis-manual-select="${escapeHtml(kind)}" data-source-row="${escapeHtml(row.rowNumber)}"><option value="">Выбрать ТРТ вручную…</option>${options}</select>`;
 }
 
+
+const ANALYSIS_PREVIEW_CHUNK_SIZE = 25;
+const ANALYSIS_COMMIT_CHUNK_SIZE = 25;
+
+function analysisChunkArray(items, size) {
+  const source = Array.isArray(items) ? items : [];
+  const chunks = [];
+  for (let index = 0; index < source.length; index += size) chunks.push(source.slice(index, index + size));
+  return chunks;
+}
+
+function analysisSourcePeriods(kind, rows) {
+  const result = [];
+  const seen = new Set();
+  (rows || []).forEach((row) => {
+    const direction = marketDirectionKey(row.direction);
+    (row.months || []).forEach((item) => {
+      const year = Number(item.year);
+      const month = Number(item.month);
+      if (!year || !month) return;
+      const key = kind === "trt_plan" ? `${year}-${month}-${direction}` : `${year}-${month}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      result.push(kind === "trt_plan" ? { year, month, direction } : { year, month });
+    });
+  });
+  return result;
+}
+
+function mergeAnalysisPreviewPayloads(kind, payloads, periodsExisting, sourceRows) {
+  const summary = {
+    totalRows: 0, matchedRows: 0, unmatchedRows: 0, invalidRows: 0, skippedRows: 0,
+    totalQuantity: 0, vogQuantity: 0, negativeNormalizedRows: 0,
+    periodCount: analysisSourcePeriods(kind, sourceRows).length,
+    sourceRowCount: Array.isArray(sourceRows) ? sourceRows.length : 0,
+  };
+  const rows = [];
+  let monthlyRows = 0;
+  (payloads || []).forEach((payload) => {
+    const part = payload?.summary || {};
+    ["totalRows","matchedRows","unmatchedRows","invalidRows","skippedRows","totalQuantity","vogQuantity","negativeNormalizedRows"].forEach((key) => {
+      summary[key] += Number(part[key] || 0);
+    });
+    rows.push(...(Array.isArray(payload?.rows) ? payload.rows : []));
+    monthlyRows += Number(payload?.transport?.monthlyRows || 0);
+  });
+  summary.actualShare = summary.totalQuantity > 0 ? Math.round(summary.vogQuantity / summary.totalQuantity * 10000) / 100 : 0;
+  return {
+    kind,
+    periodsExisting: Array.isArray(periodsExisting) ? periodsExisting : [],
+    summary,
+    rows,
+    previewRowCount: rows.length,
+    transport: {
+      protocol: "compact-months-v2-batched",
+      sourceRows: summary.sourceRowCount,
+      monthlyRows,
+      chunks: (payloads || []).length,
+    },
+  };
+}
+
+async function requestAnalysisPreviewBatched(kind, fileName, rows, progress) {
+  const chunks = analysisChunkArray(rows, ANALYSIS_PREVIEW_CHUNK_SIZE);
+  const payloads = [];
+  for (let index = 0; index < chunks.length; index += 1) {
+    if (progress) progress.textContent = `Проверка файла… ${index + 1} / ${chunks.length}`;
+    const payload = await api("/admin/sales-import", {
+      method: "POST",
+      timeout: 90000,
+      body: JSON.stringify({
+        scope: "market_analysis",
+        operation: "preview",
+        kind,
+        fileName,
+        checkPeriods: false,
+        rows: chunks[index],
+      }),
+    });
+    payloads.push(payload);
+  }
+  if (progress) progress.textContent = "Проверка периодов…";
+  const periodPayload = await api("/admin/sales-import", {
+    method: "POST",
+    timeout: 60000,
+    body: JSON.stringify({
+      scope: "market_analysis",
+      operation: "periods",
+      kind,
+      periods: analysisSourcePeriods(kind, rows),
+    }),
+  });
+  return mergeAnalysisPreviewPayloads(kind, payloads, periodPayload?.periodsExisting || [], rows);
+}
+
+function analysisPreviewMatchMap(item) {
+  const result = new Map();
+  (item?.preview?.rows || []).forEach((row) => {
+    const key = `${Number(row.rowNumber || 0)}|${marketDirectionKey(row.direction)}`;
+    if (row.status === "matched" && row.pointId) result.set(key, String(row.pointId));
+  });
+  return result;
+}
+
+function analysisResolvedRowsForCommit(kind, item) {
+  const matched = analysisPreviewMatchMap(item);
+  return (item?.rows || []).map((row) => {
+    const key = `${Number(row.rowNumber || 0)}|${marketDirectionKey(row.direction)}`;
+    const resolvedPointId = matched.get(key);
+    if (!resolvedPointId) return null;
+    return { ...row, resolvedPointId };
+  }).filter(Boolean);
+}
+
+function analysisCommitChunks(kind, rows) {
+  if (kind !== "trt_plan") return analysisChunkArray(rows, ANALYSIS_COMMIT_CHUNK_SIZE);
+  const groups = new Map();
+  (rows || []).forEach((row) => {
+    const key = `${marketDirectionKey(row.direction)}|${row.resolvedPointId || ""}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(row);
+  });
+  const chunks = [];
+  let current = [];
+  for (const group of groups.values()) {
+    if (current.length && current.length + group.length > ANALYSIS_COMMIT_CHUNK_SIZE) {
+      chunks.push(current);
+      current = [];
+    }
+    current.push(...group);
+    if (current.length >= ANALYSIS_COMMIT_CHUNK_SIZE) {
+      chunks.push(current);
+      current = [];
+    }
+  }
+  if (current.length) chunks.push(current);
+  return chunks;
+}
+
+function mergeAnalysisCommitPeriods(kind, responses) {
+  const map = new Map();
+  (responses || []).forEach((response) => {
+    (response?.periods || []).forEach((item) => {
+      const direction = marketDirectionKey(item.direction);
+      const key = kind === "trt_plan" ? `${item.year}-${item.month}-${direction}` : `${item.year}-${item.month}`;
+      const current = map.get(key) || {
+        year: Number(item.year), month: Number(item.month),
+        direction: kind === "trt_plan" ? direction : "",
+        rowCount: 0, totalQuantity: 0, vogQuantity: 0,
+      };
+      current.rowCount += Number(item.rowCount || 0);
+      current.totalQuantity += Number(item.totalQuantity || 0);
+      current.vogQuantity += Number(item.vogQuantity || 0);
+      map.set(key, current);
+    });
+  });
+  return [...map.values()];
+}
+
 async function repreviewAnalysisImport(kind) {
   const panel = analysisPanel(kind); const item = ANALYSIS_IMPORT_STATE[kind];
   if (!panel || !item.rows.length) return;
   const progress = panel.querySelector("[data-analysis-progress]"); const error = panel.querySelector("[data-analysis-error]");
   error.hidden = true; progress.hidden = false;
   try {
-    const payload = await api("/admin/sales-import", { method: "POST", timeout: 150000, body: JSON.stringify({ scope: "market_analysis", operation: "preview", kind, fileName: item.fileName, rows: item.rows }) });
+    const payload = await requestAnalysisPreviewBatched(kind, item.fileName, item.rows, progress);
     renderAnalysisImportPreview(kind, payload);
   } catch (err) { error.textContent = err.message; error.hidden = false; }
-  finally { progress.hidden = true; }
+  finally { progress.hidden = true; progress.textContent = "Проверка файла…"; }
 }
 
 function renderAnalysisImportPreview(kind, payload) {
@@ -4526,12 +4685,12 @@ async function previewAnalysisImport(kind) {
     await ensureTrtData();
     const rows = await readAnalysisImportFile(file, kind);
     ANALYSIS_IMPORT_STATE[kind] = { rows, preview: null, fileName: file.name };
-    const payload = await api("/admin/sales-import", { method: "POST", timeout: 150000, body: JSON.stringify({ scope: "market_analysis", operation: "preview", kind, fileName: file.name, rows }) });
+    const payload = await requestAnalysisPreviewBatched(kind, file.name, rows, progress);
     renderAnalysisImportPreview(kind, payload);
   } catch (err) {
     error.textContent = err.message; error.hidden = false;
   } finally {
-    progress.hidden = true; updateAnalysisPreviewButton(kind);
+    progress.hidden = true; progress.textContent = "Проверка файла…"; updateAnalysisPreviewButton(kind);
   }
 }
 
@@ -4543,9 +4702,52 @@ async function commitAnalysisImport(kind) {
   const label = kind === "trt_plan" ? "планы ТРТ" : "DIY sell-out";
   if (!window.confirm(replace ? `Загрузить новую активную версию «${label}» для месяцев из файла? Предыдущие версии останутся в истории.` : `Загрузить ${label}?`)) return;
   const button = panel.querySelector("[data-analysis-commit]"); const error = panel.querySelector("[data-analysis-error]");
-  error.hidden = true; button.disabled = true; const original = button.textContent; button.textContent = "Загрузка…";
+  error.hidden = true; button.disabled = true; const original = button.textContent; button.textContent = "Подготовка…";
   try {
-    const result = await api("/admin/sales-import", { method: "POST", timeout: 150000, body: JSON.stringify({ scope: "market_analysis", operation: "commit", kind, fileName: item.fileName, replace, rows: item.rows }) });
+    const resolvedRows = analysisResolvedRowsForCommit(kind, item);
+    if (!resolvedRows.length) throw new Error("Нет сопоставленных строк для загрузки.");
+    const begin = await api("/admin/sales-import", {
+      method: "POST",
+      timeout: 60000,
+      body: JSON.stringify({ scope: "market_analysis", operation: "commit_begin", kind, fileName: item.fileName }),
+    });
+    const importId = begin.importId;
+    if (!importId) throw new Error("Сервер не создал пакет загрузки.");
+
+    const chunks = analysisCommitChunks(kind, resolvedRows);
+    const responses = [];
+    for (let index = 0; index < chunks.length; index += 1) {
+      button.textContent = `Загрузка ${index + 1} / ${chunks.length}…`;
+      const response = await api("/admin/sales-import", {
+        method: "POST",
+        timeout: 90000,
+        body: JSON.stringify({
+          scope: "market_analysis",
+          operation: "commit_chunk",
+          kind,
+          importId,
+          fileName: item.fileName,
+          rows: chunks[index],
+        }),
+      });
+      responses.push(response);
+    }
+
+    button.textContent = "Активация…";
+    const periods = mergeAnalysisCommitPeriods(kind, responses);
+    const result = await api("/admin/sales-import", {
+      method: "POST",
+      timeout: 90000,
+      body: JSON.stringify({
+        scope: "market_analysis",
+        operation: "commit_finish",
+        kind,
+        importId,
+        fileName: item.fileName,
+        replace,
+        periods,
+      }),
+    });
     state.marketAnalysis = { loaded: false, catalog: null, plans: [], diy: [] };
     showToast(result.message || "Данные загружены."); resetAnalysisImport(kind, true);
   } catch (err) {
