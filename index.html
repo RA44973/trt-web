@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#384e86">
-  <meta name="vog-web-version" content="8.8">
+  <meta name="vog-web-version" content="8.9">
   <title>ТК ВОГ Офис</title>
   <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=20260810-gdebenz-v8-0">
   <link rel="apple-touch-icon" sizes="192x192" href="icon-192.png?v=20260810-gdebenz-v8-0">
@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
-  <link rel="stylesheet" href="styles.css?v=20260810-ui-v8-8">
+  <link rel="stylesheet" href="styles.css?v=20260811-region-v8-9">
 </head>
 <body>
   <div id="toast" class="toast" hidden></div>
@@ -114,33 +114,110 @@
       </section>
 
       <section id="region-inspector-view" class="map-inspector-view region-inspector-view" hidden>
-        <div class="region-inspector-title-row">
-          <div>
-            <span class="region-mock-badge">Макет данных</span>
+        <div class="region-dashboard-hero">
+          <div class="region-dashboard-heading">
+            <div class="region-dashboard-title-line">
+              <span class="region-mock-badge">Макет данных</span>
+              <span id="region-inspector-district" class="region-district-pill">ЦФО · СЗФО</span>
+            </div>
             <h2 id="region-inspector-name">Регион</h2>
-            <p class="map-inspector-muted">Население: <strong id="region-inspector-population">—</strong></p>
+            <p class="region-dashboard-subtitle">Население <strong id="region-inspector-population">—</strong> · Аналитика рынка и присутствия ВОГ</p>
           </div>
-          <div class="region-top-metrics">
-            <article><span>Средние продажи ВОГ / мес.<small>последние 3 месяца</small></span><strong id="region-inspector-sales">—</strong></article>
-            <article><span>Потенциал / мес.</span><strong id="region-inspector-potential">—</strong></article>
-            <article><span>Доля ВОГ</span><strong id="region-inspector-share">—</strong></article>
+          <div id="region-product-toggle" class="region-product-toggle" role="group" aria-label="Продукт">
+            <button class="is-active" type="button" data-region-product="tiles">Плитка</button>
+            <button type="button" data-region-product="wallpaper">Обои</button>
           </div>
         </div>
-        <p class="region-inspector-note">Цифры в этой карточке пока демонстрационные. Структура и взаимодействие уже рабочие; далее подключим таблицу с реальными данными.</p>
-        <div class="region-table-wrap">
-          <table class="region-city-table">
-            <thead>
-              <tr>
-                <th>Город</th>
-                <th>Население</th>
-                <th>Потенциал / мес.</th>
-                <th>Продажи ВОГ / мес.<small>среднее за 3 мес.</small></th>
-                <th>Доля ВОГ</th>
-              </tr>
-            </thead>
-            <tbody id="region-inspector-city-body"></tbody>
-          </table>
+
+        <div class="region-kpi-grid" aria-label="Ключевые показатели региона">
+          <article class="region-kpi-card region-kpi-primary"><span>Рынок региона / мес.</span><strong id="region-market-total">—</strong><small id="region-market-product">Плитка · макет</small></article>
+          <article class="region-kpi-card"><span>Продажи ВОГ / мес.</span><strong id="region-vog-sales">—</strong><small>во всех каналах</small></article>
+          <article class="region-kpi-card"><span>Доля ВОГ в регионе</span><strong id="region-vog-share">—</strong><small id="region-vog-share-caption">от общего рынка</small></article>
+          <article class="region-kpi-card"><span>ТРТ в регионе</span><strong id="region-trt-count">—</strong><small id="region-city-count">— городов</small></article>
         </div>
+
+        <div class="region-dashboard-grid region-dashboard-grid-top">
+          <section class="region-dashboard-card region-market-card">
+            <div class="region-section-head">
+              <div><span class="region-section-eyebrow">Структура рынка</span><h3>Каналы продаж</h3></div>
+              <span class="region-section-note">доля от рынка региона</span>
+            </div>
+            <div class="region-market-layout">
+              <div id="region-market-donut" class="region-market-donut" aria-label="Структура рынка">
+                <div class="region-market-donut-center"><span>Рынок</span><strong id="region-donut-total">—</strong><small>м² / мес.</small></div>
+              </div>
+              <div class="region-channel-list">
+                <article class="region-channel-row region-channel-diy">
+                  <span class="region-channel-dot"></span>
+                  <div><strong>DIY</strong><small id="region-diy-volume">—</small></div>
+                  <b id="region-diy-market-share">—</b>
+                </article>
+                <article class="region-channel-row region-channel-traditional">
+                  <span class="region-channel-dot"></span>
+                  <div><strong>Традиционная розница</strong><small id="region-traditional-volume">—</small></div>
+                  <b id="region-traditional-market-share">—</b>
+                </article>
+                <article class="region-channel-row region-channel-other">
+                  <span class="region-channel-dot"></span>
+                  <div><strong>Прочее</strong><small id="region-other-volume">—</small></div>
+                  <b id="region-other-market-share">—</b>
+                </article>
+              </div>
+            </div>
+          </section>
+
+          <section class="region-dashboard-card region-vog-position-card">
+            <div class="region-section-head">
+              <div><span class="region-section-eyebrow">Позиция ВОГ</span><h3>Доля внутри каналов</h3></div>
+              <span id="region-diy-goal-status" class="region-goal-status">Цель DIY —</span>
+            </div>
+            <div class="region-vog-channel-stack">
+              <article>
+                <div class="region-vog-channel-head"><span>DIY</span><strong id="region-diy-vog-share">—</strong></div>
+                <div class="region-progress-track"><i id="region-diy-vog-progress"></i><em id="region-diy-target-marker"></em></div>
+                <div class="region-vog-channel-foot"><span id="region-diy-vog-sales">—</span><small id="region-diy-target-caption">цель —</small></div>
+              </article>
+              <article>
+                <div class="region-vog-channel-head"><span>Традиционная розница</span><strong id="region-traditional-vog-share">—</strong></div>
+                <div class="region-progress-track"><i id="region-traditional-vog-progress"></i></div>
+                <div class="region-vog-channel-foot"><span id="region-traditional-vog-sales">—</span><small>продажи ВОГ / мес.</small></div>
+              </article>
+              <article class="region-vog-total-row">
+                <span>Итоговая доля ВОГ</span><strong id="region-vog-share-repeat">—</strong>
+              </article>
+            </div>
+          </section>
+        </div>
+
+        <section class="region-dashboard-card region-diy-card">
+          <div class="region-section-head">
+            <div><span class="region-section-eyebrow">Ключевой канал</span><h3>DIY в регионе</h3></div>
+            <span id="region-diy-network-summary" class="region-section-note">—</span>
+          </div>
+          <div class="region-diy-table-wrap">
+            <table class="region-diy-table">
+              <thead><tr><th>Сеть</th><th>Магазинов</th><th>Продажи сети / мес.</th><th>Продажи ВОГ / мес.</th><th>Доля ВОГ</th><th>Цель</th></tr></thead>
+              <tbody id="region-diy-body"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="region-dashboard-card region-cities-card">
+          <div class="region-section-head">
+            <div><span class="region-section-eyebrow">География</span><h3>Города и традиционная розница</h3></div>
+            <span class="region-section-note">+ раскрывает ТРТ города</span>
+          </div>
+          <div class="region-table-wrap">
+            <table class="region-city-table">
+              <thead>
+                <tr><th>Город</th><th>ТРТ</th><th>Рынок розницы / мес.</th><th>Продажи ВОГ / мес.</th><th>Доля ВОГ</th></tr>
+              </thead>
+              <tbody id="region-inspector-city-body"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <p class="region-inspector-note">Все рыночные показатели в этой карточке демонстрационные. Сейчас проверяем структуру, визуальную иерархию и сценарий работы; реальные цифры подключим после утверждения макета.</p>
       </section>
     </aside>
 
@@ -1069,6 +1146,6 @@
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <script src="app.js?v=20260810-ui-v8-8"></script>
+  <script src="app.js?v=20260811-region-v8-9"></script>
 </body>
 </html>

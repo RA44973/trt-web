@@ -1,6 +1,6 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.8";
+const VOG_WEB_VERSION = "8.9";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
@@ -44,6 +44,8 @@ let trtCityLabelLayer = null;
 let trtRegionsLoading = false;
 let trtInspectorMode = "";
 let trtInspectorRegion = null;
+let trtRegionProduct = "tiles";
+let trtRegionMapReturnView = null;
 let trtSmartFilters = [];
 let trtSmartSuggestions = [];
 let trtSmartSuggestionIndex = -1;
@@ -387,15 +389,22 @@ function setMapInspectorView(mode) {
 }
 
 function closeMapInspector() {
+  const returnView = trtInspectorMode === "region" ? trtRegionMapReturnView : null;
   if (trtCardSalesChart) {
     trtCardSalesChart.destroy();
     trtCardSalesChart = null;
   }
   if ($("trt-sales-modal") && !$("trt-sales-modal").hidden) closeTrtSales();
   trtInspectorRegion = null;
+  trtRegionMapReturnView = null;
   state.trtSelectedId = "";
   if ($("trt-map-empty")) $("trt-map-empty").hidden = false;
   setMapInspectorView("");
+  if (returnView && trtMap) {
+    window.setTimeout(() => {
+      try { trtMap.setView(returnView.center, returnView.zoom, { animate: false }); } catch {}
+    }, 40);
+  }
 }
 
 function openTrtInspector() {
@@ -2849,8 +2858,26 @@ function mockTrtSalesMetrics(point) {
   return { plan, fact, completion: plan ? (fact / plan) * 100 : 0 };
 }
 
-function buildRegionMockModel(config, label) {
-  const points = trtPointsForRegionConfig(config, label);
+function regionRoundMarket(value) {
+  return Math.round(Number(value || 0) / 1000) * 1000;
+}
+
+function regionCompactNumber(value) {
+  const number = Number(value || 0);
+  if (Math.abs(number) >= 1000000) return `${(number / 1000000).toFixed(number >= 10000000 ? 0 : 1).replace(".", ",")} млн`;
+  if (Math.abs(number) >= 1000) return `${Math.round(number / 1000).toLocaleString("ru-RU")} тыс.`;
+  return Math.round(number).toLocaleString("ru-RU");
+}
+
+function regionPercent(value, digits = 1) {
+  return `${Number(value || 0).toFixed(digits).replace(".", ",")}%`;
+}
+
+function buildRegionMockModel(config, label, product = trtRegionProduct) {
+  const productLabel = product === "wallpaper" ? "Обои" : "Плитка";
+  const allPoints = trtPointsForRegionConfig(config, label);
+  const matchingPoints = allPoints.filter((point) => normalizeText(point?.direction).includes(normalizeText(productLabel)));
+  const points = matchingPoints.length ? matchingPoints : allPoints;
   const groups = new Map();
   points.forEach((point) => {
     const city = trtPointCity(point) || "Прочие населённые пункты";
@@ -2872,13 +2899,13 @@ function buildRegionMockModel(config, label) {
   cities = cities.map((cityRow, cityIndex) => {
     const trtRows = cityRow.points.map((point) => ({ point, ...mockTrtSalesMetrics(point) }));
     if (!trtRows.length) {
-      const syntheticCount = stableMockRange(`${label}|${cityRow.city}|count`, 2, 5);
+      const syntheticCount = stableMockRange(`${label}|${product}|${cityRow.city}|count`, 4, 10);
       for (let index = 0; index < syntheticCount; index += 1) {
-        const plan = Math.round(stableMockRange(`${label}|${cityRow.city}|${index}|plan`, 50, 220) / 5) * 5;
-        const ratio = stableMockRange(`${label}|${cityRow.city}|${index}|ratio`, 72, 121) / 100;
+        const plan = Math.round(stableMockRange(`${label}|${product}|${cityRow.city}|${index}|plan`, 50, 220) / 5) * 5;
+        const ratio = stableMockRange(`${label}|${product}|${cityRow.city}|${index}|ratio`, 72, 121) / 100;
         const fact = Math.round(plan * ratio);
         trtRows.push({
-          point: { id: `mock-${cityIndex}-${index}`, client: `ТРТ ${index + 1} · макет`, direction: index % 2 ? "Плитка" : "Обои", manager: "—" },
+          point: { id: `mock-${cityIndex}-${index}`, client: `ТРТ ${index + 1} · макет`, direction: productLabel, manager: "—" },
           plan,
           fact,
           completion: plan ? (fact / plan) * 100 : 0,
@@ -2887,32 +2914,79 @@ function buildRegionMockModel(config, label) {
       }
     }
 
-    const sales = trtRows.reduce((sum, row) => sum + row.fact, 0);
-    const targetShare = stableMockRange(`${label}|${cityRow.city}|share`, 8, 27) / 100;
-    const potential = Math.max(sales + 1, Math.round(sales / targetShare));
     const basePopulation = stableMockRange(`${label}|${cityRow.city}|population`, 65000, 780000);
     const population = Math.round((basePopulation + trtRows.length * 8500) / 1000) * 1000;
-    return {
-      ...cityRow,
-      trtRows,
-      sales,
-      potential,
-      share: potential ? (sales / potential) * 100 : 0,
-      population,
-    };
+    return { ...cityRow, trtRows, population };
   }).sort((a, b) => b.population - a.population || a.city.localeCompare(b.city, "ru"));
 
-  const sales = cities.reduce((sum, city) => sum + city.sales, 0);
-  const potential = cities.reduce((sum, city) => sum + city.potential, 0);
-  const population = Math.round(cities.reduce((sum, city) => sum + city.population, 0) * 1.18 / 1000) * 1000;
+  const cityPopulation = Math.max(1, cities.reduce((sum, city) => sum + city.population, 0));
+  const population = Math.round(cityPopulation * 1.18 / 1000) * 1000;
+  const marketTotal = regionRoundMarket(stableMockRange(`${label}|${product}|market`, 720000, 1450000));
+  const diyMarketShare = stableMockRange(`${label}|${product}|diy-market-share`, 36, 52);
+  const otherMarketShare = stableMockRange(`${label}|${product}|other-market-share`, 4, 8);
+  const traditionalMarketShare = 100 - diyMarketShare - otherMarketShare;
+  const diyVolume = regionRoundMarket(marketTotal * diyMarketShare / 100);
+  const traditionalVolume = regionRoundMarket(marketTotal * traditionalMarketShare / 100);
+  const otherVolume = Math.max(0, marketTotal - diyVolume - traditionalVolume);
+
+  const diyVogShare = stableMockRange(`${label}|${product}|diy-vog-share`, 22, 38) + stableMockRange(`${label}|${product}|diy-decimal`, 0, 9) / 10;
+  const traditionalVogShare = stableMockRange(`${label}|${product}|trad-vog-share`, 12, 26) + stableMockRange(`${label}|${product}|trad-decimal`, 0, 9) / 10;
+  const otherVogShare = stableMockRange(`${label}|${product}|other-vog-share`, 5, 12);
+  const diyVogSales = regionRoundMarket(diyVolume * diyVogShare / 100);
+  const traditionalVogSales = regionRoundMarket(traditionalVolume * traditionalVogShare / 100);
+  const otherVogSales = regionRoundMarket(otherVolume * otherVogShare / 100);
+  const vogSales = diyVogSales + traditionalVogSales + otherVogSales;
+  const vogShare = marketTotal ? (vogSales / marketTotal) * 100 : 0;
+  const diyTargetShare = 30;
+
+  const networkNames = ["Лемана ПРО", "Петрович", "Максидом"];
+  const networkWeights = [0.42, 0.33, 0.25];
+  const networkShareOffsets = [-2.8, 4.2, -1.1];
+  const diyNetworks = networkNames.map((name, index) => {
+    const volume = index === networkNames.length - 1
+      ? Math.max(0, diyVolume - networkWeights.slice(0, -1).reduce((sum, weight) => sum + regionRoundMarket(diyVolume * weight), 0))
+      : regionRoundMarket(diyVolume * networkWeights[index]);
+    const vogShare = Math.max(5, diyVogShare + networkShareOffsets[index]);
+    const vogSales = regionRoundMarket(volume * vogShare / 100);
+    const stores = stableMockRange(`${label}|${name}|stores`, index === 0 ? 3 : 1, index === 0 ? 7 : 5);
+    return { name, volume, vogShare, vogSales, stores, target: diyTargetShare };
+  });
+
+  let rawTraditionalVog = 0;
+  cities.forEach((city) => {
+    city.market = regionRoundMarket(traditionalVolume * city.population / cityPopulation);
+    city.share = stableMockRange(`${label}|${product}|${city.city}|vog-share`, 10, 29) + stableMockRange(`${city.city}|decimal`, 0, 9) / 10;
+    city.vogSales = regionRoundMarket(city.market * city.share / 100);
+    rawTraditionalVog += city.vogSales;
+  });
+  const scale = rawTraditionalVog > 0 ? traditionalVogSales / rawTraditionalVog : 1;
+  cities.forEach((city, index) => {
+    city.vogSales = regionRoundMarket(city.vogSales * scale);
+    city.share = city.market ? (city.vogSales / city.market) * 100 : 0;
+    if (index === cities.length - 1) {
+      const allocatedMarket = cities.slice(0, -1).reduce((sum, row) => sum + row.market, 0);
+      city.market = Math.max(0, traditionalVolume - allocatedMarket);
+    }
+  });
+
   return {
     label,
     district: config?.district || "",
+    product,
+    productLabel,
     cities,
     population,
-    sales,
-    potential,
-    share: potential ? (sales / potential) * 100 : 0,
+    trtCount: cities.reduce((sum, city) => sum + city.trtRows.length, 0),
+    marketTotal,
+    vogSales,
+    vogShare,
+    diyTargetShare,
+    channels: {
+      diy: { marketShare: diyMarketShare, volume: diyVolume, vogShare: diyVogShare, vogSales: diyVogSales },
+      traditional: { marketShare: traditionalMarketShare, volume: traditionalVolume, vogShare: traditionalVogShare, vogSales: traditionalVogSales },
+      other: { marketShare: otherMarketShare, volume: otherVolume, vogShare: otherVogShare, vogSales: otherVogSales },
+    },
+    diyNetworks,
   };
 }
 
@@ -2920,14 +2994,65 @@ function formatRegionMockNumber(value) {
   return Math.round(Number(value || 0)).toLocaleString("ru-RU");
 }
 
-function renderRegionInspector(config, label) {
-  const model = buildRegionMockModel(config, label);
+function renderRegionInspector(config, label, product = trtRegionProduct) {
+  trtRegionProduct = product;
+  const model = buildRegionMockModel(config, label, product);
   trtInspectorRegion = { config, label, model };
   $("region-inspector-name").textContent = label;
-  $("region-inspector-population").textContent = `${formatRegionMockNumber(model.population)} чел.`;
-  $("region-inspector-sales").textContent = `${formatRegionMockNumber(model.sales)} ед.`;
-  $("region-inspector-potential").textContent = `${formatRegionMockNumber(model.potential)} ед.`;
-  $("region-inspector-share").textContent = `${model.share.toFixed(1).replace(".", ",")}%`;
+  $("region-inspector-district").textContent = model.district || "Регион";
+  $("region-inspector-population").textContent = `${regionCompactNumber(model.population)} чел.`;
+  $("region-market-total").textContent = `${regionCompactNumber(model.marketTotal)} м²`;
+  $("region-market-product").textContent = `${model.productLabel} · макет`;
+  $("region-vog-sales").textContent = `${regionCompactNumber(model.vogSales)} м²`;
+  $("region-vog-share").textContent = regionPercent(model.vogShare);
+  $("region-vog-share-repeat").textContent = regionPercent(model.vogShare);
+  $("region-trt-count").textContent = formatRegionMockNumber(model.trtCount);
+  $("region-city-count").textContent = `${model.cities.length} ${model.cities.length === 1 ? "город" : "городов"}`;
+  $("region-donut-total").textContent = regionCompactNumber(model.marketTotal);
+
+  document.querySelectorAll("[data-region-product]").forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.regionProduct === product);
+  });
+
+  const diy = model.channels.diy;
+  const traditional = model.channels.traditional;
+  const other = model.channels.other;
+  $("region-market-donut").style.background = `conic-gradient(var(--vog-navy) 0 ${diy.marketShare}%, var(--vog-magenta) ${diy.marketShare}% ${diy.marketShare + traditional.marketShare}%, #cfd8e5 ${diy.marketShare + traditional.marketShare}% 100%)`;
+  $("region-diy-volume").textContent = `${regionCompactNumber(diy.volume)} м² / мес.`;
+  $("region-traditional-volume").textContent = `${regionCompactNumber(traditional.volume)} м² / мес.`;
+  $("region-other-volume").textContent = `${regionCompactNumber(other.volume)} м² / мес.`;
+  $("region-diy-market-share").textContent = regionPercent(diy.marketShare, 0);
+  $("region-traditional-market-share").textContent = regionPercent(traditional.marketShare, 0);
+  $("region-other-market-share").textContent = regionPercent(other.marketShare, 0);
+
+  $("region-diy-vog-share").textContent = regionPercent(diy.vogShare);
+  $("region-traditional-vog-share").textContent = regionPercent(traditional.vogShare);
+  $("region-diy-vog-sales").textContent = `${regionCompactNumber(diy.vogSales)} м² ВОГ / мес.`;
+  $("region-traditional-vog-sales").textContent = `${regionCompactNumber(traditional.vogSales)} м² ВОГ / мес.`;
+  $("region-diy-vog-progress").style.width = `${Math.min(100, diy.vogShare)}%`;
+  $("region-traditional-vog-progress").style.width = `${Math.min(100, traditional.vogShare)}%`;
+  $("region-diy-target-marker").style.left = `${model.diyTargetShare}%`;
+  $("region-diy-target-caption").textContent = `цель ${regionPercent(model.diyTargetShare, 0)}`;
+  const goalDelta = diy.vogShare - model.diyTargetShare;
+  const goalStatus = $("region-diy-goal-status");
+  goalStatus.classList.toggle("is-good", goalDelta >= 0);
+  goalStatus.classList.toggle("is-low", goalDelta < 0);
+  goalStatus.textContent = goalDelta >= 0
+    ? `DIY · цель выполнена +${goalDelta.toFixed(1).replace(".", ",")} п.п.`
+    : `DIY · до цели ${Math.abs(goalDelta).toFixed(1).replace(".", ",")} п.п.`;
+
+  $("region-diy-network-summary").textContent = `${model.diyNetworks.length} сети · ${model.diyNetworks.reduce((sum, row) => sum + row.stores, 0)} магазинов`;
+  $("region-diy-body").innerHTML = model.diyNetworks.map((network) => {
+    const reached = network.vogShare >= network.target;
+    return `<tr>
+      <td><strong>${escapeHtml(network.name)}</strong></td>
+      <td>${network.stores}</td>
+      <td>${regionCompactNumber(network.volume)} м²</td>
+      <td>${regionCompactNumber(network.vogSales)} м²</td>
+      <td><strong>${regionPercent(network.vogShare)}</strong></td>
+      <td><span class="region-plan-pill ${reached ? "is-good" : "is-mid"}">${reached ? "Достигнута" : `Цель ${regionPercent(network.target, 0)}`}</span></td>
+    </tr>`;
+  }).join("");
 
   $("region-inspector-city-body").innerHTML = model.cities.map((city, index) => {
     const detailId = `region-city-detail-${index}`;
@@ -2946,18 +3071,18 @@ function renderRegionInspector(config, label) {
       <td>
         <button class="region-city-expand" type="button" data-region-city-toggle="${detailId}" aria-expanded="false" aria-label="Развернуть список ТРТ">+</button>
         <strong>${escapeHtml(city.city)}</strong>
-        <small>${city.trtRows.length} ТРТ</small>
+        <small>${formatRegionMockNumber(city.population)} чел.</small>
       </td>
-      <td>${formatRegionMockNumber(city.population)}</td>
-      <td>${formatRegionMockNumber(city.potential)}</td>
-      <td>${formatRegionMockNumber(city.sales)}</td>
-      <td><strong>${city.share.toFixed(1).replace(".", ",")}%</strong></td>
+      <td>${city.trtRows.length}</td>
+      <td>${regionCompactNumber(city.market)} м²</td>
+      <td>${regionCompactNumber(city.vogSales)} м²</td>
+      <td><strong>${regionPercent(city.share)}</strong></td>
     </tr>
     <tr id="${detailId}" class="region-city-detail" hidden>
       <td colspan="5">
         <div class="region-trt-subtable-wrap">
           <table class="region-trt-subtable">
-            <thead><tr><th>ТРТ</th><th>План / мес.</th><th>Факт / мес.<small>среднее за 3 мес.</small></th><th>Выполнение</th></tr></thead>
+            <thead><tr><th>ТРТ</th><th>План / мес.</th><th>Факт / мес.<small>макет</small></th><th>Выполнение</th></tr></thead>
             <tbody>${trtRows}</tbody>
           </table>
         </div>
@@ -2972,12 +3097,10 @@ function openRegionInspector(feature, layer) {
   if (!config) return;
   const label = config.label || trtRegionFeatureName(feature) || config.key;
   state.trtSelectedId = "";
-  renderRegionInspector(config, label);
-  if (layer?.getBounds && trtMap) {
-    window.setTimeout(() => {
-      try { trtMap.fitBounds(layer.getBounds().pad(0.06), { maxZoom: 7 }); } catch {}
-    }, 230);
+  if (trtMap) {
+    try { trtRegionMapReturnView = { center: trtMap.getCenter(), zoom: trtMap.getZoom() }; } catch { trtRegionMapReturnView = null; }
   }
+  renderRegionInspector(config, label, trtRegionProduct);
 }
 
 function bindTrtRegion(feature, layer) {
@@ -4187,6 +4310,13 @@ $("trt-sales-modal").addEventListener("click", (event) => {
   if (event.target === $("trt-sales-modal")) closeTrtSales();
 });
 $("map-inspector-close")?.addEventListener("click", closeMapInspector);
+$("region-product-toggle")?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-region-product]");
+  if (!button || !trtInspectorRegion) return;
+  const nextProduct = button.dataset.regionProduct === "wallpaper" ? "wallpaper" : "tiles";
+  if (nextProduct === trtRegionProduct) return;
+  renderRegionInspector(trtInspectorRegion.config, trtInspectorRegion.label, nextProduct);
+});
 $("region-inspector-city-body")?.addEventListener("click", (event) => {
   const button = event.target.closest("[data-region-city-toggle]");
   if (!button) return;
