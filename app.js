@@ -1,6 +1,6 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.8";
+const VOG_WEB_VERSION = "8.12";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
@@ -9,7 +9,7 @@ const TRT_MAP_VIEW_KEY = "trt_web_map_view_v3";
 const TRT_MAP_FILTER_KEY = "trt_web_map_filters_v1";
 const TRT_MAP_MODE_KEY = "trt_web_map_mode_v1";
 const DEFAULT_MAP_VIEW = Object.freeze({ center: [58.3, 47.0], zoom: 5 });
-const PAGES = new Set(["employees", "sales-import", "activity", "tasks", "visits", "trt", "logistics"]);
+const PAGES = new Set(["employees", "sales-import", "activity", "tasks", "visits", "trt", "region-analytics", "logistics"]);
 
 const state = {
   token: localStorage.getItem(SESSION_KEY) || sessionStorage.getItem(SESSION_KEY) || "",
@@ -34,6 +34,7 @@ const state = {
   trtSelectedId: "",
   trtFitRequested: true,
   logistics: { loaded: false, trips: [], summary: {}, dictionaries: null, aliasCatalog: null, aliasMap: new Map(), suggestionMap: new Map(), preview: null, sourceTrips: [], fileName: "", observedWarehouses: [], observedVehicles: [], matchResults: new Map(), uniqueMatchItems: [] },
+  marketAnalysis: { loaded: false, catalog: null, plans: [], diy: [] },
   currentPage: PAGES.has(location.hash.slice(1)) ? location.hash.slice(1) : "trt",
 };
 
@@ -60,6 +61,9 @@ let mediaPreviewTouchStartX = null;
 let logisticsActiveTab = "overview";
 let warehouseMap = null;
 let warehouseMarker = null;
+let marketAnalysisDirection = "обои";
+let marketAnalysisYear = 2026;
+let marketAnalysisMonth = 7;
 
 const $ = (id) => document.getElementById(id);
 
@@ -122,7 +126,8 @@ function resetProtectedState() {
   state.trtLoaded = false;
   state.trtSelectedId = "";
   state.trtFitRequested = true;
-  state.logistics = { loaded: false, trips: [], summary: {}, dictionaries: null, aliasCatalog: null, aliasMap: new Map(), suggestionMap: new Map(), preview: null, sourceTrips: [], fileName: "", observedWarehouses: [], observedVehicles: [], matchResults: new Map(), uniqueMatchItems: [] };
+  state.logistics = { loaded: false, trips: [], summary: {}, dictionaries: null, aliasCatalog: null, aliasMap: new Map(), suggestionMap: new Map(), preview: null, sourceTrips: [], fileName: "", observedWarehouses: [], matchResults: new Map(), uniqueMatchItems: [] };
+  state.marketAnalysis = { loaded: false, catalog: null, plans: [], diy: [] };
 }
 
 function isGeneralDirector() {
@@ -144,7 +149,7 @@ function setNavGroupExpanded(groupName, expanded) {
 
 function syncSidebarNavigation(page) {
   const isSettings = page === "employees" || page === "sales-import" || page === "activity";
-  const isAnalytics = page === "logistics";
+  const isAnalytics = page === "logistics" || page === "region-analytics";
   if (isSettings) setNavGroupExpanded("settings", true);
   if (isAnalytics) setNavGroupExpanded("analytics", true);
 
@@ -430,8 +435,9 @@ function showPage(page, updateHash = true) {
   if (nextPage === "employees" && state.token && state.employees.length === 0) {
     loadEmployees();
   }
-  if (nextPage === "sales-import") { initializeSalesImportPeriod(); initializeMarketImportPeriods(); }
+  if (nextPage === "sales-import") { initializeSalesImportPeriod();  }
   if (nextPage === "logistics") { initializeLogisticsPeriod(); loadLogistics(); }
+  if (nextPage === "region-analytics") { loadRegionAnalyticsDirectory(); }
 
   if (nextPage === "activity" && state.token) {
     loadActivity();
@@ -2849,166 +2855,381 @@ function trtCanonicalRegionName(point) {
   return (city && trtCityRegionCache.get(city)) || String(point?.region || "").trim();
 }
 
-function stableMockHash(value) {
-  let hash = 2166136261;
-  const text = String(value || "");
-  for (let index = 0; index < text.length; index += 1) {
-    hash ^= text.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return hash >>> 0;
+function marketDirectionKey(value) {
+  const normalized = normalizeText(value);
+  return normalized.includes("обо") ? "обои" : normalized.includes("плит") || normalized.includes("керам") ? "плитка" : normalized;
 }
 
-function stableMockRange(seed, min, max) {
-  const hash = stableMockHash(seed);
-  return min + (hash % Math.max(1, max - min + 1));
+function marketDirectionLabel(value) {
+  return marketDirectionKey(value) === "обои" ? "Обои" : "Плитка";
 }
 
-function trtPointsForRegionConfig(config, label = "") {
-  const aliases = [config?.key, label, ...(config?.pointAliases || [])]
-    .map(normalizeRegionName)
-    .filter(Boolean);
-  const aliasSet = new Set(aliases);
-  return state.trtPoints.filter((point) => aliasSet.has(normalizeRegionName(trtCanonicalRegionName(point))));
+function marketUnit(value) {
+  return marketDirectionKey(value) === "обои" ? "рул." : "м²";
 }
 
-function mockTrtSalesMetrics(point) {
-  const seed = `${point?.id}|${point?.client}|${point?.address}`;
-  const plan = Math.round(stableMockRange(`${seed}|plan`, 45, 260) / 5) * 5;
-  const ratio = stableMockRange(`${seed}|ratio`, 68, 126) / 100;
-  const fact = Math.max(1, Math.round(plan * ratio));
-  return { plan, fact, completion: plan ? (fact / plan) * 100 : 0 };
+function marketPotential(population, direction = marketAnalysisDirection) {
+  const people = Math.max(0, Number(population || 0));
+  return marketDirectionKey(direction) === "обои" ? people * 0.8 / 1.92 / 12 : people / 12;
 }
 
-function buildRegionMockModel(config, label) {
-  const points = trtPointsForRegionConfig(config, label);
-  const groups = new Map();
-  points.forEach((point) => {
-    const city = trtPointCity(point) || "Прочие населённые пункты";
-    const key = `${normalizeText(city)}|||${normalizeRegionName(point.region)}`;
-    if (!groups.has(key)) groups.set(key, { key, city, points: [] });
-    groups.get(key).points.push(point);
-  });
+function marketTargetShare(direction = marketAnalysisDirection) {
+  return marketDirectionKey(direction) === "обои" ? 0.15 : 0.10;
+}
 
-  let cities = [...groups.values()];
-  if (!cities.length) {
-    cities = ["Административный центр", "Город 2", "Город 3"].map((city, index) => ({
-      key: `mock-${index}`,
-      city,
-      points: [],
-      synthetic: true,
-    }));
-  }
+function marketPercent(value, digits = 1) {
+  const number = Number(value);
+  return Number.isFinite(number) ? `${number.toFixed(digits).replace(".", ",")}%` : "—";
+}
 
-  cities = cities.map((cityRow, cityIndex) => {
-    const trtRows = cityRow.points.map((point) => ({ point, ...mockTrtSalesMetrics(point) }));
-    if (!trtRows.length) {
-      const syntheticCount = stableMockRange(`${label}|${cityRow.city}|count`, 2, 5);
-      for (let index = 0; index < syntheticCount; index += 1) {
-        const plan = Math.round(stableMockRange(`${label}|${cityRow.city}|${index}|plan`, 50, 220) / 5) * 5;
-        const ratio = stableMockRange(`${label}|${cityRow.city}|${index}|ratio`, 72, 121) / 100;
-        const fact = Math.round(plan * ratio);
-        trtRows.push({
-          point: { id: `mock-${cityIndex}-${index}`, client: `ТРТ ${index + 1} · макет`, direction: index % 2 ? "Плитка" : "Обои", manager: "—" },
-          plan,
-          fact,
-          completion: plan ? (fact / plan) * 100 : 0,
-          synthetic: true,
-        });
-      }
-    }
+function marketNumber(value, digits = 0) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "—";
+  return number.toLocaleString("ru-RU", { maximumFractionDigits: digits, minimumFractionDigits: 0 });
+}
 
-    const sales = trtRows.reduce((sum, row) => sum + row.fact, 0);
-    const targetShare = stableMockRange(`${label}|${cityRow.city}|share`, 8, 27) / 100;
-    const potential = Math.max(sales + 1, Math.round(sales / targetShare));
-    const basePopulation = stableMockRange(`${label}|${cityRow.city}|population`, 65000, 780000);
-    const population = Math.round((basePopulation + trtRows.length * 8500) / 1000) * 1000;
-    return {
-      ...cityRow,
-      trtRows,
-      sales,
-      potential,
-      share: potential ? (sales / potential) * 100 : 0,
-      population,
-    };
-  }).sort((a, b) => b.population - a.population || a.city.localeCompare(b.city, "ru"));
+function marketQuantity(value, direction = marketAnalysisDirection, digits = 0) {
+  return `${marketNumber(value, digits)} ${marketUnit(direction)}`;
+}
 
-  const sales = cities.reduce((sum, city) => sum + city.sales, 0);
-  const potential = cities.reduce((sum, city) => sum + city.potential, 0);
-  const population = Math.round(cities.reduce((sum, city) => sum + city.population, 0) * 1.18 / 1000) * 1000;
-  return {
-    label,
-    district: config?.district || "",
-    cities,
-    population,
-    sales,
-    potential,
-    share: potential ? (sales / potential) * 100 : 0,
+function marketPointMonthFact(point, year = marketAnalysisYear, month = marketAnalysisMonth) {
+  const values = point?.sales?.[String(year)];
+  if (!Array.isArray(values)) return 0;
+  const value = Number(values[Number(month) - 1]);
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+function marketPointMatchesDirection(point, direction = marketAnalysisDirection) {
+  return marketDirectionKey(point?.direction) === marketDirectionKey(direction);
+}
+
+function marketCatalogRegions() {
+  return Array.isArray(state.marketAnalysis?.catalog?.regions) ? state.marketAnalysis.catalog.regions : [];
+}
+
+function marketRegionEntry(regionKey) {
+  const normalized = normalizeRegionName(regionKey);
+  return marketCatalogRegions().find((item) => normalizeRegionName(item.key) === normalized) || null;
+}
+
+async function loadRegionalMarketData(force = false) {
+  if (state.marketAnalysis.loaded && !force) return state.marketAnalysis;
+  const payload = await api("/trt-map-data?view=market_analysis");
+  state.marketAnalysis = {
+    loaded: true,
+    catalog: payload.catalog || { regions: [], targetShares: {} },
+    plans: Array.isArray(payload.plans) ? payload.plans : [],
+    diy: Array.isArray(payload.diy) ? payload.diy : [],
   };
+  return state.marketAnalysis;
 }
 
-function formatRegionMockNumber(value) {
-  return Math.round(Number(value || 0)).toLocaleString("ru-RU");
+function marketAvailablePeriods(direction = marketAnalysisDirection) {
+  const key = marketDirectionKey(direction);
+  const periods = new Map();
+  [...(state.marketAnalysis.plans || []), ...(state.marketAnalysis.diy || [])].forEach((row) => {
+    if (marketDirectionKey(row.direction) !== key) return;
+    const year = Number(row.year); const month = Number(row.month);
+    if (!year || !month) return;
+    periods.set(`${year}-${month}`, { year, month });
+  });
+  return [...periods.values()].sort((a, b) => a.year - b.year || a.month - b.month);
 }
 
-function renderRegionInspector(config, label) {
-  const model = buildRegionMockModel(config, label);
-  trtInspectorRegion = { config, label, model };
-  $("region-inspector-name").textContent = label;
-  $("region-inspector-population").textContent = `${formatRegionMockNumber(model.population)} чел.`;
-  $("region-inspector-sales").textContent = `${formatRegionMockNumber(model.sales)} ед.`;
-  $("region-inspector-potential").textContent = `${formatRegionMockNumber(model.potential)} ед.`;
-  $("region-inspector-share").textContent = `${model.share.toFixed(1).replace(".", ",")}%`;
+function syncMarketPeriodControls() {
+  const periods = marketAvailablePeriods(marketAnalysisDirection);
+  const years = [...new Set(periods.map((item) => item.year))];
+  if (!years.length) years.push(2025, 2026);
+  if (!years.includes(marketAnalysisYear)) marketAnalysisYear = years[years.length - 1];
+  const yearHtml = years.map((year) => `<option value="${year}">${year}</option>`).join("");
+  [$("region-analysis-year"), $("region-directory-year")].filter(Boolean).forEach((select) => { select.innerHTML = yearHtml; select.value = String(marketAnalysisYear); });
+  [$("region-analysis-direction"), $("region-directory-direction")].filter(Boolean).forEach((select) => { select.value = marketAnalysisDirection; });
+  [$("region-analysis-month"), $("region-directory-month")].filter(Boolean).forEach((select) => { select.value = String(marketAnalysisMonth); });
+}
+
+function regionCityLookup(regionEntry) {
+  const map = new Map();
+  (regionEntry?.cities || []).forEach((city) => {
+    map.set(normalizeText(city.name), city.name);
+    (city.satellites || []).forEach((satellite) => map.set(normalizeText(satellite.name), city.name));
+  });
+  return map;
+}
+
+function regionBucketForPoint(point, regionEntry, lookup = regionCityLookup(regionEntry)) {
+  const city = normalizeText(trtPointCity(point));
+  return lookup.get(city) || "Прочие";
+}
+
+function buildAdjustedTrtFacts(direction = marketAnalysisDirection, year = marketAnalysisYear, month = marketAnalysisMonth) {
+  const directionKey = marketDirectionKey(direction);
+  const pointById = new Map(state.trtPoints.map((point) => [String(point.id), point]));
+  const diyPointIds = new Set((state.marketAnalysis.diy || [])
+    .filter((row) => Number(row.year) === Number(year) && Number(row.month) === Number(month) && marketDirectionKey(row.direction) === directionKey)
+    .map((row) => String(row.pointId || "")).filter(Boolean));
+  const isDiyPoint = (pointId) => {
+    const id = String(pointId || "");
+    const point = pointById.get(id);
+    const format = normalizeText(point?.format).replace(/[^a-zа-я0-9]/g, "");
+    return diyPointIds.has(id) || format.includes("diy");
+  };
+  const plans = (state.marketAnalysis.plans || []).filter((row) => Number(row.year) === Number(year) && Number(row.month) === Number(month) && marketDirectionKey(row.direction) === directionKey && !isDiyPoint(row.pointId));
+  const clientGroups = new Map();
+  plans.forEach((row) => {
+    const clientKey = normalizeText(row.client) || `point:${row.pointId}`;
+    if (!clientGroups.has(clientKey)) clientGroups.set(clientKey, []);
+    clientGroups.get(clientKey).push(row);
+  });
+  const adjusted = [];
+  clientGroups.forEach((rows, clientKey) => {
+    const uniquePointIds = [...new Set(rows.map((row) => String(row.pointId || "")).filter(Boolean))];
+    const planTotal = rows.reduce((sum, row) => sum + Math.max(0, Number(row.planQuantity || 0)), 0);
+    const factTotal = uniquePointIds.reduce((sum, pointId) => {
+      if (diyPointIds.has(pointId)) return sum;
+      const point = pointById.get(pointId);
+      return sum + (point && marketPointMatchesDirection(point, direction) ? marketPointMonthFact(point, year, month) : 0);
+    }, 0);
+    rows.forEach((row) => {
+      const point = pointById.get(String(row.pointId || ""));
+      const plan = Math.max(0, Number(row.planQuantity || 0));
+      const rawFact = diyPointIds.has(String(row.pointId || "")) ? 0 : marketPointMonthFact(point, year, month);
+      const adjustedFact = planTotal > 0 ? factTotal * plan / planTotal : 0;
+      adjusted.push({ ...row, point, clientKey, plan, rawFact, adjustedFact, clientPlanTotal: planTotal, clientFactTotal: factTotal, needsManualAllocation: planTotal <= 0 && factTotal > 0 });
+    });
+  });
+  return adjusted;
+}
+
+function regionDiagnosis(model) {
+  if (!model.planRows.length) {
+    return { code: "no-plan", title: "Планы ТРТ пока не загружены", text: `Потенциал и DIY уже можно анализировать. Для полного вывода загрузите планы ТРТ по направлению «${marketDirectionLabel(model.direction)}».` };
+  }
+  if (model.totalVog >= model.targetSales && model.targetSales > 0) {
+    return { code: "good", title: "Целевая доля достигнута", text: `Факт ВОГ составляет ${marketPercent(model.totalShare)} при цели ${marketPercent(model.targetShare * 100, 0)}. Можно переходить к удержанию результата и точечному развитию.` };
+  }
+  const plannedTotal = model.diyVog + model.trtPlan;
+  const execution = model.trtPlan > 0 ? model.trtFact / model.trtPlan : 0;
+  if (plannedTotal < model.targetSales && execution >= 0.95) {
+    return { code: "coverage", title: "Не хватает покрытия ТРТ", text: "Существующие ТРТ в целом выполняют план, но даже полного выполнения текущих планов недостаточно для целевой доли. Нужны новые ТРТ или увеличение потенциала текущих." };
+  }
+  if (plannedTotal < model.targetSales) {
+    return { code: "plan", title: "План ниже требуемой доли рынка", text: "Сумма факта DIY и планов ТРТ не дотягивает до целевой доли. Сначала нужно увеличить плановое покрытие: развить текущие ТРТ и/или найти новые." };
+  }
+  return { code: "execution", title: "План достаточен, но факт не выполнен", text: "Плановая модель позволяет достичь цели, однако текущий факт ниже. Нужно разложить недобор по клиентам и ТРТ и работать с выполнением плана." };
+}
+
+function buildRegionAnalysisModel(regionKey, direction = marketAnalysisDirection, year = marketAnalysisYear, month = marketAnalysisMonth) {
+  const region = marketRegionEntry(regionKey);
+  if (!region) return null;
+  const directionKey = marketDirectionKey(direction);
+  const pointById = new Map(state.trtPoints.map((point) => [String(point.id), point]));
+  const lookup = regionCityLookup(region);
+  const population = Number(region.population || 0);
+  const potential = marketPotential(population, directionKey);
+  const targetShare = marketTargetShare(directionKey);
+  const targetSales = potential * targetShare;
+
+  const diyRows = (state.marketAnalysis.diy || []).filter((row) => {
+    if (Number(row.year) !== Number(year) || Number(row.month) !== Number(month) || marketDirectionKey(row.direction) !== directionKey) return false;
+    const point = pointById.get(String(row.pointId || ""));
+    return point && normalizeRegionName(trtCanonicalRegionName(point)) === normalizeRegionName(region.key);
+  }).map((row) => ({ ...row, point: pointById.get(String(row.pointId || "")) }));
+
+  const allAdjusted = buildAdjustedTrtFacts(directionKey, year, month);
+  const planRows = allAdjusted.filter((row) => row.point && normalizeRegionName(trtCanonicalRegionName(row.point)) === normalizeRegionName(region.key));
+
+  const diyTotal = diyRows.reduce((sum, row) => sum + Math.max(0, Number(row.totalQuantity || 0)), 0);
+  const diyVog = diyRows.reduce((sum, row) => sum + Math.max(0, Number(row.vogQuantity || 0)), 0);
+  const trtPlan = planRows.reduce((sum, row) => sum + row.plan, 0);
+  const trtFact = planRows.reduce((sum, row) => sum + row.adjustedFact, 0);
+  const totalVog = diyVog + trtFact;
+  const totalShare = potential > 0 ? totalVog / potential * 100 : 0;
+  const deficit = Math.max(0, targetSales - totalVog);
+  const requiredTrt = Math.max(0, targetSales - diyVog);
+
+  const cityMap = new Map();
+  (region.cities || []).forEach((city) => cityMap.set(city.name, {
+    name: city.name, type: city.type || "city", population: Number(city.marketPopulation || city.population || 0), corePopulation: Number(city.population || 0), satellites: city.satellites || [], diyRows: [], planRows: [],
+  }));
+  cityMap.set("Прочие", { name: "Прочие", type: "other", population: Number(region.otherPopulation || 0), corePopulation: Number(region.otherPopulation || 0), satellites: [], diyRows: [], planRows: [] });
+  diyRows.forEach((row) => { const bucket = regionBucketForPoint(row.point, region, lookup); (cityMap.get(bucket) || cityMap.get("Прочие")).diyRows.push(row); });
+  planRows.forEach((row) => { const bucket = regionBucketForPoint(row.point, region, lookup); (cityMap.get(bucket) || cityMap.get("Прочие")).planRows.push(row); });
+
+  const cities = [...cityMap.values()].map((city) => {
+    const cityPotential = marketPotential(city.population, directionKey);
+    const cityTarget = cityPotential * targetShare;
+    const cityDiyTotal = city.diyRows.reduce((sum, row) => sum + Number(row.totalQuantity || 0), 0);
+    const cityDiyVog = city.diyRows.reduce((sum, row) => sum + Number(row.vogQuantity || 0), 0);
+    const cityPlan = city.planRows.reduce((sum, row) => sum + row.plan, 0);
+    const cityFact = city.planRows.reduce((sum, row) => sum + row.adjustedFact, 0);
+    const cityTotal = cityDiyVog + cityFact;
+    return {
+      ...city, potential: cityPotential, target: cityTarget, diyTotal: cityDiyTotal, diyVog: cityDiyVog,
+      trtPlan: cityPlan, trtFact: cityFact, totalVog: cityTotal,
+      share: cityPotential > 0 ? cityTotal / cityPotential * 100 : 0,
+      deficit: Math.max(0, cityTarget - cityTotal),
+    };
+  }).filter((city) => city.population > 0).sort((a, b) => b.population - a.population);
+
+  const model = {
+    region, direction: directionKey, year: Number(year), month: Number(month), population, potential, targetShare, targetSales,
+    diyRows, diyTotal, diyVog, diyMarketShare: potential > 0 ? diyTotal / potential * 100 : 0,
+    diyVogShareInside: diyTotal > 0 ? diyVog / diyTotal * 100 : 0,
+    diyVogShareRegion: potential > 0 ? diyVog / potential * 100 : 0,
+    planRows, trtPlan, trtFact, trtCompletion: trtPlan > 0 ? trtFact / trtPlan * 100 : 0,
+    requiredTrt, totalVog, totalShare, deficit, cities,
+    networkCount: new Set(diyRows.map((row) => normalizeText(row.network)).filter(Boolean)).size,
+    manualAllocationCount: planRows.filter((row) => row.needsManualAllocation).length,
+  };
+  model.diagnosis = regionDiagnosis(model);
+  return model;
+}
+
+function renderRegionDetailRows(city, direction) {
+  const trtRows = city.planRows.map((row) => {
+    const point = row.point || {};
+    const completion = row.plan > 0 ? row.adjustedFact / row.plan * 100 : 0;
+    const cls = completion >= 100 ? "is-good" : completion >= 85 ? "is-mid" : "is-low";
+    return `<tr><td><strong>${escapeHtml(trtDisplayName(point))}</strong><small>${escapeHtml(row.client || point.holding || "—")} · ${escapeHtml(point.address || row.sourceAddress || "—")}</small></td><td>${marketQuantity(row.plan, direction)}</td><td>${marketQuantity(row.rawFact, direction)}</td><td>${marketQuantity(row.adjustedFact, direction)}</td><td><span class="region-plan-pill ${cls}">${marketPercent(completion,0)}</span></td></tr>`;
+  }).join("");
+  const diyRows = city.diyRows.map((row) => `<tr><td><strong>${escapeHtml(row.network || "DIY")}</strong><small>${escapeHtml(row.address || row.point?.address || "—")}</small></td><td>${marketQuantity(row.totalQuantity, direction)}</td><td>${marketQuantity(row.vogQuantity, direction)}</td><td>${marketPercent(Number(row.totalQuantity) > 0 ? Number(row.vogQuantity) / Number(row.totalQuantity) * 100 : 0)}</td></tr>`).join("");
+  return `<div class="region-detail-grid">
+    <section><h4>ТРТ · план и распределённый факт</h4><div class="region-trt-subtable-wrap"><table class="region-trt-subtable"><thead><tr><th>ТРТ / клиент</th><th>План</th><th>Исходный факт</th><th>Распределённый факт</th><th>Выполнение</th></tr></thead><tbody>${trtRows || '<tr><td colspan="5">Планов ТРТ нет.</td></tr>'}</tbody></table></div></section>
+    <section><h4>DIY · sell-out</h4><div class="region-trt-subtable-wrap"><table class="region-trt-subtable"><thead><tr><th>Сеть / магазин</th><th>Общие продажи</th><th>ВОГ</th><th>Доля ВОГ</th></tr></thead><tbody>${diyRows || '<tr><td colspan="4">DIY sell-out нет.</td></tr>'}</tbody></table></div></section>
+  </div>`;
+}
+
+function renderRegionAnalysisModel(model) {
+  trtInspectorRegion = { config: { key: model.region.key }, label: model.region.key, model };
+  $("region-inspector-name").textContent = model.region.key;
+  $("region-inspector-population").textContent = `${marketNumber(model.population)} чел.`;
+  $("region-kpi-potential").textContent = marketQuantity(model.potential, model.direction);
+  $("region-kpi-potential-unit").textContent = model.direction === "обои" ? "0,8 рул./чел./год ÷ 1,92 ÷ 12" : "1 м²/чел./год ÷ 12";
+  $("region-kpi-target").textContent = marketQuantity(model.targetSales, model.direction);
+  $("region-kpi-target-share").textContent = `целевая доля ${marketPercent(model.targetShare * 100,0)}`;
+  $("region-kpi-fact").textContent = marketQuantity(model.totalVog, model.direction);
+  $("region-kpi-share").textContent = marketPercent(model.totalShare);
+  $("region-kpi-share-gap").textContent = `цель ${marketPercent(model.targetShare * 100,0)}`;
+  $("region-kpi-deficit").textContent = marketQuantity(model.deficit, model.direction);
+  $("region-kpi-deficit-note").textContent = model.deficit > 0 ? "нужно добрать продажами" : "цель закрыта";
+
+  const donut = $("region-market-donut"); if (donut) donut.style.setProperty("--share", `${Math.max(0, Math.min(100, model.diyMarketShare))}%`);
+  $("region-market-diy-share").textContent = marketPercent(model.diyMarketShare);
+  $("region-market-diy-total").textContent = marketQuantity(model.diyTotal, model.direction);
+  $("region-market-other-total").textContent = marketQuantity(Math.max(0, model.potential - model.diyTotal), model.direction);
+  $("region-diy-network-count").textContent = `${model.networkCount} сет.`;
+  $("region-diy-market").textContent = marketQuantity(model.diyTotal, model.direction);
+  $("region-diy-vog").textContent = marketQuantity(model.diyVog, model.direction);
+  $("region-diy-share-inside").textContent = marketPercent(model.diyVogShareInside);
+  $("region-diy-share-region").textContent = marketPercent(model.diyVogShareRegion);
+  $("region-trt-count").textContent = `${model.planRows.length} ТРТ`;
+  $("region-trt-required").textContent = marketQuantity(model.requiredTrt, model.direction);
+  $("region-trt-plan").textContent = marketQuantity(model.trtPlan, model.direction);
+  $("region-trt-fact").textContent = marketQuantity(model.trtFact, model.direction);
+  $("region-trt-completion").textContent = model.trtPlan > 0 ? marketPercent(model.trtCompletion) : "—";
+
+  const diagnosis = $("region-diagnosis"); diagnosis.className = `region-diagnosis is-${model.diagnosis.code}`;
+  $("region-diagnosis-title").textContent = model.diagnosis.title;
+  $("region-diagnosis-text").textContent = model.diagnosis.text;
+  const notes = [`Период: ${analysisPeriodLabel(model.year, model.month)} · ${marketDirectionLabel(model.direction)}.`, `Население региона — справочная тестовая база; города ≥75 тыс., малые города в радиусе 45 км агрегируются к ближайшему крупному центру.`];
+  if (!model.diyRows.length) notes.push("DIY sell-out за выбранный период пока не загружен.");
+  if (!model.planRows.length) notes.push(`Планы ТРТ по направлению «${marketDirectionLabel(model.direction)}» за этот период пока не загружены.`);
+  if (model.manualAllocationCount) notes.push(`Есть ${model.manualAllocationCount} ТРТ с фактом при нулевом плане — требуется ручное распределение.`);
+  $("region-data-note").textContent = notes.join(" ");
 
   $("region-inspector-city-body").innerHTML = model.cities.map((city, index) => {
     const detailId = `region-city-detail-${index}`;
-    const trtRows = city.trtRows.map((row) => {
-      const pointTitle = row.point?.client || row.point?.holding || row.point?.address || "ТРТ";
-      const secondary = [row.point?.direction, shortPersonName(row.point?.manager)].filter((value) => value && value !== "—").join(" · ");
-      const completionClass = row.completion >= 100 ? "is-good" : row.completion >= 85 ? "is-mid" : "is-low";
-      return `<tr>
-        <td><strong>${escapeHtml(pointTitle)}</strong>${secondary ? `<small>${escapeHtml(secondary)}</small>` : ""}</td>
-        <td>${formatRegionMockNumber(row.plan)}</td>
-        <td>${formatRegionMockNumber(row.fact)}</td>
-        <td><span class="region-plan-pill ${completionClass}">${row.completion.toFixed(0)}%</span></td>
-      </tr>`;
-    }).join("");
-    return `<tr class="region-city-row">
-      <td>
-        <button class="region-city-expand" type="button" data-region-city-toggle="${detailId}" aria-expanded="false" aria-label="Развернуть список ТРТ">+</button>
-        <strong>${escapeHtml(city.city)}</strong>
-        <small>${city.trtRows.length} ТРТ</small>
-      </td>
-      <td>${formatRegionMockNumber(city.population)}</td>
-      <td>${formatRegionMockNumber(city.potential)}</td>
-      <td>${formatRegionMockNumber(city.sales)}</td>
-      <td><strong>${city.share.toFixed(1).replace(".", ",")}%</strong></td>
-    </tr>
-    <tr id="${detailId}" class="region-city-detail" hidden>
-      <td colspan="5">
-        <div class="region-trt-subtable-wrap">
-          <table class="region-trt-subtable">
-            <thead><tr><th>ТРТ</th><th>План / мес.</th><th>Факт / мес.<small>среднее за 3 мес.</small></th><th>Выполнение</th></tr></thead>
-            <tbody>${trtRows}</tbody>
-          </table>
-        </div>
-      </td>
-    </tr>`;
+    const subtitle = city.type === "agglomeration" && city.satellites.length ? `Агломерация: + ${city.satellites.map((item) => item.name).join(", ")}` : city.type === "other" ? "Малые и удалённые населённые пункты" : `${city.planRows.length} ТРТ · ${city.diyRows.length} DIY`;
+    return `<tr class="region-city-row"><td><button class="region-city-expand" type="button" data-region-city-toggle="${detailId}" aria-expanded="false">+</button><strong>${escapeHtml(city.name)}</strong><small>${escapeHtml(subtitle)}</small></td><td>${marketNumber(city.population)}</td><td>${marketQuantity(city.potential, model.direction)}</td><td>${marketQuantity(city.target, model.direction)}</td><td>${marketQuantity(city.diyVog, model.direction)}</td><td>${marketQuantity(city.trtPlan, model.direction)}</td><td>${marketQuantity(city.trtFact, model.direction)}</td><td><strong>${marketPercent(city.share)}</strong></td><td class="${city.deficit > 0 ? 'region-deficit-cell' : 'region-ok-cell'}">${marketQuantity(city.deficit, model.direction)}</td></tr><tr id="${detailId}" class="region-city-detail" hidden><td colspan="9">${renderRegionDetailRows(city, model.direction)}</td></tr>`;
   }).join("");
-  setMapInspectorView("region");
 }
 
-function openRegionInspector(feature, layer) {
+async function renderRegionInspector(config, label) {
+  const regionKey = config?.key || label;
+  trtInspectorRegion = { config: { ...(config || {}), key: regionKey }, label: regionKey, model: null };
+  setMapInspectorView("region");
+  $("region-inspector-name").textContent = regionKey;
+  $("region-analysis-error").hidden = true;
+  $("region-analysis-loading").hidden = false;
+  $("region-analysis-content").hidden = true;
+  try {
+    await Promise.all([ensureTrtData(), loadRegionalMarketData(false)]);
+    const periods = marketAvailablePeriods(marketAnalysisDirection);
+    if (periods.length && !periods.some((item) => item.year === marketAnalysisYear && item.month === marketAnalysisMonth)) {
+      const latest = periods[periods.length - 1]; marketAnalysisYear = latest.year; marketAnalysisMonth = latest.month;
+    }
+    syncMarketPeriodControls();
+    const model = buildRegionAnalysisModel(regionKey);
+    if (!model) throw new Error(`Регион «${regionKey}» отсутствует в справочнике населения.`);
+    renderRegionAnalysisModel(model);
+    $("region-analysis-content").hidden = false;
+  } catch (error) {
+    $("region-analysis-error").textContent = error.message;
+    $("region-analysis-error").hidden = false;
+  } finally {
+    $("region-analysis-loading").hidden = true;
+  }
+}
+
+function openRegionInspector(feature) {
   const config = trtRegionConfig(feature);
   if (!config) return;
-  const label = config.label || trtRegionFeatureName(feature) || config.key;
   state.trtSelectedId = "";
-  renderRegionInspector(config, label);
-  if (layer?.getBounds && trtMap) {
-    window.setTimeout(() => {
-      try { trtMap.fitBounds(layer.getBounds().pad(0.06), { maxZoom: 7 }); } catch {}
-    }, 230);
+  // Масштаб и центр карты не меняем: карточка — оверлей, закрытие возвращает ровно к исходному виду.
+  renderRegionInspector(config, config.key);
+}
+
+function openRegionInspectorByKey(regionKey) {
+  state.trtSelectedId = "";
+  renderRegionInspector({ key: regionKey }, regionKey);
+}
+
+
+function regionDirectoryCard(model) {
+  const diagnosis = model.diagnosis || regionDiagnosis(model);
+  return `<button class="region-directory-item is-${escapeHtml(diagnosis.code)}" type="button" data-region-open="${escapeHtml(model.region.key)}">
+    <span class="region-directory-name">${escapeHtml(model.region.key)}</span>
+    <span class="region-directory-meta">${marketNumber(model.population)} чел. · потенциал ${marketQuantity(model.potential, model.direction)}</span>
+    <span class="region-directory-metrics"><b>${marketPercent(model.totalShare)}</b><small>доля ВОГ</small><b>${marketQuantity(model.deficit, model.direction)}</b><small>дефицит</small></span>
+    <span class="region-directory-status">${escapeHtml(diagnosis.title)}</span>
+  </button>`;
+}
+
+function renderRegionAnalyticsDirectory() {
+  const host = $("region-directory-list");
+  if (!host) return;
+  const query = normalizeText($("region-directory-search")?.value || "");
+  const models = marketCatalogRegions().map((region) => buildRegionAnalysisModel(region.key)).filter(Boolean)
+    .filter((model) => !query || normalizeText(model.region.key).includes(query));
+  host.innerHTML = models.map(regionDirectoryCard).join("");
+  if (!models.length) host.innerHTML = '<div class="empty-state">Регионы не найдены.</div>';
+}
+
+async function loadRegionAnalyticsDirectory(force = false) {
+  const loading = $("region-directory-loading");
+  const error = $("region-directory-error");
+  if (!loading || !error) return;
+  loading.hidden = false; error.hidden = true;
+  try {
+    await Promise.all([ensureTrtData(), loadRegionalMarketData(force)]);
+    const periods = marketAvailablePeriods(marketAnalysisDirection);
+    if (periods.length && !periods.some((item) => item.year === marketAnalysisYear && item.month === marketAnalysisMonth)) {
+      const latest = periods[periods.length - 1]; marketAnalysisYear = latest.year; marketAnalysisMonth = latest.month;
+    }
+    syncMarketPeriodControls();
+    renderRegionAnalyticsDirectory();
+  } catch (err) {
+    error.textContent = err.message; error.hidden = false;
+  } finally { loading.hidden = true; }
+}
+
+function refreshOpenRegionAnalysis() {
+  syncMarketPeriodControls();
+  if (trtInspectorMode === "region" && trtInspectorRegion?.config?.key) {
+    const model = buildRegionAnalysisModel(trtInspectorRegion.config.key);
+    if (model) renderRegionAnalysisModel(model);
   }
+  if (state.currentPage === "region-analytics") renderRegionAnalyticsDirectory();
 }
 
 function bindTrtRegion(feature, layer) {
@@ -3959,58 +4180,57 @@ async function commitSalesImport() {
 }
 
 
-const MARKET_IMPORT_HEADERS = {
-  diy: {
-    required: {
-      direction: "направление",
-      region: "регион",
-      network: "сеть diy",
-      marketQuantity: "продажи рынка м2",
-      vogQuantity: "продажи вог м2",
-    },
-    optional: {
-      city: "город",
-      storeName: "магазин трт",
-      address: "адрес",
-      targetShare: "целевая доля вог",
-      pointCount: "количество магазинов",
-      comment: "комментарий",
-    },
-  },
-  traditional: {
-    required: {
-      direction: "направление",
-      region: "регион",
-      marketQuantity: "продажи рынка тр м2",
-      vogQuantity: "продажи вог м2",
-    },
-    optional: {
-      city: "город",
-      pointCount: "количество трт",
-      targetShare: "целевая доля вог",
-      comment: "комментарий",
-    },
-  },
-};
-const MARKET_IMPORT_LABELS = { diy: "DIY", traditional: "Традиционная розница" };
-const marketImportState = {
-  diy: { rows: [], preview: null, fileName: "" },
-  traditional: { rows: [], preview: null, fileName: "" },
+const ANALYSIS_IMPORT_STATE = {
+  trt_plan: { rows: [], preview: null, fileName: "" },
+  diy_sellout: { rows: [], preview: null, fileName: "" },
 };
 
-function normalizeMarketHeader(value) {
+const ANALYSIS_MONTHS = {
+  январь: 1, янв: 1,
+  февраль: 2, фев: 2,
+  март: 3, мар: 3,
+  апрель: 4, апр: 4,
+  май: 5,
+  июнь: 6, июн: 6,
+  июль: 7, июл: 7,
+  август: 8, авг: 8,
+  сентябрь: 9, сен: 9, сент: 9,
+  октябрь: 10, окт: 10,
+  ноябрь: 11, ноя: 11,
+  декабрь: 12, дек: 12,
+};
+
+function normalizeAnalysisHeader(value) {
   return String(value ?? "")
-    .trim()
-    .toLowerCase()
-    .replace(/ё/g, "е")
-    .replace(/²/g, "2")
-    .replace(/[^0-9a-zа-я]+/gi, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+    .trim().toLowerCase().replace(/ё/g, "е").replace(/²/g, "2")
+    .replace(/[—–-]+/g, " ").replace(/[^0-9a-zа-я]+/gi, " ")
+    .replace(/\s+/g, " ").trim();
+}
+
+function parseAnalysisMonthHeader(header) {
+  const normalized = normalizeAnalysisHeader(header);
+  const monthName = Object.keys(ANALYSIS_MONTHS).find((name) => new RegExp(`(^|\\s)${name}(\\s|$)`).test(normalized));
+  if (!monthName) return null;
+  const yearMatch = normalized.match(/(?:^|\s)(20\d{2}|\d{2})(?:\s|$)/);
+  if (!yearMatch) return null;
+  let year = Number(yearMatch[1]);
+  if (year < 100) year += 2000;
+  return { year, month: ANALYSIS_MONTHS[monthName], normalized };
+}
+
+function analysisFindColumn(headers, aliases) {
+  const normalized = headers.map((header) => [normalizeAnalysisHeader(header), header]);
+  for (const alias of aliases) {
+    const target = normalizeAnalysisHeader(alias);
+    const exact = normalized.find(([key]) => key === target);
+    if (exact) return exact[1];
+  }
+  return "";
 }
 
 function setDataImportTab(tab) {
-  const next = ["sales", "diy", "traditional"].includes(tab) ? tab : "sales";
+  const allowed = ["sales", "trt-plan", "diy-sellout"];
+  const next = allowed.includes(tab) ? tab : "sales";
   document.querySelectorAll("[data-import-tab]").forEach((button) => {
     button.classList.toggle("active", button.dataset.importTab === next);
     button.setAttribute("aria-selected", button.dataset.importTab === next ? "true" : "false");
@@ -4020,250 +4240,324 @@ function setDataImportTab(tab) {
   });
 }
 
-function marketPanel(channel) {
-  return document.querySelector(`[data-market-import="${channel}"]`);
+function analysisPanel(kind) {
+  return document.querySelector(`[data-analysis-import="${kind}"]`);
 }
 
-function initializeMarketImportPeriods() {
-  const now = new Date();
-  const previous = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  document.querySelectorAll("[data-market-import]").forEach((panel) => {
-    const yearSelect = panel.querySelector("[data-market-year]");
-    const monthSelect = panel.querySelector("[data-market-month]");
-    if (yearSelect && !yearSelect.options.length) {
-      const firstYear = Math.min(2025, previous.getFullYear());
-      const lastYear = Math.max(previous.getFullYear() + 1, now.getFullYear());
-      for (let year = lastYear; year >= firstYear; year -= 1) {
-        const option = document.createElement("option");
-        option.value = String(year);
-        option.textContent = String(year);
-        yearSelect.append(option);
-      }
-      yearSelect.value = String(previous.getFullYear());
-    }
-    if (monthSelect && !monthSelect.dataset.initialized) {
-      monthSelect.value = String(previous.getMonth() + 1);
-      monthSelect.dataset.initialized = "1";
-    }
-    updateMarketPreviewButton(panel.dataset.marketImport);
-  });
-}
-
-function resetMarketImport(channel, clearFile = true) {
-  const panel = marketPanel(channel);
+function resetAnalysisImport(kind, clearFile = true) {
+  const panel = analysisPanel(kind);
   if (!panel) return;
-  marketImportState[channel] = { rows: [], preview: null, fileName: "" };
-  panel.querySelector("[data-market-result]").hidden = true;
-  panel.querySelector("[data-market-error]").hidden = true;
-  panel.querySelector("[data-market-progress]").hidden = true;
-  panel.querySelector("[data-market-commit]").disabled = true;
-  if (clearFile) panel.querySelector("[data-market-file]").value = "";
-  updateMarketPreviewButton(channel);
+  ANALYSIS_IMPORT_STATE[kind] = { rows: [], preview: null, fileName: "" };
+  panel.querySelector("[data-analysis-result]").hidden = true;
+  panel.querySelector("[data-analysis-error]").hidden = true;
+  panel.querySelector("[data-analysis-progress]").hidden = true;
+  panel.querySelector("[data-analysis-commit]").disabled = true;
+  if (clearFile) panel.querySelector("[data-analysis-file]").value = "";
+  updateAnalysisPreviewButton(kind);
 }
 
-function updateMarketPreviewButton(channel) {
-  const panel = marketPanel(channel);
+function updateAnalysisPreviewButton(kind) {
+  const panel = analysisPanel(kind);
   if (!panel) return;
-  const file = panel.querySelector("[data-market-file]")?.files?.[0];
-  const button = panel.querySelector("[data-market-preview]");
+  const file = panel.querySelector("[data-analysis-file]")?.files?.[0];
+  const button = panel.querySelector("[data-analysis-preview]");
   if (button) button.disabled = !file || !isSystemAdmin();
 }
 
-function marketHeaderMaps(channel, originalHeaders) {
-  const normalizedToOriginal = new Map(originalHeaders.map((header) => [normalizeMarketHeader(header), header]));
-  const config = MARKET_IMPORT_HEADERS[channel];
-  const missing = Object.entries(config.required)
-    .filter(([, required]) => !normalizedToOriginal.has(required))
-    .map(([key]) => key);
-  const labelByKey = {
-    direction: "Направление",
-    region: "Регион",
-    network: "Сеть DIY",
-    marketQuantity: channel === "diy" ? "Продажи рынка, м²" : "Продажи рынка ТР, м²",
-    vogQuantity: "Продажи ВОГ, м²",
-  };
-  if (missing.length) throw new Error(`Не найдены обязательные столбцы: ${missing.map((key) => labelByKey[key]).join(", ")}.`);
-  const result = {};
-  Object.entries({ ...config.required, ...config.optional }).forEach(([key, normalized]) => {
-    result[key] = normalizedToOriginal.get(normalized) || "";
-  });
-  return result;
+function parseAnalysisMonthValue(value) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return { year: value.getFullYear(), month: value.getMonth() + 1, normalized: `${value.getMonth() + 1} ${value.getFullYear()}` };
+  }
+  if (typeof value === "number" && window.XLSX?.SSF?.parse_date_code) {
+    const decoded = XLSX.SSF.parse_date_code(value);
+    if (decoded?.y && decoded?.m && decoded.y >= 2020 && decoded.y <= 2100) {
+      return { year: Number(decoded.y), month: Number(decoded.m), normalized: `${decoded.m} ${decoded.y}` };
+    }
+  }
+  return parseAnalysisMonthHeader(value);
 }
 
-async function readMarketImportFile(file, channel) {
+function analysisHeaderIndex(row, aliases) {
+  const cells = Array.isArray(row) ? row : [];
+  const normalizedAliases = aliases.map(normalizeAnalysisHeader);
+  for (let index = 0; index < cells.length; index += 1) {
+    const key = normalizeAnalysisHeader(cells[index]);
+    if (!key) continue;
+    if (normalizedAliases.some((alias) => key === alias || key.includes(alias) || alias.includes(key))) return index;
+  }
+  return -1;
+}
+
+function analysisDetectHeaderRow(rows, kind) {
+  const max = Math.min(rows.length, 10);
+  for (let index = 0; index < max; index += 1) {
+    const row = rows[index] || [];
+    const direction = analysisHeaderIndex(row, ["Направление", "Направление деятельности", "Направление деятельности плитка или обои"]);
+    const address = analysisHeaderIndex(row, ["Адрес"]);
+    if (kind === "trt_plan") {
+      const client = analysisHeaderIndex(row, ["Клиент", "Холдинг"]);
+      const trt = analysisHeaderIndex(row, ["Название ТРТ", "ТРТ", "Торговая точка"]);
+      if (direction >= 0 && client >= 0 && trt >= 0) return index;
+    } else {
+      const network = analysisHeaderIndex(row, ["Магазин сеть", "Магазин", "Сеть DIY", "Сеть"]);
+      if (direction >= 0 && network >= 0 && address >= 0) return index;
+    }
+  }
+  return -1;
+}
+
+async function readAnalysisImportFile(file, kind) {
   if (!window.XLSX) throw new Error("Модуль чтения Excel не загрузился. Обновите страницу и повторите попытку.");
   const buffer = await file.arrayBuffer();
-  const workbook = XLSX.read(buffer, { type: "array", cellDates: false });
-  const sheetName = workbook.SheetNames.includes("Данные") ? "Данные" : workbook.SheetNames[0];
+  const workbook = XLSX.read(buffer, { type: "array", cellDates: true });
+  const preferred = kind === "trt_plan" ? "Планы ТРТ" : "DIY sell-out";
+  const sheetName = workbook.SheetNames.includes(preferred) ? preferred : workbook.SheetNames[0];
   if (!sheetName) throw new Error("В Excel-файле нет листов.");
-  const rawRows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { defval: "", raw: true });
-  if (!rawRows.length) throw new Error("На листе «Данные» нет строк с данными.");
-  const originalHeaders = Object.keys(rawRows[0]);
-  const columns = marketHeaderMaps(channel, originalHeaders);
-  const value = (row, key) => columns[key] ? row[columns[key]] : "";
-  return rawRows.map((row, index) => ({
-    rowNumber: index + 2,
-    direction: String(value(row, "direction") ?? "").trim(),
-    region: String(value(row, "region") ?? "").trim(),
-    city: String(value(row, "city") ?? "").trim(),
-    network: String(value(row, "network") ?? "").trim(),
-    storeName: String(value(row, "storeName") ?? "").trim(),
-    address: String(value(row, "address") ?? "").trim(),
-    marketQuantity: value(row, "marketQuantity"),
-    vogQuantity: value(row, "vogQuantity"),
-    targetShare: value(row, "targetShare"),
-    pointCount: value(row, "pointCount"),
-    comment: String(value(row, "comment") ?? "").trim(),
-  }));
+  const matrix = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: "", raw: true });
+  if (!matrix.length) throw new Error(`На листе «${sheetName}» нет строк с данными.`);
+  const headerRowIndex = analysisDetectHeaderRow(matrix, kind);
+  if (headerRowIndex < 0) throw new Error("Не удалось определить строку заголовков. Проверьте первые строки файла.");
+  const headers = matrix[headerRowIndex] || [];
+
+  if (kind === "trt_plan") {
+    const directionCol = analysisHeaderIndex(headers, ["Направление", "Направление деятельности"]);
+    const managerCol = analysisHeaderIndex(headers, ["Менеджер", "Менеджнр"]);
+    const clientCol = analysisHeaderIndex(headers, ["Клиент", "Холдинг"]);
+    const trtCol = analysisHeaderIndex(headers, ["Название ТРТ", "ТРТ", "Торговая точка", "Торговая точка Месторасположение"]);
+    const addressCol = analysisHeaderIndex(headers, ["Адрес"]);
+    const missing = [[directionCol,"Направление"],[clientCol,"Клиент"],[trtCol,"Название ТРТ"]].filter(([col]) => col < 0).map(([,label]) => label);
+    if (missing.length) throw new Error(`Не найдены обязательные столбцы: ${missing.join(", ")}.`);
+    const monthColumns = headers.map((header, column) => ({ column, parsed: parseAnalysisMonthValue(header) })).filter((item) => item.parsed);
+    if (!monthColumns.length) throw new Error("Не найдены месячные столбцы (например «Январь 26» или дата 01.01.2026).");
+    const rows = [];
+    for (let rowIndex = headerRowIndex + 1; rowIndex < matrix.length; rowIndex += 1) {
+      const row = matrix[rowIndex] || [];
+      const trtName = String(row[trtCol] ?? "").trim();
+      const client = String(row[clientCol] ?? "").trim();
+      if (!trtName && !client) continue;
+      monthColumns.forEach(({ column, parsed }) => {
+        const quantity = row[column];
+        if (quantity === "" || quantity === null || quantity === undefined) return;
+        rows.push({
+          rowNumber: rowIndex + 1, year: parsed.year, month: parsed.month,
+          direction: String(row[directionCol] ?? "").trim(),
+          manager: managerCol >= 0 ? String(row[managerCol] ?? "").trim() : "",
+          client, trtName,
+          address: addressCol >= 0 ? String(row[addressCol] ?? "").trim() : "",
+          quantity,
+        });
+      });
+    }
+    if (!rows.length) throw new Error("В месячных столбцах нет значений плана.");
+    return rows;
+  }
+
+  const directionCol = analysisHeaderIndex(headers, ["Направление деятельности", "Направление", "Направление деятельности плитка или обои"]);
+  const networkCol = analysisHeaderIndex(headers, ["Магазин сеть", "Магазин", "Сеть DIY", "Сеть"]);
+  const addressCol = analysisHeaderIndex(headers, ["Адрес"]);
+  const missing = [[directionCol,"Направление деятельности"],[networkCol,"Магазин"],[addressCol,"Адрес"]].filter(([col]) => col < 0).map(([,label]) => label);
+  if (missing.length) throw new Error(`Не найдены обязательные столбцы: ${missing.join(", ")}.`);
+
+  const secondHeader = matrix[headerRowIndex + 1] || [];
+  const hasMetricRow = secondHeader.some((value) => /общие продажи|продажи вог|vog/.test(normalizeAnalysisHeader(value)));
+  const monthPairs = new Map();
+  let carriedMonth = null;
+  const maxCols = Math.max(headers.length, secondHeader.length);
+  for (let column = 0; column < maxCols; column += 1) {
+    const monthHere = parseAnalysisMonthValue(headers[column]);
+    if (monthHere) carriedMonth = monthHere;
+    const parsed = monthHere || carriedMonth;
+    if (!parsed) continue;
+    const metricText = normalizeAnalysisHeader(hasMetricRow ? secondHeader[column] : headers[column]);
+    const flatText = normalizeAnalysisHeader(`${headers[column] ?? ""} ${secondHeader[column] ?? ""}`);
+    const key = `${parsed.year}-${parsed.month}`;
+    if (!monthPairs.has(key)) monthPairs.set(key, { year: parsed.year, month: parsed.month, total: -1, vog: -1 });
+    const item = monthPairs.get(key);
+    const sourceText = metricText || flatText;
+    if (/общие продажи|общий объем|всего/.test(sourceText)) item.total = column;
+    if (/продажи вог|вог нат|vog/.test(sourceText)) item.vog = column;
+  }
+  const pairs = [...monthPairs.values()].filter((item) => item.total >= 0 || item.vog >= 0);
+  if (!pairs.length) throw new Error("Не найдены месячные пары «Общие продажи» / «Продажи ВОГ».");
+  const incomplete = pairs.filter((item) => item.total < 0 || item.vog < 0);
+  if (incomplete.length) throw new Error("Для некоторых месяцев найдена только одна колонка из пары: общие продажи / продажи ВОГ.");
+
+  const rows = [];
+  const dataStart = headerRowIndex + (hasMetricRow ? 2 : 1);
+  for (let rowIndex = dataStart; rowIndex < matrix.length; rowIndex += 1) {
+    const row = matrix[rowIndex] || [];
+    const network = String(row[networkCol] ?? "").trim();
+    const address = String(row[addressCol] ?? "").trim();
+    if (!network && !address) continue;
+    pairs.forEach((item) => {
+      const totalQuantity = row[item.total];
+      const vogQuantity = row[item.vog];
+      if ([totalQuantity, vogQuantity].every((value) => value === "" || value === null || value === undefined)) return;
+      rows.push({
+        rowNumber: rowIndex + 1, year: item.year, month: item.month,
+        direction: String(row[directionCol] ?? "").trim(), network, address, totalQuantity, vogQuantity,
+      });
+    });
+  }
+  if (!rows.length) throw new Error("В месячных столбцах DIY sell-out нет данных.");
+  return rows;
 }
 
-function formatMarketNumber(value) {
+function formatAnalysisNumber(value) {
   const number = Number(value || 0);
   return Number.isFinite(number) ? number.toLocaleString("ru-RU", { maximumFractionDigits: 2 }) : "—";
 }
 
-function marketImportStatusBadge(row) {
-  return row.status === "valid"
-    ? '<span class="badge success">Готово</span>'
-    : '<span class="badge danger">Ошибка</span>';
+function analysisStatusBadge(row) {
+  if (row.status === "matched") return '<span class="badge success">Сопоставлено</span>';
+  if (row.status === "skipped") return '<span class="badge neutral">Пропуск</span>';
+  return '<span class="badge danger">Проверить</span>';
 }
 
-function renderMarketImportPreview(channel, payload) {
-  const panel = marketPanel(channel);
-  if (!panel) return;
-  marketImportState[channel].preview = payload;
-  const summary = payload.summary || {};
-  panel.querySelector("[data-market-total-rows]").textContent = formatMarketNumber(summary.totalRows);
-  panel.querySelector("[data-market-valid-rows]").textContent = formatMarketNumber(summary.validRows);
-  panel.querySelector("[data-market-invalid-rows]").textContent = formatMarketNumber(summary.invalidRows);
-  panel.querySelector("[data-market-total-market]").textContent = `${formatMarketNumber(summary.marketQuantity)} м²`;
-  panel.querySelector("[data-market-total-vog]").textContent = `${formatMarketNumber(summary.vogQuantity)} м²`;
-  panel.querySelector("[data-market-share]").textContent = `${Number(summary.actualShare || 0).toLocaleString("ru-RU", { maximumFractionDigits: 2 })}%`;
+function analysisPeriodLabel(year, month) {
+  return `${SALES_IMPORT_MONTHS[Number(month) - 1] || month} ${year}`;
+}
 
-  const warning = panel.querySelector("[data-market-period-warning]");
-  warning.hidden = !payload.periodExists;
-  warning.textContent = payload.periodExists
-    ? `${payload.channelLabel} за ${payload.periodLabel} уже загружена. При подтверждении будет создана новая версия и сделана активной.`
-    : "";
+
+function analysisManualCandidates(row) {
+  const direction = marketDirectionKey(row.direction);
+  const sourceAddress = normalizeText(row.sourceAddress || row.address || "");
+  const sourceName = normalizeText(row.trtName || row.network || row.client || "");
+  const addressTokens = new Set(sourceAddress.split(/\s+/).filter((token) => token.length >= 3));
+  const nameTokens = new Set(sourceName.split(/\s+/).filter((token) => token.length >= 3));
+  return state.trtPoints.filter((point) => marketDirectionKey(point.direction) === direction).map((point) => {
+    const address = normalizeText(point.address || "");
+    const names = normalizeText(`${trtDisplayName(point)} ${point.holding || ""}`);
+    let score = sourceAddress && address === sourceAddress ? 100 : 0;
+    addressTokens.forEach((token) => { if (address.includes(token)) score += 4; });
+    nameTokens.forEach((token) => { if (names.includes(token)) score += 2; });
+    return { point, score };
+  }).sort((a,b) => b.score - a.score || trtDisplayName(a.point).localeCompare(trtDisplayName(b.point), "ru")).slice(0, 60);
+}
+
+function analysisManualMatchControl(kind, row) {
+  if (["matched", "skipped", "invalid"].includes(String(row.status || ""))) return "";
+  const options = analysisManualCandidates(row).map(({ point, score }) => `<option value="${escapeHtml(point.id)}">${escapeHtml(trtDisplayName(point))} — ${escapeHtml(point.address || "без адреса")}${score ? ` · ${score}` : ""}</option>`).join("");
+  return `<select class="analysis-manual-match-select" data-analysis-manual-select="${escapeHtml(kind)}" data-source-row="${escapeHtml(row.rowNumber)}"><option value="">Выбрать ТРТ вручную…</option>${options}</select>`;
+}
+
+async function repreviewAnalysisImport(kind) {
+  const panel = analysisPanel(kind); const item = ANALYSIS_IMPORT_STATE[kind];
+  if (!panel || !item.rows.length) return;
+  const progress = panel.querySelector("[data-analysis-progress]"); const error = panel.querySelector("[data-analysis-error]");
+  error.hidden = true; progress.hidden = false;
+  try {
+    const payload = await api("/admin/sales-import", { method: "POST", body: JSON.stringify({ scope: "market_analysis", operation: "preview", kind, fileName: item.fileName, rows: item.rows }) });
+    renderAnalysisImportPreview(kind, payload);
+  } catch (err) { error.textContent = err.message; error.hidden = false; }
+  finally { progress.hidden = true; }
+}
+
+function renderAnalysisImportPreview(kind, payload) {
+  const panel = analysisPanel(kind);
+  if (!panel) return;
+  ANALYSIS_IMPORT_STATE[kind].preview = payload;
+  const summary = payload.summary || {};
+  panel.querySelector("[data-analysis-total-rows]").textContent = formatAnalysisNumber(summary.totalRows);
+  panel.querySelector("[data-analysis-matched-rows]").textContent = formatAnalysisNumber(summary.matchedRows);
+  panel.querySelector("[data-analysis-unmatched-rows]").textContent = formatAnalysisNumber(summary.unmatchedRows);
+  panel.querySelector("[data-analysis-invalid-rows]").textContent = formatAnalysisNumber(summary.invalidRows);
+  const periodCount = panel.querySelector("[data-analysis-period-count]");
+  if (periodCount) periodCount.textContent = formatAnalysisNumber(summary.periodCount);
+  panel.querySelector("[data-analysis-total]").textContent = formatAnalysisNumber(summary.totalQuantity);
+  const vogTotal = panel.querySelector("[data-analysis-vog-total]");
+  if (vogTotal) vogTotal.textContent = formatAnalysisNumber(summary.vogQuantity);
+
+  const warning = panel.querySelector("[data-analysis-period-warning]");
+  const existing = Array.isArray(payload.periodsExisting) ? payload.periodsExisting : [];
+  const warnings = [];
+  if (existing.length) warnings.push(`Уже есть активные данные за: ${existing.map((p) => `${analysisPeriodLabel(p.year, p.month)}${p.direction ? ` · ${p.direction}` : ""}`).join(", ")}. При загрузке будет создана новая активная версия.`);
+  if (kind === "trt_plan" && Number(summary.negativeNormalizedRows || 0) > 0) warnings.push(`Отрицательных значений плана: ${Number(summary.negativeNormalizedRows).toLocaleString("ru-RU")}. В расчётах они автоматически заменены на 0.`);
+  if (Number(summary.unmatchedRows || 0) > 0) warnings.push(`Не сопоставлено: ${Number(summary.unmatchedRows).toLocaleString("ru-RU")}. Выберите ТРТ вручную в таблице либо загрузите сопоставленную часть; несопоставленные строки в базу не попадут.`);
+  warning.hidden = warnings.length === 0;
+  warning.textContent = warnings.join(" ");
 
   const rows = Array.isArray(payload.rows) ? payload.rows : [];
-  const body = panel.querySelector("[data-market-preview-body]");
-  body.innerHTML = rows.slice(0, 500).map((row) => {
-    const territory = row.city || "Весь регион";
-    const detail = channel === "diy"
-      ? `<strong>${escapeHtml(row.network || "—")}</strong>${row.storeName ? `<small>${escapeHtml(row.storeName)}</small>` : ""}`
-      : formatMarketNumber(row.pointCount);
-    return `<tr class="market-import-row-${escapeHtml(row.status || "invalid")}">
-      <td>${escapeHtml(row.rowNumber)}</td>
-      <td>${escapeHtml(row.direction || "—")}</td>
-      <td>${escapeHtml(row.region || "—")}</td>
-      <td>${escapeHtml(territory)}</td>
-      <td>${detail}</td>
-      <td>${row.marketQuantity === null || row.marketQuantity === undefined ? "—" : formatMarketNumber(row.marketQuantity)}</td>
-      <td>${row.vogQuantity === null || row.vogQuantity === undefined ? "—" : formatMarketNumber(row.vogQuantity)}</td>
-      <td>${Number(row.actualShare || 0).toLocaleString("ru-RU", { maximumFractionDigits: 2 })}%</td>
-      <td>${marketImportStatusBadge(row)}${row.message ? `<small>${escapeHtml(row.message)}</small>` : ""}</td>
-    </tr>`;
+  const problemBySource = new Map();
+  rows.filter((row) => !["matched", "skipped"].includes(String(row.status || ""))).forEach((row) => {
+    const key = `${row.rowNumber}|${row.direction || ""}`;
+    if (!problemBySource.has(key)) problemBySource.set(key, row);
+  });
+  const problemRows = [...problemBySource.values()];
+  const normalRows = rows.filter((row) => ["matched", "skipped"].includes(String(row.status || "")));
+  const displayRows = [...problemRows, ...normalRows].slice(0, Math.max(500, problemRows.length));
+  const body = panel.querySelector("[data-analysis-preview-body]");
+  body.innerHTML = displayRows.map((row) => {
+    const period = analysisPeriodLabel(row.year, row.month);
+    const autoMatch = row.matchedName ? `<strong>${escapeHtml(row.matchedName)}</strong>${row.matchedAddress || row.address ? `<small>${escapeHtml(row.matchedAddress || row.address)}</small>` : ""}` : "—";
+    const manualControl = analysisManualMatchControl(kind, row);
+    const match = `${autoMatch}${manualControl}`;
+    if (kind === "trt_plan") {
+      return `<tr><td>${escapeHtml(row.rowNumber)}</td><td>${escapeHtml(period)}</td><td>${escapeHtml(row.direction || "—")}</td><td>${escapeHtml(row.client || "—")}</td><td>${escapeHtml(row.trtName || "—")}</td><td>${formatAnalysisNumber(row.quantity)}</td><td>${match}</td><td>${analysisStatusBadge(row)}${row.message ? `<small>${escapeHtml(row.message)}</small>` : ""}</td></tr>`;
+    }
+    return `<tr><td>${escapeHtml(row.rowNumber)}</td><td>${escapeHtml(period)}</td><td>${escapeHtml(row.direction || "—")}</td><td>${escapeHtml(row.network || "—")}</td><td>${escapeHtml(row.address || "—")}</td><td>${formatAnalysisNumber(row.totalQuantity)}</td><td>${formatAnalysisNumber(row.vogQuantity)}</td><td>${match}</td><td>${analysisStatusBadge(row)}${row.message ? `<small>${escapeHtml(row.message)}</small>` : ""}</td></tr>`;
   }).join("");
-  if (rows.length > 500) body.insertAdjacentHTML("beforeend", `<tr><td colspan="9"><small>Показаны первые 500 строк из ${rows.length.toLocaleString("ru-RU")}.</small></td></tr>`);
-
-  panel.querySelector("[data-market-result]").hidden = false;
-  panel.querySelector("[data-market-commit]").disabled = Number(summary.invalidRows || 0) > 0 || Number(summary.validRows || 0) === 0;
+  const colspan = kind === "trt_plan" ? 8 : 9;
+  if (rows.length > displayRows.length) body.insertAdjacentHTML("beforeend", `<tr><td colspan="${colspan}"><small>Сначала показаны все строки, требующие решения, затем часть сопоставленных значений. Всего значений: ${rows.length.toLocaleString("ru-RU")}.</small></td></tr>`);
+  panel.querySelector("[data-analysis-result]").hidden = false;
+  panel.querySelector("[data-analysis-commit]").disabled = Number(summary.invalidRows || 0) > 0 || Number(summary.matchedRows || 0) === 0;
 }
 
-async function previewMarketImport(channel) {
+async function previewAnalysisImport(kind) {
   if (!isSystemAdmin()) return;
-  const panel = marketPanel(channel);
-  const file = panel?.querySelector("[data-market-file]")?.files?.[0];
+  const panel = analysisPanel(kind);
+  const file = panel?.querySelector("[data-analysis-file]")?.files?.[0];
   if (!panel || !file) return;
-  const error = panel.querySelector("[data-market-error]");
-  const progress = panel.querySelector("[data-market-progress]");
-  error.hidden = true;
-  panel.querySelector("[data-market-result]").hidden = true;
-  progress.hidden = false;
-  panel.querySelector("[data-market-preview]").disabled = true;
+  const error = panel.querySelector("[data-analysis-error]");
+  const progress = panel.querySelector("[data-analysis-progress]");
+  error.hidden = true; panel.querySelector("[data-analysis-result]").hidden = true; progress.hidden = false;
+  panel.querySelector("[data-analysis-preview]").disabled = true;
   try {
-    const rows = await readMarketImportFile(file, channel);
-    marketImportState[channel].rows = rows;
-    marketImportState[channel].fileName = file.name;
-    const payload = await api("/admin/sales-import", {
-      method: "POST",
-      body: JSON.stringify({
-        scope: "market",
-        operation: "preview",
-        channel,
-        year: Number(panel.querySelector("[data-market-year]").value),
-        month: Number(panel.querySelector("[data-market-month]").value),
-        fileName: file.name,
-        rows,
-      }),
-    });
-    renderMarketImportPreview(channel, payload);
+    await ensureTrtData();
+    const rows = await readAnalysisImportFile(file, kind);
+    ANALYSIS_IMPORT_STATE[kind] = { rows, preview: null, fileName: file.name };
+    const payload = await api("/admin/sales-import", { method: "POST", body: JSON.stringify({ scope: "market_analysis", operation: "preview", kind, fileName: file.name, rows }) });
+    renderAnalysisImportPreview(kind, payload);
   } catch (err) {
-    error.textContent = err.message;
-    error.hidden = false;
+    error.textContent = err.message; error.hidden = false;
   } finally {
-    progress.hidden = true;
-    updateMarketPreviewButton(channel);
+    progress.hidden = true; updateAnalysisPreviewButton(kind);
   }
 }
 
-async function commitMarketImport(channel) {
+async function commitAnalysisImport(kind) {
   if (!isSystemAdmin()) return;
-  const panel = marketPanel(channel);
-  const item = marketImportState[channel];
+  const panel = analysisPanel(kind); const item = ANALYSIS_IMPORT_STATE[kind];
   if (!panel || !item.preview || !item.rows.length) return;
-  const year = Number(panel.querySelector("[data-market-year]").value);
-  const month = Number(panel.querySelector("[data-market-month]").value);
-  const period = `${SALES_IMPORT_MONTHS[month - 1]} ${year}`;
-  const replace = Boolean(item.preview.periodExists);
-  const question = replace
-    ? `Загрузить новую активную версию «${MARKET_IMPORT_LABELS[channel]}» за ${period}? Предыдущая версия останется в истории.`
-    : `Загрузить «${MARKET_IMPORT_LABELS[channel]}» за ${period}?`;
-  if (!window.confirm(question)) return;
-  const button = panel.querySelector("[data-market-commit]");
-  const error = panel.querySelector("[data-market-error]");
-  error.hidden = true;
-  button.disabled = true;
-  button.textContent = "Загрузка…";
+  const replace = Array.isArray(item.preview.periodsExisting) && item.preview.periodsExisting.length > 0;
+  const label = kind === "trt_plan" ? "планы ТРТ" : "DIY sell-out";
+  if (!window.confirm(replace ? `Загрузить новую активную версию «${label}» для месяцев из файла? Предыдущие версии останутся в истории.` : `Загрузить ${label}?`)) return;
+  const button = panel.querySelector("[data-analysis-commit]"); const error = panel.querySelector("[data-analysis-error]");
+  error.hidden = true; button.disabled = true; const original = button.textContent; button.textContent = "Загрузка…";
   try {
-    const result = await api("/admin/sales-import", {
-      method: "POST",
-      body: JSON.stringify({
-        scope: "market",
-        operation: "commit",
-        channel,
-        year,
-        month,
-        fileName: item.fileName,
-        replace,
-        rows: item.rows,
-      }),
-    });
-    showToast(result.message || `Данные ${MARKET_IMPORT_LABELS[channel]} загружены.`);
-    resetMarketImport(channel, true);
+    const result = await api("/admin/sales-import", { method: "POST", body: JSON.stringify({ scope: "market_analysis", operation: "commit", kind, fileName: item.fileName, replace, rows: item.rows }) });
+    state.marketAnalysis = { loaded: false, catalog: null, plans: [], diy: [] };
+    showToast(result.message || "Данные загружены."); resetAnalysisImport(kind, true);
   } catch (err) {
-    error.textContent = err.message;
-    error.hidden = false;
-    button.disabled = false;
-  } finally {
-    button.textContent = channel === "diy" ? "Загрузить DIY" : "Загрузить ТР";
-  }
+    error.textContent = err.message; error.hidden = false; button.disabled = false;
+  } finally { button.textContent = original; }
 }
 
-function downloadMarketTemplate(channel) {
+function downloadAnalysisTemplate(kind) {
   if (!window.XLSX) return showToast("Модуль Excel не загрузился");
-  const diy = channel === "diy";
-  const headers = diy
-    ? ["Направление","Регион","Город","Сеть DIY","Магазин / ТРТ","Адрес","Продажи рынка, м²","Продажи ВОГ, м²","Целевая доля ВОГ, %","Количество магазинов","Комментарий"]
-    : ["Направление","Регион","Город","Продажи рынка ТР, м²","Продажи ВОГ, м²","Количество ТРТ","Целевая доля ВОГ, %","Комментарий"];
-  const example = diy
-    ? [["Плитка","Тверская область","","Лемана ПРО","","",180000,55000,35,3,"Агрегат по сети в регионе"]]
-    : [["Плитка","Тверская область","",500000,100000,240,22,"Агрегат по региону"]];
   const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([headers]), "Данные");
-  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([headers, ...example]), "Пример");
-  XLSX.writeFile(workbook, diy ? "VOG_Шаблон_рынок_DIY.xlsx" : "VOG_Шаблон_традиционная_розница.xlsx");
+  if (kind === "trt_plan") {
+    const headers = ["Направление","Менеджер","Клиент","Название ТРТ","Адрес","Январь 26","Февраль 26","Март 26","Апрель 26","Май 26","Июнь 26","Июль 26"];
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([headers]), "Планы ТРТ");
+    XLSX.writeFile(workbook, "VOG_Шаблон_планы_ТРТ.xlsx");
+    return;
+  }
+  const monthNames = ["Январь 25","Февраль 25","Март 25","Апрель 25","Май 25","Июнь 25","Июль 25","Август 25","Сентябрь 25","Октябрь 25","Ноябрь 25","Декабрь 25","Январь 26","Февраль 26","Март 26","Апрель 26","Май 26","Июнь 26","Июль 26"];
+  const top = ["Направление деятельности (плитка или обои)","Магазин","Адрес"];
+  const metrics = ["","",""];
+  monthNames.forEach((month) => { top.push(month, ""); metrics.push("Общие продажи, нат ед", "Продажи ВОГ, нат ед"); });
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([top, metrics]), "DIY sell-out");
+  XLSX.writeFile(workbook, "VOG_Шаблон_DIY_sell_out.xlsx");
 }
 
 async function logout() {
@@ -4535,6 +4829,32 @@ $("region-inspector-city-body")?.addEventListener("click", (event) => {
   detail.hidden = !expanded;
   button.textContent = expanded ? "−" : "+";
   button.setAttribute("aria-expanded", expanded ? "true" : "false");
+});
+
+
+document.addEventListener("change", (event) => {
+  const select = event.target.closest?.("[data-analysis-manual-select]");
+  if (!select || !select.value) return;
+  const kind = select.dataset.analysisManualSelect;
+  const sourceRow = Number(select.dataset.sourceRow || 0);
+  (ANALYSIS_IMPORT_STATE[kind]?.rows || []).forEach((row) => {
+    if (Number(row.rowNumber) === sourceRow) row.manualPointId = select.value;
+  });
+  repreviewAnalysisImport(kind);
+});
+
+[["region-analysis-direction", "direction"], ["region-directory-direction", "direction"], ["region-analysis-year", "year"], ["region-directory-year", "year"], ["region-analysis-month", "month"], ["region-directory-month", "month"]].forEach(([id, kind]) => {
+  $(id)?.addEventListener("change", (event) => {
+    if (kind === "direction") marketAnalysisDirection = marketDirectionKey(event.target.value);
+    if (kind === "year") marketAnalysisYear = Number(event.target.value);
+    if (kind === "month") marketAnalysisMonth = Number(event.target.value);
+    refreshOpenRegionAnalysis();
+  });
+});
+$("region-directory-search")?.addEventListener("input", renderRegionAnalyticsDirectory);
+$("region-directory-list")?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-region-open]");
+  if (button) openRegionInspectorByKey(button.dataset.regionOpen);
 });
 
 document.querySelectorAll("[data-nav-group]").forEach((button) => {
@@ -5003,18 +5323,13 @@ $("sales-import-commit-button").addEventListener("click", commitSalesImport);
 document.querySelectorAll("[data-import-tab]").forEach((button) => {
   button.addEventListener("click", () => setDataImportTab(button.dataset.importTab));
 });
-document.querySelectorAll("[data-market-import]").forEach((panel) => {
-  const channel = panel.dataset.marketImport;
-  panel.querySelector("[data-market-file]")?.addEventListener("change", () => {
-    resetMarketImport(channel, false);
-    updateMarketPreviewButton(channel);
-  });
-  panel.querySelector("[data-market-year]")?.addEventListener("change", () => resetMarketImport(channel, false));
-  panel.querySelector("[data-market-month]")?.addEventListener("change", () => resetMarketImport(channel, false));
-  panel.querySelector("[data-market-preview]")?.addEventListener("click", () => previewMarketImport(channel));
-  panel.querySelector("[data-market-reset]")?.addEventListener("click", () => resetMarketImport(channel, true));
-  panel.querySelector("[data-market-commit]")?.addEventListener("click", () => commitMarketImport(channel));
-  panel.querySelector("[data-market-template]")?.addEventListener("click", () => downloadMarketTemplate(channel));
+document.querySelectorAll("[data-analysis-import]").forEach((panel) => {
+  const kind = panel.dataset.analysisImport;
+  panel.querySelector("[data-analysis-file]")?.addEventListener("change", () => updateAnalysisPreviewButton(kind));
+  panel.querySelector("[data-analysis-preview]")?.addEventListener("click", () => previewAnalysisImport(kind));
+  panel.querySelector("[data-analysis-reset]")?.addEventListener("click", () => resetAnalysisImport(kind, true));
+  panel.querySelector("[data-analysis-commit]")?.addEventListener("click", () => commitAnalysisImport(kind));
+  panel.querySelector("[data-analysis-template]")?.addEventListener("click", () => downloadAnalysisTemplate(kind));
 });
 
 ["activity-search", "activity-employee-filter", "activity-action-filter", "activity-source-filter", "activity-date-from", "activity-date-to"].forEach((id) => {

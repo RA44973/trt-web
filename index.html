@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#384e86">
-  <meta name="vog-web-version" content="8.11">
+  <meta name="vog-web-version" content="8.12">
   <title>ТК ВОГ Офис</title>
   <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=20260810-gdebenz-v8-0">
   <link rel="apple-touch-icon" sizes="192x192" href="icon-192.png?v=20260810-gdebenz-v8-0">
@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
-  <link rel="stylesheet" href="styles.css?v=20260811-regions-v8-11">
+  <link rel="stylesheet" href="styles.css?v=20260811-regional-analytics-v8-12">
 </head>
 <body>
   <div id="toast" class="toast" hidden></div>
@@ -77,6 +77,7 @@
             <span class="nav-icon nav-icon-svg" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 19V9M12 19V5M19 19v-7"/><path d="M3 19h18"/></svg></span><span class="nav-label">Аналитика</span><span class="nav-chevron" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="m6.5 8 3.5 3.5L13.5 8"/></svg></span>
           </button>
           <div class="nav-submenu" data-nav-submenu="analytics" hidden>
+            <button class="nav-subitem" type="button" data-page="region-analytics">Регионы</button>
             <button class="nav-subitem" type="button" data-page="logistics">Логистика</button>
           </div>
         </div>
@@ -114,32 +115,78 @@
       </section>
 
       <section id="region-inspector-view" class="map-inspector-view region-inspector-view" hidden>
-        <div class="region-inspector-title-row">
-          <div>
-            <span class="region-mock-badge">Макет данных</span>
+        <div class="region-dashboard-header">
+          <div class="region-dashboard-title">
+            <span class="region-live-badge">Региональная аналитика</span>
             <h2 id="region-inspector-name">Регион</h2>
-            <p class="map-inspector-muted">Население: <strong id="region-inspector-population">—</strong></p>
+            <p class="map-inspector-muted">Население рынка: <strong id="region-inspector-population">—</strong></p>
           </div>
-          <div class="region-top-metrics">
-            <article><span>Средние продажи ВОГ / мес.<small>последние 3 месяца</small></span><strong id="region-inspector-sales">—</strong></article>
-            <article><span>Потенциал / мес.</span><strong id="region-inspector-potential">—</strong></article>
-            <article><span>Доля ВОГ</span><strong id="region-inspector-share">—</strong></article>
+          <div class="region-dashboard-controls" aria-label="Параметры анализа">
+            <label><span>Направление</span><select id="region-analysis-direction"><option value="обои">Обои</option><option value="плитка">Плитка</option></select></label>
+            <label><span>Год</span><select id="region-analysis-year"></select></label>
+            <label><span>Месяц</span><select id="region-analysis-month">
+              <option value="1">Январь</option><option value="2">Февраль</option><option value="3">Март</option><option value="4">Апрель</option><option value="5">Май</option><option value="6">Июнь</option><option value="7">Июль</option><option value="8">Август</option><option value="9">Сентябрь</option><option value="10">Октябрь</option><option value="11">Ноябрь</option><option value="12">Декабрь</option>
+            </select></label>
           </div>
         </div>
-        <p class="region-inspector-note">Цифры в этой карточке пока демонстрационные. Структура и взаимодействие уже рабочие; далее подключим таблицу с реальными данными.</p>
-        <div class="region-table-wrap">
-          <table class="region-city-table">
-            <thead>
-              <tr>
-                <th>Город</th>
-                <th>Население</th>
-                <th>Потенциал / мес.</th>
-                <th>Продажи ВОГ / мес.<small>среднее за 3 мес.</small></th>
-                <th>Доля ВОГ</th>
-              </tr>
-            </thead>
-            <tbody id="region-inspector-city-body"></tbody>
-          </table>
+
+        <div id="region-analysis-loading" class="loading-state" hidden>Загрузка региональной аналитики…</div>
+        <div id="region-analysis-error" class="form-error" hidden></div>
+        <div id="region-analysis-content">
+          <div class="region-kpi-grid">
+            <article><span>Потенциал рынка / мес.</span><strong id="region-kpi-potential">—</strong><small id="region-kpi-potential-unit">—</small></article>
+            <article><span>Цель ВОГ</span><strong id="region-kpi-target">—</strong><small id="region-kpi-target-share">—</small></article>
+            <article><span>Факт ВОГ</span><strong id="region-kpi-fact">—</strong><small>DIY + распределённый факт ТРТ</small></article>
+            <article><span>Доля ВОГ</span><strong id="region-kpi-share">—</strong><small id="region-kpi-share-gap">—</small></article>
+            <article class="region-kpi-deficit"><span>Не хватает до цели</span><strong id="region-kpi-deficit">—</strong><small id="region-kpi-deficit-note">—</small></article>
+          </div>
+
+          <div class="region-channel-grid">
+            <article class="region-structure-card">
+              <div class="region-card-heading"><div><span>Структура рынка</span><strong>DIY и остальной рынок</strong></div></div>
+              <div class="region-donut-row">
+                <div class="region-donut" id="region-market-donut"><div><strong id="region-market-diy-share">—</strong><span>DIY</span></div></div>
+                <div class="region-donut-copy">
+                  <p><i class="dot diy"></i><span>DIY sell-out</span><strong id="region-market-diy-total">—</strong></p>
+                  <p><i class="dot other"></i><span>Остальной рынок</span><strong id="region-market-other-total">—</strong></p>
+                  <small>Остальной рынок — потенциал региона за вычетом известного sell-out DIY.</small>
+                </div>
+              </div>
+            </article>
+
+            <article class="region-channel-card region-channel-diy">
+              <div class="region-card-heading"><div><span>Канал DIY</span><strong>Sell-out сетей</strong></div><b id="region-diy-network-count">—</b></div>
+              <dl>
+                <div><dt>Рынок DIY</dt><dd id="region-diy-market">—</dd></div>
+                <div><dt>Продажи ВОГ</dt><dd id="region-diy-vog">—</dd></div>
+                <div><dt>Доля ВОГ внутри DIY</dt><dd id="region-diy-share-inside">—</dd></div>
+                <div><dt>Вклад DIY в долю региона</dt><dd id="region-diy-share-region">—</dd></div>
+              </dl>
+            </article>
+
+            <article class="region-channel-card region-channel-trt">
+              <div class="region-card-heading"><div><span>Традиционная розница</span><strong>План / факт ТРТ</strong></div><b id="region-trt-count">—</b></div>
+              <dl>
+                <div><dt>Требуется от ТРТ</dt><dd id="region-trt-required">—</dd></div>
+                <div><dt>Установленный план</dt><dd id="region-trt-plan">—</dd></div>
+                <div><dt>Распределённый факт</dt><dd id="region-trt-fact">—</dd></div>
+                <div><dt>Выполнение плана</dt><dd id="region-trt-completion">—</dd></div>
+              </dl>
+            </article>
+          </div>
+
+          <div id="region-diagnosis" class="region-diagnosis"><span>Диагностика</span><strong id="region-diagnosis-title">—</strong><p id="region-diagnosis-text">—</p></div>
+          <p id="region-data-note" class="region-data-note"></p>
+
+          <div class="region-table-heading"><div><span>Города и агломерации</span><strong>Где формируется доля и где нужен рост</strong></div></div>
+          <div class="region-table-wrap">
+            <table class="region-city-table region-analysis-table">
+              <thead><tr>
+                <th>Город / агломерация</th><th>Население</th><th>Потенциал</th><th>Цель ВОГ</th><th>DIY ВОГ</th><th>План ТРТ</th><th>Факт ТРТ</th><th>Доля ВОГ</th><th>Дефицит</th>
+              </tr></thead>
+              <tbody id="region-inspector-city-body"></tbody>
+            </table>
+          </div>
         </div>
       </section>
     </aside>
@@ -365,6 +412,25 @@
       </section>
 
 
+      <section id="page-region-analytics" class="page-view" hidden>
+        <header class="page-header region-directory-header">
+          <div><p class="eyebrow">Аналитика</p><h1>Регионы</h1><p class="page-description">Один и тот же региональный дашборд открывается из списка или с карты. Выберите регион для детального разбора.</p></div>
+          <div class="region-directory-controls">
+            <label><span>Направление</span><select id="region-directory-direction"><option value="обои">Обои</option><option value="плитка">Плитка</option></select></label>
+            <label><span>Год</span><select id="region-directory-year"></select></label>
+            <label><span>Месяц</span><select id="region-directory-month">
+              <option value="1">Январь</option><option value="2">Февраль</option><option value="3">Март</option><option value="4">Апрель</option><option value="5">Май</option><option value="6">Июнь</option><option value="7">Июль</option><option value="8">Август</option><option value="9">Сентябрь</option><option value="10">Октябрь</option><option value="11">Ноябрь</option><option value="12">Декабрь</option>
+            </select></label>
+          </div>
+        </header>
+        <div id="region-directory-error" class="form-error" hidden></div>
+        <div id="region-directory-loading" class="loading-state" hidden>Загрузка регионов…</div>
+        <section class="content-card region-directory-card">
+          <div class="table-toolbar"><label class="search-field"><span>Поиск региона</span><input id="region-directory-search" type="search" placeholder="Например: Ярославская область"></label></div>
+          <div id="region-directory-list" class="region-directory-list"></div>
+        </section>
+      </section>
+
       <section id="page-logistics" class="page-view" hidden>
         <header class="page-header logistics-page-header">
           <div><p class="eyebrow">Аналитика</p><h1>Логистика</h1><p class="page-description">Рейсы, затраты на доставку, сопоставление клиентов, склады и автомобили.</p></div>
@@ -432,14 +498,14 @@
           <div>
             <p class="eyebrow">Настройки · Загрузка</p>
             <h1>Загрузка данных</h1>
-            <p class="page-description">Продажи ВОГ и данные рынка для аналитики регионов. Каждый файл сначала проверяется, затем загружается как новая версия выбранного месяца.</p>
+            <p class="page-description">Продажи ВОГ, планы ТРТ и DIY sell-out для региональной аналитики. Каждый файл сначала проверяется; месячные данные сохраняются с историей версий.</p>
           </div>
         </header>
 
         <div class="data-import-tabs" role="tablist" aria-label="Тип загружаемых данных">
           <button class="data-import-tab active" type="button" data-import-tab="sales">Продажи ВОГ</button>
-          <button class="data-import-tab" type="button" data-import-tab="diy">Рынок DIY</button>
-          <button class="data-import-tab" type="button" data-import-tab="traditional">Традиционная розница</button>
+          <button class="data-import-tab" type="button" data-import-tab="trt-plan">Планы ТРТ</button>
+          <button class="data-import-tab" type="button" data-import-tab="diy-sellout">DIY sell-out</button>
         </div>
 
         <section data-import-panel="sales">
@@ -463,42 +529,38 @@
           </section>
         </section>
 
-        <section data-import-panel="diy" hidden>
-          <section class="content-card market-import-card" data-market-import="diy">
-            <div class="section-heading market-import-heading"><div><h2>Рынок DIY</h2><p>Продажи DIY-сетей и продажи ВОГ внутри этого канала. Допускается агрегат по сети в регионе или детализация по городу/магазину.</p></div><button class="secondary-button" type="button" data-market-template>Скачать шаблон DIY</button></div>
+        <section data-import-panel="trt-plan" hidden>
+          <section class="content-card market-import-card" data-analysis-import="trt_plan">
+            <div class="section-heading market-import-heading"><div><h2>Планы ТРТ</h2><p>Помесячный план по ТРТ. Адрес используется как сильный признак сопоставления; регион, город и координаты подтягиваются из справочника ТРТ.</p></div><button class="secondary-button" type="button" data-analysis-template>Скачать шаблон</button></div>
             <div class="market-import-period-grid">
-              <label>Год<select data-market-year></select></label>
-              <label>Месяц<select data-market-month><option value="1">Январь</option><option value="2">Февраль</option><option value="3">Март</option><option value="4">Апрель</option><option value="5">Май</option><option value="6">Июнь</option><option value="7">Июль</option><option value="8">Август</option><option value="9">Сентябрь</option><option value="10">Октябрь</option><option value="11">Ноябрь</option><option value="12">Декабрь</option></select></label>
-              <label class="market-import-file-field">Excel-файл<input data-market-file type="file" accept=".xlsx,.xls"></label>
-              <button class="primary-button" type="button" data-market-preview disabled>Проверить файл</button>
+              <label class="market-import-file-field">Excel-файл<input data-analysis-file type="file" accept=".xlsx,.xls"></label>
+              <button class="primary-button" type="button" data-analysis-preview disabled>Проверить файл</button>
             </div>
-            <div class="market-import-help"><strong>Обязательные:</strong><span>Направление</span><span>Регион</span><span>Сеть DIY</span><span>Продажи рынка, м²</span><span>Продажи ВОГ, м²</span><em>Город, магазин, адрес, цель и количество магазинов — необязательные.</em></div>
-            <div class="form-error" data-market-error hidden></div><div class="loading-state" data-market-progress hidden>Проверка файла…</div>
-            <section class="market-import-result" data-market-result hidden>
-              <div class="market-import-summary-grid"><article><span>Строк</span><strong data-market-total-rows>0</strong></article><article><span>Корректно</span><strong data-market-valid-rows>0</strong></article><article><span>Ошибок</span><strong data-market-invalid-rows>0</strong></article><article><span>Рынок</span><strong data-market-total-market>0</strong></article><article><span>ВОГ</span><strong data-market-total-vog>0</strong></article><article><span>Доля ВОГ</span><strong data-market-share>0%</strong></article></div>
-              <div class="sales-import-warning" data-market-period-warning hidden></div>
-              <div class="table-wrap market-import-table-wrap"><table class="market-import-table"><thead><tr><th>Строка</th><th>Направление</th><th>Регион</th><th>Город</th><th>Сеть / магазин</th><th>Рынок, м²</th><th>ВОГ, м²</th><th>Доля</th><th>Результат</th></tr></thead><tbody data-market-preview-body></tbody></table></div>
-              <div class="sales-import-actions"><button class="secondary-button" type="button" data-market-reset>Выбрать другой файл</button><button class="primary-button" type="button" data-market-commit disabled>Загрузить DIY</button></div>
+            <div class="market-import-help"><strong>Обязательные:</strong><span>Направление</span><span>Менеджер</span><span>Клиент</span><span>Название ТРТ</span><span>месячные столбцы</span><em>Адрес — желательно для точного сопоставления. Пустой месяц = данных нет. Любой отрицательный план автоматически считается равным 0.</em></div>
+            <div class="form-error" data-analysis-error hidden></div><div class="loading-state" data-analysis-progress hidden>Проверка файла…</div>
+            <section class="market-import-result" data-analysis-result hidden>
+              <div class="market-import-summary-grid"><article><span>Значений</span><strong data-analysis-total-rows>0</strong></article><article><span>Сопоставлено</span><strong data-analysis-matched-rows>0</strong></article><article><span>Не сопоставлено</span><strong data-analysis-unmatched-rows>0</strong></article><article><span>Ошибок</span><strong data-analysis-invalid-rows>0</strong></article><article><span>Месяцев</span><strong data-analysis-period-count>0</strong></article><article><span>Сумма плана</span><strong data-analysis-total>0</strong></article></div>
+              <div class="sales-import-warning" data-analysis-period-warning hidden></div>
+              <div class="table-wrap market-import-table-wrap"><table class="market-import-table"><thead><tr><th>Строка</th><th>Период</th><th>Направление</th><th>Клиент</th><th>ТРТ</th><th>План</th><th>Совпадение</th><th>Результат</th></tr></thead><tbody data-analysis-preview-body></tbody></table></div>
+              <div class="sales-import-actions"><button class="secondary-button" type="button" data-analysis-reset>Выбрать другой файл</button><button class="primary-button" type="button" data-analysis-commit disabled>Загрузить планы</button></div>
             </section>
           </section>
         </section>
 
-        <section data-import-panel="traditional" hidden>
-          <section class="content-card market-import-card" data-market-import="traditional">
-            <div class="section-heading market-import-heading"><div><h2>Традиционная розница</h2><p>Оценка рынка традиционной розницы и продаж ВОГ. Можно загружать данные агрегировано по региону или детально по городам.</p></div><button class="secondary-button" type="button" data-market-template>Скачать шаблон ТР</button></div>
+        <section data-import-panel="diy-sellout" hidden>
+          <section class="content-card market-import-card" data-analysis-import="diy_sellout">
+            <div class="section-heading market-import-heading"><div><h2>DIY sell-out</h2><p>Единственный источник фактических продаж DIY для региональной аналитики. Магазины сопоставляются с объектами на карте по сети, адресу и направлению.</p></div><button class="secondary-button" type="button" data-analysis-template>Скачать шаблон</button></div>
             <div class="market-import-period-grid">
-              <label>Год<select data-market-year></select></label>
-              <label>Месяц<select data-market-month><option value="1">Январь</option><option value="2">Февраль</option><option value="3">Март</option><option value="4">Апрель</option><option value="5">Май</option><option value="6">Июнь</option><option value="7">Июль</option><option value="8">Август</option><option value="9">Сентябрь</option><option value="10">Октябрь</option><option value="11">Ноябрь</option><option value="12">Декабрь</option></select></label>
-              <label class="market-import-file-field">Excel-файл<input data-market-file type="file" accept=".xlsx,.xls"></label>
-              <button class="primary-button" type="button" data-market-preview disabled>Проверить файл</button>
+              <label class="market-import-file-field">Excel-файл<input data-analysis-file type="file" accept=".xlsx,.xls"></label>
+              <button class="primary-button" type="button" data-analysis-preview disabled>Проверить файл</button>
             </div>
-            <div class="market-import-help"><strong>Обязательные:</strong><span>Направление</span><span>Регион</span><span>Продажи рынка ТР, м²</span><span>Продажи ВОГ, м²</span><em>Город, количество ТРТ и целевая доля — необязательные.</em></div>
-            <div class="form-error" data-market-error hidden></div><div class="loading-state" data-market-progress hidden>Проверка файла…</div>
-            <section class="market-import-result" data-market-result hidden>
-              <div class="market-import-summary-grid"><article><span>Строк</span><strong data-market-total-rows>0</strong></article><article><span>Корректно</span><strong data-market-valid-rows>0</strong></article><article><span>Ошибок</span><strong data-market-invalid-rows>0</strong></article><article><span>Рынок</span><strong data-market-total-market>0</strong></article><article><span>ВОГ</span><strong data-market-total-vog>0</strong></article><article><span>Доля ВОГ</span><strong data-market-share>0%</strong></article></div>
-              <div class="sales-import-warning" data-market-period-warning hidden></div>
-              <div class="table-wrap market-import-table-wrap"><table class="market-import-table"><thead><tr><th>Строка</th><th>Направление</th><th>Регион</th><th>Город</th><th>Количество ТРТ</th><th>Рынок, м²</th><th>ВОГ, м²</th><th>Доля</th><th>Результат</th></tr></thead><tbody data-market-preview-body></tbody></table></div>
-              <div class="sales-import-actions"><button class="secondary-button" type="button" data-market-reset>Выбрать другой файл</button><button class="primary-button" type="button" data-market-commit disabled>Загрузить ТР</button></div>
+            <div class="market-import-help"><strong>Обязательные:</strong><span>Направление деятельности</span><span>Магазин (сеть)</span><span>Адрес</span><span>пары месячных столбцов: Общие продажи / Продажи ВОГ</span></div>
+            <div class="form-error" data-analysis-error hidden></div><div class="loading-state" data-analysis-progress hidden>Проверка файла…</div>
+            <section class="market-import-result" data-analysis-result hidden>
+              <div class="market-import-summary-grid"><article><span>Значений</span><strong data-analysis-total-rows>0</strong></article><article><span>Сопоставлено</span><strong data-analysis-matched-rows>0</strong></article><article><span>Не сопоставлено</span><strong data-analysis-unmatched-rows>0</strong></article><article><span>Ошибок</span><strong data-analysis-invalid-rows>0</strong></article><article><span>Общие продажи</span><strong data-analysis-total>0</strong></article><article><span>Продажи ВОГ</span><strong data-analysis-vog-total>0</strong></article></div>
+              <div class="sales-import-warning" data-analysis-period-warning hidden></div>
+              <div class="table-wrap market-import-table-wrap"><table class="market-import-table"><thead><tr><th>Строка</th><th>Период</th><th>Направление</th><th>Сеть</th><th>Адрес</th><th>Всего</th><th>ВОГ</th><th>Совпадение</th><th>Результат</th></tr></thead><tbody data-analysis-preview-body></tbody></table></div>
+              <div class="sales-import-actions"><button class="secondary-button" type="button" data-analysis-reset>Выбрать другой файл</button><button class="primary-button" type="button" data-analysis-commit disabled>Загрузить DIY sell-out</button></div>
             </section>
           </section>
         </section>
@@ -1058,6 +1120,6 @@
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <script src="app.js?v=20260811-regions-v8-11"></script>
+  <script src="app.js?v=20260811-market-analysis-v8-12"></script>
 </body>
 </html>
