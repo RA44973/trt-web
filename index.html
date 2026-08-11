@@ -498,7 +498,7 @@
           <div>
             <p class="eyebrow">Настройки · Загрузка</p>
             <h1>Загрузка данных</h1>
-            <p class="page-description">Продажи ВОГ, планы ТРТ и DIY sell-out для региональной аналитики. Каждый файл сначала проверяется; месячные данные сохраняются с историей версий.</p>
+            <p class="page-description">Продажи ВОГ и DIY sell-out загружаются через API. Планы ТРТ размещаются непосредственно в Web как подготовленные статические наборы данных.</p>
           </div>
         </header>
 
@@ -530,20 +530,25 @@
         </section>
 
         <section data-import-panel="trt-plan" hidden>
-          <section class="content-card market-import-card" data-analysis-import="trt_plan">
-            <div class="section-heading market-import-heading"><div><h2>Планы ТРТ</h2><p>Помесячный план по ТРТ. Адрес используется как сильный признак сопоставления; регион, город и координаты подтягиваются из справочника ТРТ.</p></div><button class="secondary-button" type="button" data-analysis-template>Скачать шаблон</button></div>
-            <div class="market-import-period-grid">
-              <label class="market-import-file-field">Excel-файл<input data-analysis-file type="file" accept=".xlsx,.xls"></label>
-              <button class="primary-button" type="button" data-analysis-preview disabled>Проверить файл</button>
+          <section class="content-card market-import-card">
+            <div class="section-heading market-import-heading">
+              <div>
+                <h2>Планы ТРТ · статические данные сайта</h2>
+                <p>Большие плановые файлы больше не отправляются через API. Я подготавливаю их отдельно и размещаю непосредственно в Web; при открытии аналитики строки автоматически сопоставляются с актуальным справочником ТРТ по адресу, клиенту и названию.</p>
+              </div>
             </div>
-            <div class="market-import-help"><strong>Обязательные:</strong><span>Направление</span><span>Менеджер</span><span>Клиент</span><span>Название ТРТ</span><span>месячные столбцы</span><em>Адрес — желательно для точного сопоставления. Пустой месяц = данных нет. Любой отрицательный план автоматически считается равным 0.</em></div>
-            <div class="form-error" data-analysis-error hidden></div><div class="loading-state" data-analysis-progress hidden>Проверка файла…</div>
-            <section class="market-import-result" data-analysis-result hidden>
-              <div class="market-import-summary-grid"><article><span>Значений</span><strong data-analysis-total-rows>0</strong></article><article><span>Сопоставлено</span><strong data-analysis-matched-rows>0</strong></article><article><span>Не сопоставлено</span><strong data-analysis-unmatched-rows>0</strong></article><article><span>Ошибок</span><strong data-analysis-invalid-rows>0</strong></article><article><span>Месяцев</span><strong data-analysis-period-count>0</strong></article><article><span>Сумма плана</span><strong data-analysis-total>0</strong></article></div>
-              <div class="sales-import-warning" data-analysis-period-warning hidden></div>
-              <div class="table-wrap market-import-table-wrap"><table class="market-import-table"><thead><tr><th>Строка</th><th>Период</th><th>Направление</th><th>Клиент</th><th>ТРТ</th><th>План</th><th>Совпадение</th><th>Результат</th></tr></thead><tbody data-analysis-preview-body></tbody></table></div>
-              <div class="sales-import-actions"><button class="secondary-button" type="button" data-analysis-reset>Выбрать другой файл</button><button class="primary-button" type="button" data-analysis-commit disabled>Загрузить планы</button></div>
-            </section>
+            <div class="market-import-summary-grid">
+              <article><span>Обои</span><strong>675 ТРТ</strong></article>
+              <article><span>Период</span><strong>Янв–Июл 2026</strong></article>
+              <article><span>Месяцев</span><strong>7</strong></article>
+              <article><span>Источник</span><strong>Web JSON</strong></article>
+              <article><span>Отрицательный план</span><strong>= 0</strong></article>
+              <article><span>Статус</span><strong>Размещено</strong></article>
+            </div>
+            <div class="market-import-help">
+              <strong>Файл на сайте:</strong><span>trt_plan_wallpaper_2026.json</span>
+              <em>Плитка пока не размещена. Когда будет готов файл планов по плитке, достаточно добавить второй статический файл — механизм уже предусмотрен.</em>
+            </div>
           </section>
         </section>
 
@@ -1120,6 +1125,6 @@
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <script src="app.js?v=20260811-market-analysis-v8-15"></script>
+  <script src="app.js?v=20260811-static-plan-v8-16"></script>
 </body>
 </html>

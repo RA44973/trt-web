@@ -1,6 +1,6 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.12";
+const VOG_WEB_VERSION = "8.16";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
@@ -34,7 +34,7 @@ const state = {
   trtSelectedId: "",
   trtFitRequested: true,
   logistics: { loaded: false, trips: [], summary: {}, dictionaries: null, aliasCatalog: null, aliasMap: new Map(), suggestionMap: new Map(), preview: null, sourceTrips: [], fileName: "", observedWarehouses: [], observedVehicles: [], matchResults: new Map(), uniqueMatchItems: [] },
-  marketAnalysis: { loaded: false, catalog: null, plans: [], diy: [] },
+  marketAnalysis: { loaded: false, catalog: null, plans: [], diy: [], staticPlanSources: [], staticPlanRows: null, staticPlanStats: null, staticPlanCacheKey: "" },
   currentPage: PAGES.has(location.hash.slice(1)) ? location.hash.slice(1) : "trt",
 };
 
@@ -64,6 +64,11 @@ let warehouseMarker = null;
 let marketAnalysisDirection = "обои";
 let marketAnalysisYear = 2026;
 let marketAnalysisMonth = 7;
+
+const STATIC_MARKET_PLAN_SOURCES = Object.freeze([
+  { url: "trt_plan_wallpaper_2026.json?v=20260811-v8-16", direction: "обои", optional: false },
+  { url: "trt_plan_tile_2026.json?v=20260811-v8-16", direction: "плитка", optional: true },
+]);
 
 const $ = (id) => document.getElementById(id);
 
@@ -127,7 +132,7 @@ function resetProtectedState() {
   state.trtSelectedId = "";
   state.trtFitRequested = true;
   state.logistics = { loaded: false, trips: [], summary: {}, dictionaries: null, aliasCatalog: null, aliasMap: new Map(), suggestionMap: new Map(), preview: null, sourceTrips: [], fileName: "", observedWarehouses: [], matchResults: new Map(), uniqueMatchItems: [] };
-  state.marketAnalysis = { loaded: false, catalog: null, plans: [], diy: [] };
+  state.marketAnalysis = { loaded: false, catalog: null, plans: [], diy: [], staticPlanSources: [], staticPlanRows: null, staticPlanStats: null, staticPlanCacheKey: "" };
 }
 
 function isGeneralDirector() {
@@ -2912,14 +2917,205 @@ function marketRegionEntry(regionKey) {
   return marketCatalogRegions().find((item) => normalizeRegionName(item.key) === normalized) || null;
 }
 
+async function marketFetchOptionalJson(source) {
+  try {
+    const response = await fetch(source.url, { cache: "no-store" });
+    if (response.status === 404 && source.optional) return null;
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const payload = await response.json();
+    if (!payload || !Array.isArray(payload.rows) || !Array.isArray(payload.periods)) throw new Error("Некорректный формат статического файла");
+    return { ...payload, _sourceUrl: source.url, _direction: source.direction || payload.direction || "" };
+  } catch (error) {
+    if (source.optional) {
+      console.info(`[VOG] optional static market source skipped: ${source.url}`, error?.message || error);
+      return null;
+    }
+    throw new Error(`Не удалось загрузить статический файл планов: ${source.url}`);
+  }
+}
+
+function marketMatchNormalize(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/[^0-9a-zа-я]+/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function marketPointClientValues(point) {
+  return [...new Set([point?.client, point?.holding, point?.customer, point?.clientName, point?.customerName]
+    .map(marketMatchNormalize).filter(Boolean))];
+}
+
+function marketPointLocationValues(point, clients = marketPointClientValues(point)) {
+  const base = [point?.address, point?.location, point?.name, point?.pointName, point?.title, point?.trtName, trtDisplayName(point)]
+    .map(marketMatchNormalize).filter(Boolean);
+  const combined = [];
+  clients.forEach((client) => base.forEach((location) => combined.push(marketMatchNormalize(`${client} ${location}`))));
+  return [...new Set([...clients, ...base, ...combined].filter(Boolean))];
+}
+
+function marketTokenSimilarity(left, right) {
+  if (!left || !right) return 0;
+  if (left === right) return 1;
+  const a = new Set(left.split(" ").filter(Boolean));
+  const b = new Set(right.split(" ").filter(Boolean));
+  let common = 0; a.forEach((token) => { if (b.has(token)) common += 1; });
+  const union = Math.max(1, new Set([...a, ...b]).size);
+  const tokenScore = common / union;
+  const bigrams = (text) => {
+    const compact = text.replace(/\s+/g, " ");
+    if (compact.length < 2) return new Set([compact]);
+    const set = new Set(); for (let i = 0; i < compact.length - 1; i += 1) set.add(compact.slice(i, i + 2));
+    return set;
+  };
+  const ab = bigrams(left); const bb = bigrams(right);
+  let biCommon = 0; ab.forEach((item) => { if (bb.has(item)) biCommon += 1; });
+  const dice = (2 * biCommon) / Math.max(1, ab.size + bb.size);
+  const containsBonus = left.includes(right) || right.includes(left) ? 0.04 : 0;
+  return Math.min(1, Math.max(tokenScore, dice) + containsBonus);
+}
+
+function marketBuildStaticPointIndex() {
+  const byDirection = new Map();
+  const byAddress = new Map();
+  (state.trtPoints || []).forEach((point) => {
+    const pointId = String(point?.id || "");
+    if (!pointId) return;
+    const direction = marketDirectionKey(point?.direction);
+    const clients = marketPointClientValues(point);
+    const locations = marketPointLocationValues(point, clients);
+    const item = { point, pointId, direction, clients, locations };
+    if (!byDirection.has(direction)) byDirection.set(direction, []);
+    byDirection.get(direction).push(item);
+    const address = marketMatchNormalize(point?.address);
+    if (address) {
+      const key = `${direction}|${address}`;
+      if (!byAddress.has(key)) byAddress.set(key, []);
+      byAddress.get(key).push(item);
+    }
+  });
+  return { byDirection, byAddress };
+}
+
+function marketMatchStaticPlanRow(direction, row, index) {
+  const directionKey = marketDirectionKey(direction || row?.direction);
+  const candidates = index.byDirection.get(directionKey) || [];
+  if (!candidates.length) return { status: "unmatched", pointId: "", message: "Нет ТРТ этого направления" };
+  const client = marketMatchNormalize(row?.client);
+  const name = marketMatchNormalize(row?.trt || row?.trtName);
+  const address = marketMatchNormalize(row?.address);
+
+  if (address) {
+    const exactAddress = index.byAddress.get(`${directionKey}|${address}`) || [];
+    if (exactAddress.length === 1) return { status: "matched", pointId: exactAddress[0].pointId, message: "Точный адрес" };
+    if (exactAddress.length > 1) {
+      const narrowed = exactAddress.filter((item) => (client && item.clients.includes(client)) || (name && item.locations.includes(name)));
+      if (narrowed.length === 1) return { status: "matched", pointId: narrowed[0].pointId, message: "Адрес + клиент/ТРТ" };
+    }
+    const scored = candidates.map((item) => {
+      const pointAddress = marketMatchNormalize(item.point?.address);
+      const addressScore = pointAddress ? marketTokenSimilarity(address, pointAddress) : 0;
+      if (addressScore < 0.84) return null;
+      const clientScore = client ? Math.max(0, ...item.clients.map((value) => marketTokenSimilarity(client, value))) : 0;
+      const nameScore = name ? Math.max(0, ...item.locations.map((value) => marketTokenSimilarity(name, value))) : 0;
+      const score = 0.72 * addressScore + 0.18 * Math.max(clientScore, nameScore) + 0.10 * Math.min(clientScore, nameScore);
+      return { item, score, addressScore };
+    }).filter(Boolean).sort((a,b) => b.score - a.score);
+    if (scored.length === 1 && scored[0].score >= 0.86) return { status: "matched", pointId: scored[0].item.pointId, message: `Адрес ${Math.round(scored[0].addressScore * 100)}%` };
+    if (scored.length > 1 && scored[0].score >= 0.90 && scored[0].score - scored[1].score >= 0.045) return { status: "matched", pointId: scored[0].item.pointId, message: `Адрес ${Math.round(scored[0].addressScore * 100)}%` };
+  }
+
+  const exact = candidates.filter((item) => client && name && item.clients.includes(client) && item.locations.includes(name));
+  if (exact.length === 1) return { status: "matched", pointId: exact[0].pointId, message: "Клиент + ТРТ" };
+  const similar = candidates.map((item) => {
+    const clientScore = client ? Math.max(0, ...item.clients.map((value) => marketTokenSimilarity(client, value))) : 0;
+    const nameScore = name ? Math.max(0, ...item.locations.map((value) => marketTokenSimilarity(name, value))) : 0;
+    const score = 0.35 * clientScore + 0.65 * nameScore;
+    return { item, clientScore, nameScore, score };
+  }).filter((item) => item.clientScore >= 0.78 && item.nameScore >= 0.88).sort((a,b) => b.score - a.score);
+  if (similar.length === 1 && similar[0].score >= 0.91) return { status: "matched", pointId: similar[0].item.pointId, message: "Клиент + название" };
+  if (similar.length > 1 && similar[0].score >= 0.93 && similar[0].score - similar[1].score >= 0.07) return { status: "matched", pointId: similar[0].item.pointId, message: "Клиент + название" };
+  return { status: "unmatched", pointId: "", message: address ? "Адрес не сопоставлен" : "Нет надёжного адреса/названия" };
+}
+
+function marketResolveStaticPlanRows() {
+  const sources = Array.isArray(state.marketAnalysis?.staticPlanSources) ? state.marketAnalysis.staticPlanSources : [];
+  const cacheKey = `${state.trtPoints.length}|${sources.map((source) => `${source._sourceUrl}:${source.rowCount || source.rows?.length || 0}`).join("|")}`;
+  if (state.marketAnalysis.staticPlanRows && state.marketAnalysis.staticPlanCacheKey === cacheKey) return state.marketAnalysis.staticPlanRows;
+  const pointIndex = marketBuildStaticPointIndex();
+  const result = [];
+  const stats = { sourceRows: 0, matchedRows: 0, unmatchedRows: 0, monthlyValues: 0, matchedMonthlyValues: 0, byDirection: {}, unmatched: [] };
+  sources.forEach((source) => {
+    const direction = marketDirectionKey(source._direction || source.direction);
+    const periods = Array.isArray(source.periods) ? source.periods : [];
+    if (!stats.byDirection[direction]) stats.byDirection[direction] = { sourceRows: 0, matchedRows: 0, unmatchedRows: 0, monthlyValues: 0, matchedMonthlyValues: 0 };
+    (source.rows || []).forEach((row) => {
+      stats.sourceRows += 1; stats.byDirection[direction].sourceRows += 1;
+      const match = marketMatchStaticPlanRow(direction, row, pointIndex);
+      const quantities = Array.isArray(row.q) ? row.q : [];
+      const valueCount = quantities.filter((value) => value !== null && value !== undefined && value !== "").length;
+      stats.monthlyValues += valueCount; stats.byDirection[direction].monthlyValues += valueCount;
+      if (match.status !== "matched") {
+        stats.unmatchedRows += 1; stats.byDirection[direction].unmatchedRows += 1;
+        if (stats.unmatched.length < 50) stats.unmatched.push({ row: row.row, client: row.client, trt: row.trt, address: row.address, message: match.message });
+        return;
+      }
+      stats.matchedRows += 1; stats.byDirection[direction].matchedRows += 1;
+      periods.forEach((period, index) => {
+        const raw = quantities[index];
+        if (raw === null || raw === undefined || raw === "") return;
+        const planQuantity = Math.max(0, Number(raw) || 0);
+        result.push({
+          year: Number(period.year), month: Number(period.month), direction, manager: row.manager || "", client: row.client || "",
+          trtName: row.trt || "", sourceAddress: row.address || "", planQuantity, pointId: match.pointId,
+          source: "static-site", sourceRow: row.row || 0, matchMessage: match.message,
+        });
+        stats.matchedMonthlyValues += 1; stats.byDirection[direction].matchedMonthlyValues += 1;
+      });
+    });
+  });
+  state.marketAnalysis.staticPlanRows = result;
+  state.marketAnalysis.staticPlanStats = stats;
+  state.marketAnalysis.staticPlanCacheKey = cacheKey;
+  console.info("[VOG] static TRT plans", stats);
+  return result;
+}
+
+function marketStaticPlanPeriodKeys() {
+  const keys = new Set();
+  (state.marketAnalysis?.staticPlanSources || []).forEach((source) => {
+    const direction = marketDirectionKey(source._direction || source.direction);
+    (source.periods || []).forEach((period) => {
+      const year = Number(period.year); const month = Number(period.month);
+      if (year && month) keys.add(`${year}-${month}-${direction}`);
+    });
+  });
+  return keys;
+}
+
+function marketAllPlanRows() {
+  const staticRows = marketResolveStaticPlanRows();
+  const staticPeriods = marketStaticPlanPeriodKeys();
+  const apiRows = (state.marketAnalysis?.plans || []).filter((row) => !staticPeriods.has(`${Number(row.year)}-${Number(row.month)}-${marketDirectionKey(row.direction)}`));
+  return [...apiRows, ...staticRows];
+}
+
 async function loadRegionalMarketData(force = false) {
   if (state.marketAnalysis.loaded && !force) return state.marketAnalysis;
-  const payload = await api("/trt-map-data?view=market_analysis");
+  const [payload, sourceResults] = await Promise.all([
+    api("/trt-map-data?view=market_analysis"),
+    Promise.all(STATIC_MARKET_PLAN_SOURCES.map((source) => marketFetchOptionalJson(source))),
+  ]);
   state.marketAnalysis = {
     loaded: true,
     catalog: payload.catalog || { regions: [], targetShares: {} },
     plans: Array.isArray(payload.plans) ? payload.plans : [],
     diy: Array.isArray(payload.diy) ? payload.diy : [],
+    staticPlanSources: sourceResults.filter(Boolean),
+    staticPlanRows: null, staticPlanStats: null, staticPlanCacheKey: "",
   };
   return state.marketAnalysis;
 }
@@ -2927,7 +3123,7 @@ async function loadRegionalMarketData(force = false) {
 function marketAvailablePeriods(direction = marketAnalysisDirection) {
   const key = marketDirectionKey(direction);
   const periods = new Map();
-  [...(state.marketAnalysis.plans || []), ...(state.marketAnalysis.diy || [])].forEach((row) => {
+  [...marketAllPlanRows(), ...(state.marketAnalysis.diy || [])].forEach((row) => {
     if (marketDirectionKey(row.direction) !== key) return;
     const year = Number(row.year); const month = Number(row.month);
     if (!year || !month) return;
@@ -2973,7 +3169,7 @@ function buildAdjustedTrtFacts(direction = marketAnalysisDirection, year = marke
     const format = normalizeText(point?.format).replace(/[^a-zа-я0-9]/g, "");
     return diyPointIds.has(id) || format.includes("diy");
   };
-  const plans = (state.marketAnalysis.plans || []).filter((row) => Number(row.year) === Number(year) && Number(row.month) === Number(month) && marketDirectionKey(row.direction) === directionKey && !isDiyPoint(row.pointId));
+  const plans = marketAllPlanRows().filter((row) => Number(row.year) === Number(year) && Number(row.month) === Number(month) && marketDirectionKey(row.direction) === directionKey && !isDiyPoint(row.pointId));
   const clientGroups = new Map();
   plans.forEach((row) => {
     const clientKey = normalizeText(row.client) || `point:${row.pointId}`;
@@ -3132,6 +3328,8 @@ function renderRegionAnalysisModel(model) {
   $("region-diagnosis-title").textContent = model.diagnosis.title;
   $("region-diagnosis-text").textContent = model.diagnosis.text;
   const notes = [`Период: ${analysisPeriodLabel(model.year, model.month)} · ${marketDirectionLabel(model.direction)}.`, `Население региона — справочная тестовая база; города ≥75 тыс., малые города в радиусе 45 км агрегируются к ближайшему крупному центру.`];
+  const staticStats = state.marketAnalysis?.staticPlanStats?.byDirection?.[marketDirectionKey(model.direction)];
+  if (staticStats?.sourceRows) notes.push(`Планы ТРТ: статический файл сайта, сопоставлено ${staticStats.matchedRows} из ${staticStats.sourceRows} ТРТ.`);
   if (!model.diyRows.length) notes.push("DIY sell-out за выбранный период пока не загружен.");
   if (!model.planRows.length) notes.push(`Планы ТРТ по направлению «${marketDirectionLabel(model.direction)}» за этот период пока не загружены.`);
   if (model.manualAllocationCount) notes.push(`Есть ${model.manualAllocationCount} ТРТ с фактом при нулевом плане — требуется ручное распределение.`);
@@ -4748,7 +4946,7 @@ async function commitAnalysisImport(kind) {
         periods,
       }),
     });
-    state.marketAnalysis = { loaded: false, catalog: null, plans: [], diy: [] };
+    state.marketAnalysis = { loaded: false, catalog: null, plans: [], diy: [], staticPlanSources: [], staticPlanRows: null, staticPlanStats: null, staticPlanCacheKey: "" };
     showToast(result.message || "Данные загружены."); resetAnalysisImport(kind, true);
   } catch (err) {
     error.textContent = err.message; error.hidden = false; button.disabled = false;
