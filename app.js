@@ -4447,7 +4447,7 @@ async function repreviewAnalysisImport(kind) {
   const progress = panel.querySelector("[data-analysis-progress]"); const error = panel.querySelector("[data-analysis-error]");
   error.hidden = true; progress.hidden = false;
   try {
-    const payload = await api("/admin/sales-import", { method: "POST", body: JSON.stringify({ scope: "market_analysis", operation: "preview", kind, fileName: item.fileName, rows: item.rows }) });
+    const payload = await api("/admin/sales-import", { method: "POST", timeout: 150000, body: JSON.stringify({ scope: "market_analysis", operation: "preview", kind, fileName: item.fileName, rows: item.rows }) });
     renderAnalysisImportPreview(kind, payload);
   } catch (err) { error.textContent = err.message; error.hidden = false; }
   finally { progress.hidden = true; }
@@ -4516,7 +4516,7 @@ async function previewAnalysisImport(kind) {
     await ensureTrtData();
     const rows = await readAnalysisImportFile(file, kind);
     ANALYSIS_IMPORT_STATE[kind] = { rows, preview: null, fileName: file.name };
-    const payload = await api("/admin/sales-import", { method: "POST", body: JSON.stringify({ scope: "market_analysis", operation: "preview", kind, fileName: file.name, rows }) });
+    const payload = await api("/admin/sales-import", { method: "POST", timeout: 150000, body: JSON.stringify({ scope: "market_analysis", operation: "preview", kind, fileName: file.name, rows }) });
     renderAnalysisImportPreview(kind, payload);
   } catch (err) {
     error.textContent = err.message; error.hidden = false;
@@ -4535,7 +4535,7 @@ async function commitAnalysisImport(kind) {
   const button = panel.querySelector("[data-analysis-commit]"); const error = panel.querySelector("[data-analysis-error]");
   error.hidden = true; button.disabled = true; const original = button.textContent; button.textContent = "Загрузка…";
   try {
-    const result = await api("/admin/sales-import", { method: "POST", body: JSON.stringify({ scope: "market_analysis", operation: "commit", kind, fileName: item.fileName, replace, rows: item.rows }) });
+    const result = await api("/admin/sales-import", { method: "POST", timeout: 150000, body: JSON.stringify({ scope: "market_analysis", operation: "commit", kind, fileName: item.fileName, replace, rows: item.rows }) });
     state.marketAnalysis = { loaded: false, catalog: null, plans: [], diy: [] };
     showToast(result.message || "Данные загружены."); resetAnalysisImport(kind, true);
   } catch (err) {
