@@ -1,6 +1,6 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.9";
+const VOG_WEB_VERSION = "8.8";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
@@ -44,8 +44,6 @@ let trtCityLabelLayer = null;
 let trtRegionsLoading = false;
 let trtInspectorMode = "";
 let trtInspectorRegion = null;
-let trtRegionProduct = "tiles";
-let trtRegionMapReturnView = null;
 let trtSmartFilters = [];
 let trtSmartSuggestions = [];
 let trtSmartSuggestionIndex = -1;
@@ -380,7 +378,7 @@ function setMapInspectorView(mode) {
   const kicker = $("map-inspector-kicker");
   const status = $("map-inspector-status");
   if (kicker) kicker.textContent = trtInspectorMode === "region" ? "Карточка региона" : "Карточка ТРТ";
-  if (status) status.textContent = trtInspectorMode === "region" ? "ЦФО · СЗФО" : "";
+  if (status) status.textContent = trtInspectorMode === "region" ? "Регионы присутствия ВОГ" : "";
 
   const trtTools = document.querySelector(".main-sidebar-trt-tools");
   if (trtTools) trtTools.hidden = validMode || state.currentPage !== "trt";
@@ -389,22 +387,15 @@ function setMapInspectorView(mode) {
 }
 
 function closeMapInspector() {
-  const returnView = trtInspectorMode === "region" ? trtRegionMapReturnView : null;
   if (trtCardSalesChart) {
     trtCardSalesChart.destroy();
     trtCardSalesChart = null;
   }
   if ($("trt-sales-modal") && !$("trt-sales-modal").hidden) closeTrtSales();
   trtInspectorRegion = null;
-  trtRegionMapReturnView = null;
   state.trtSelectedId = "";
   if ($("trt-map-empty")) $("trt-map-empty").hidden = false;
   setMapInspectorView("");
-  if (returnView && trtMap) {
-    window.setTimeout(() => {
-      try { trtMap.setView(returnView.center, returnView.zoom, { animate: false }); } catch {}
-    }, 40);
-  }
 }
 
 function openTrtInspector() {
@@ -439,7 +430,7 @@ function showPage(page, updateHash = true) {
   if (nextPage === "employees" && state.token && state.employees.length === 0) {
     loadEmployees();
   }
-  if (nextPage === "sales-import") { initializeSalesImportPeriod(); }
+  if (nextPage === "sales-import") { initializeSalesImportPeriod(); initializeMarketImportPeriods(); }
   if (nextPage === "logistics") { initializeLogisticsPeriod(); loadLogistics(); }
 
   if (nextPage === "activity" && state.token) {
@@ -2245,7 +2236,7 @@ function resetTrtMapToDefaultView(animate = true) {
 
 function applyTrtSmartFilters() {
   // fitBounds нужен только для реального фильтра. После очистки возвращаем
-  // согласованный стартовый вид ЦФО + основной части СЗФО.
+  // согласованный стартовый вид ЦФО + основной части СЗФО + регионов присутствия ВОГ в ПФО.
   state.trtFitRequested = hasActiveTrtFilters();
   persistTrtSmartFilters();
   renderTrtSmartFilterChips();
@@ -2369,7 +2360,8 @@ const TRT_REGIONAL_CENTER_LABELS = new Set([
   "белгород", "брянск", "владимир", "воронеж", "иваново", "калуга", "кострома", "курск",
   "липецк", "орел", "орёл", "рязань", "смоленск", "тамбов", "тверь", "тула", "ярославль",
   "москва", "санкт-петербург", "санкт петербург", "петрозаводск", "сыктывкар", "архангельск",
-  "вологда", "калининград", "мурманск", "нарьян-мар", "нарьян мар", "великий новгород", "псков"
+  "вологда", "калининград", "мурманск", "нарьян-мар", "нарьян мар", "великий новгород", "псков",
+  "нижний новгород", "киров", "чебоксары", "саранск", "йошкар-ола", "йошкар ола"
 ]);
 
 function trtIsAdministrativeLabel(value) {
@@ -2714,6 +2706,34 @@ const TRT_REGION_DEFINITIONS = Object.freeze({
     district: "СЗФО",
     pointAliases: ["Санкт-Петербург", "Санкт Петербург", "СПб"],
   },
+
+  // Дополнительные регионы присутствия ВОГ — Приволжский федеральный округ.
+  "Нижегородская область": {
+    key: "Нижегородская область",
+    district: "ПФО",
+    pointAliases: ["Нижегородская область", "Нижегородская обл", "Нижегородская обл."],
+  },
+  "Кировская область": {
+    key: "Кировская область",
+    district: "ПФО",
+    pointAliases: ["Кировская область", "Кировская обл", "Кировская обл."],
+  },
+  "Чувашия": {
+    key: "Чувашия",
+    district: "ПФО",
+    pointAliases: ["Чувашия", "Чувашская Республика", "Чувашская Республика - Чувашия", "Чувашская Республика — Чувашия"],
+  },
+  "Республика Мордовия": {
+    key: "Республика Мордовия",
+    label: "Мордовия",
+    district: "ПФО",
+    pointAliases: ["Мордовия", "Республика Мордовия"],
+  },
+  "Марий Эл": {
+    key: "Марий Эл",
+    district: "ПФО",
+    pointAliases: ["Марий Эл", "Республика Марий Эл"],
+  },
 });
 
 const TRT_REGION_FILL_COLOR = "#4293C4";
@@ -2757,7 +2777,9 @@ const TRT_REGION_CENTER_TO_KEY = Object.freeze({
   "петрозаводск":"Республика Карелия","сыктывкар":"Республика Коми","архангельск":"Архангельская область",
   "вологда":"Вологодская область","калининград":"Калининградская область","санкт-петербург":"Санкт-Петербург",
   "санкт петербург":"Санкт-Петербург","мурманск":"Мурманская область","нарьян-мар":"Ненецкий автономный округ",
-  "нарьян мар":"Ненецкий автономный округ","великий новгород":"Новгородская область","псков":"Псковская область"
+  "нарьян мар":"Ненецкий автономный округ","великий новгород":"Новгородская область","псков":"Псковская область",
+  "нижний новгород":"Нижегородская область","киров":"Кировская область","чебоксары":"Чувашия",
+  "саранск":"Республика Мордовия","йошкар-ола":"Марий Эл","йошкар ола":"Марий Эл"
 });
 
 let trtRegionAliasCache = null;
@@ -2858,26 +2880,8 @@ function mockTrtSalesMetrics(point) {
   return { plan, fact, completion: plan ? (fact / plan) * 100 : 0 };
 }
 
-function regionRoundMarket(value) {
-  return Math.round(Number(value || 0) / 1000) * 1000;
-}
-
-function regionCompactNumber(value) {
-  const number = Number(value || 0);
-  if (Math.abs(number) >= 1000000) return `${(number / 1000000).toFixed(number >= 10000000 ? 0 : 1).replace(".", ",")} млн`;
-  if (Math.abs(number) >= 1000) return `${Math.round(number / 1000).toLocaleString("ru-RU")} тыс.`;
-  return Math.round(number).toLocaleString("ru-RU");
-}
-
-function regionPercent(value, digits = 1) {
-  return `${Number(value || 0).toFixed(digits).replace(".", ",")}%`;
-}
-
-function buildRegionMockModel(config, label, product = trtRegionProduct) {
-  const productLabel = product === "wallpaper" ? "Обои" : "Плитка";
-  const allPoints = trtPointsForRegionConfig(config, label);
-  const matchingPoints = allPoints.filter((point) => normalizeText(point?.direction).includes(normalizeText(productLabel)));
-  const points = matchingPoints.length ? matchingPoints : allPoints;
+function buildRegionMockModel(config, label) {
+  const points = trtPointsForRegionConfig(config, label);
   const groups = new Map();
   points.forEach((point) => {
     const city = trtPointCity(point) || "Прочие населённые пункты";
@@ -2899,13 +2903,13 @@ function buildRegionMockModel(config, label, product = trtRegionProduct) {
   cities = cities.map((cityRow, cityIndex) => {
     const trtRows = cityRow.points.map((point) => ({ point, ...mockTrtSalesMetrics(point) }));
     if (!trtRows.length) {
-      const syntheticCount = stableMockRange(`${label}|${product}|${cityRow.city}|count`, 4, 10);
+      const syntheticCount = stableMockRange(`${label}|${cityRow.city}|count`, 2, 5);
       for (let index = 0; index < syntheticCount; index += 1) {
-        const plan = Math.round(stableMockRange(`${label}|${product}|${cityRow.city}|${index}|plan`, 50, 220) / 5) * 5;
-        const ratio = stableMockRange(`${label}|${product}|${cityRow.city}|${index}|ratio`, 72, 121) / 100;
+        const plan = Math.round(stableMockRange(`${label}|${cityRow.city}|${index}|plan`, 50, 220) / 5) * 5;
+        const ratio = stableMockRange(`${label}|${cityRow.city}|${index}|ratio`, 72, 121) / 100;
         const fact = Math.round(plan * ratio);
         trtRows.push({
-          point: { id: `mock-${cityIndex}-${index}`, client: `ТРТ ${index + 1} · макет`, direction: productLabel, manager: "—" },
+          point: { id: `mock-${cityIndex}-${index}`, client: `ТРТ ${index + 1} · макет`, direction: index % 2 ? "Плитка" : "Обои", manager: "—" },
           plan,
           fact,
           completion: plan ? (fact / plan) * 100 : 0,
@@ -2914,79 +2918,32 @@ function buildRegionMockModel(config, label, product = trtRegionProduct) {
       }
     }
 
+    const sales = trtRows.reduce((sum, row) => sum + row.fact, 0);
+    const targetShare = stableMockRange(`${label}|${cityRow.city}|share`, 8, 27) / 100;
+    const potential = Math.max(sales + 1, Math.round(sales / targetShare));
     const basePopulation = stableMockRange(`${label}|${cityRow.city}|population`, 65000, 780000);
     const population = Math.round((basePopulation + trtRows.length * 8500) / 1000) * 1000;
-    return { ...cityRow, trtRows, population };
+    return {
+      ...cityRow,
+      trtRows,
+      sales,
+      potential,
+      share: potential ? (sales / potential) * 100 : 0,
+      population,
+    };
   }).sort((a, b) => b.population - a.population || a.city.localeCompare(b.city, "ru"));
 
-  const cityPopulation = Math.max(1, cities.reduce((sum, city) => sum + city.population, 0));
-  const population = Math.round(cityPopulation * 1.18 / 1000) * 1000;
-  const marketTotal = regionRoundMarket(stableMockRange(`${label}|${product}|market`, 720000, 1450000));
-  const diyMarketShare = stableMockRange(`${label}|${product}|diy-market-share`, 36, 52);
-  const otherMarketShare = stableMockRange(`${label}|${product}|other-market-share`, 4, 8);
-  const traditionalMarketShare = 100 - diyMarketShare - otherMarketShare;
-  const diyVolume = regionRoundMarket(marketTotal * diyMarketShare / 100);
-  const traditionalVolume = regionRoundMarket(marketTotal * traditionalMarketShare / 100);
-  const otherVolume = Math.max(0, marketTotal - diyVolume - traditionalVolume);
-
-  const diyVogShare = stableMockRange(`${label}|${product}|diy-vog-share`, 22, 38) + stableMockRange(`${label}|${product}|diy-decimal`, 0, 9) / 10;
-  const traditionalVogShare = stableMockRange(`${label}|${product}|trad-vog-share`, 12, 26) + stableMockRange(`${label}|${product}|trad-decimal`, 0, 9) / 10;
-  const otherVogShare = stableMockRange(`${label}|${product}|other-vog-share`, 5, 12);
-  const diyVogSales = regionRoundMarket(diyVolume * diyVogShare / 100);
-  const traditionalVogSales = regionRoundMarket(traditionalVolume * traditionalVogShare / 100);
-  const otherVogSales = regionRoundMarket(otherVolume * otherVogShare / 100);
-  const vogSales = diyVogSales + traditionalVogSales + otherVogSales;
-  const vogShare = marketTotal ? (vogSales / marketTotal) * 100 : 0;
-  const diyTargetShare = 30;
-
-  const networkNames = ["Лемана ПРО", "Петрович", "Максидом"];
-  const networkWeights = [0.42, 0.33, 0.25];
-  const networkShareOffsets = [-2.8, 4.2, -1.1];
-  const diyNetworks = networkNames.map((name, index) => {
-    const volume = index === networkNames.length - 1
-      ? Math.max(0, diyVolume - networkWeights.slice(0, -1).reduce((sum, weight) => sum + regionRoundMarket(diyVolume * weight), 0))
-      : regionRoundMarket(diyVolume * networkWeights[index]);
-    const vogShare = Math.max(5, diyVogShare + networkShareOffsets[index]);
-    const vogSales = regionRoundMarket(volume * vogShare / 100);
-    const stores = stableMockRange(`${label}|${name}|stores`, index === 0 ? 3 : 1, index === 0 ? 7 : 5);
-    return { name, volume, vogShare, vogSales, stores, target: diyTargetShare };
-  });
-
-  let rawTraditionalVog = 0;
-  cities.forEach((city) => {
-    city.market = regionRoundMarket(traditionalVolume * city.population / cityPopulation);
-    city.share = stableMockRange(`${label}|${product}|${city.city}|vog-share`, 10, 29) + stableMockRange(`${city.city}|decimal`, 0, 9) / 10;
-    city.vogSales = regionRoundMarket(city.market * city.share / 100);
-    rawTraditionalVog += city.vogSales;
-  });
-  const scale = rawTraditionalVog > 0 ? traditionalVogSales / rawTraditionalVog : 1;
-  cities.forEach((city, index) => {
-    city.vogSales = regionRoundMarket(city.vogSales * scale);
-    city.share = city.market ? (city.vogSales / city.market) * 100 : 0;
-    if (index === cities.length - 1) {
-      const allocatedMarket = cities.slice(0, -1).reduce((sum, row) => sum + row.market, 0);
-      city.market = Math.max(0, traditionalVolume - allocatedMarket);
-    }
-  });
-
+  const sales = cities.reduce((sum, city) => sum + city.sales, 0);
+  const potential = cities.reduce((sum, city) => sum + city.potential, 0);
+  const population = Math.round(cities.reduce((sum, city) => sum + city.population, 0) * 1.18 / 1000) * 1000;
   return {
     label,
     district: config?.district || "",
-    product,
-    productLabel,
     cities,
     population,
-    trtCount: cities.reduce((sum, city) => sum + city.trtRows.length, 0),
-    marketTotal,
-    vogSales,
-    vogShare,
-    diyTargetShare,
-    channels: {
-      diy: { marketShare: diyMarketShare, volume: diyVolume, vogShare: diyVogShare, vogSales: diyVogSales },
-      traditional: { marketShare: traditionalMarketShare, volume: traditionalVolume, vogShare: traditionalVogShare, vogSales: traditionalVogSales },
-      other: { marketShare: otherMarketShare, volume: otherVolume, vogShare: otherVogShare, vogSales: otherVogSales },
-    },
-    diyNetworks,
+    sales,
+    potential,
+    share: potential ? (sales / potential) * 100 : 0,
   };
 }
 
@@ -2994,65 +2951,14 @@ function formatRegionMockNumber(value) {
   return Math.round(Number(value || 0)).toLocaleString("ru-RU");
 }
 
-function renderRegionInspector(config, label, product = trtRegionProduct) {
-  trtRegionProduct = product;
-  const model = buildRegionMockModel(config, label, product);
+function renderRegionInspector(config, label) {
+  const model = buildRegionMockModel(config, label);
   trtInspectorRegion = { config, label, model };
   $("region-inspector-name").textContent = label;
-  $("region-inspector-district").textContent = model.district || "Регион";
-  $("region-inspector-population").textContent = `${regionCompactNumber(model.population)} чел.`;
-  $("region-market-total").textContent = `${regionCompactNumber(model.marketTotal)} м²`;
-  $("region-market-product").textContent = `${model.productLabel} · макет`;
-  $("region-vog-sales").textContent = `${regionCompactNumber(model.vogSales)} м²`;
-  $("region-vog-share").textContent = regionPercent(model.vogShare);
-  $("region-vog-share-repeat").textContent = regionPercent(model.vogShare);
-  $("region-trt-count").textContent = formatRegionMockNumber(model.trtCount);
-  $("region-city-count").textContent = `${model.cities.length} ${model.cities.length === 1 ? "город" : "городов"}`;
-  $("region-donut-total").textContent = regionCompactNumber(model.marketTotal);
-
-  document.querySelectorAll("[data-region-product]").forEach((button) => {
-    button.classList.toggle("is-active", button.dataset.regionProduct === product);
-  });
-
-  const diy = model.channels.diy;
-  const traditional = model.channels.traditional;
-  const other = model.channels.other;
-  $("region-market-donut").style.background = `conic-gradient(var(--vog-navy) 0 ${diy.marketShare}%, var(--vog-magenta) ${diy.marketShare}% ${diy.marketShare + traditional.marketShare}%, #cfd8e5 ${diy.marketShare + traditional.marketShare}% 100%)`;
-  $("region-diy-volume").textContent = `${regionCompactNumber(diy.volume)} м² / мес.`;
-  $("region-traditional-volume").textContent = `${regionCompactNumber(traditional.volume)} м² / мес.`;
-  $("region-other-volume").textContent = `${regionCompactNumber(other.volume)} м² / мес.`;
-  $("region-diy-market-share").textContent = regionPercent(diy.marketShare, 0);
-  $("region-traditional-market-share").textContent = regionPercent(traditional.marketShare, 0);
-  $("region-other-market-share").textContent = regionPercent(other.marketShare, 0);
-
-  $("region-diy-vog-share").textContent = regionPercent(diy.vogShare);
-  $("region-traditional-vog-share").textContent = regionPercent(traditional.vogShare);
-  $("region-diy-vog-sales").textContent = `${regionCompactNumber(diy.vogSales)} м² ВОГ / мес.`;
-  $("region-traditional-vog-sales").textContent = `${regionCompactNumber(traditional.vogSales)} м² ВОГ / мес.`;
-  $("region-diy-vog-progress").style.width = `${Math.min(100, diy.vogShare)}%`;
-  $("region-traditional-vog-progress").style.width = `${Math.min(100, traditional.vogShare)}%`;
-  $("region-diy-target-marker").style.left = `${model.diyTargetShare}%`;
-  $("region-diy-target-caption").textContent = `цель ${regionPercent(model.diyTargetShare, 0)}`;
-  const goalDelta = diy.vogShare - model.diyTargetShare;
-  const goalStatus = $("region-diy-goal-status");
-  goalStatus.classList.toggle("is-good", goalDelta >= 0);
-  goalStatus.classList.toggle("is-low", goalDelta < 0);
-  goalStatus.textContent = goalDelta >= 0
-    ? `DIY · цель выполнена +${goalDelta.toFixed(1).replace(".", ",")} п.п.`
-    : `DIY · до цели ${Math.abs(goalDelta).toFixed(1).replace(".", ",")} п.п.`;
-
-  $("region-diy-network-summary").textContent = `${model.diyNetworks.length} сети · ${model.diyNetworks.reduce((sum, row) => sum + row.stores, 0)} магазинов`;
-  $("region-diy-body").innerHTML = model.diyNetworks.map((network) => {
-    const reached = network.vogShare >= network.target;
-    return `<tr>
-      <td><strong>${escapeHtml(network.name)}</strong></td>
-      <td>${network.stores}</td>
-      <td>${regionCompactNumber(network.volume)} м²</td>
-      <td>${regionCompactNumber(network.vogSales)} м²</td>
-      <td><strong>${regionPercent(network.vogShare)}</strong></td>
-      <td><span class="region-plan-pill ${reached ? "is-good" : "is-mid"}">${reached ? "Достигнута" : `Цель ${regionPercent(network.target, 0)}`}</span></td>
-    </tr>`;
-  }).join("");
+  $("region-inspector-population").textContent = `${formatRegionMockNumber(model.population)} чел.`;
+  $("region-inspector-sales").textContent = `${formatRegionMockNumber(model.sales)} ед.`;
+  $("region-inspector-potential").textContent = `${formatRegionMockNumber(model.potential)} ед.`;
+  $("region-inspector-share").textContent = `${model.share.toFixed(1).replace(".", ",")}%`;
 
   $("region-inspector-city-body").innerHTML = model.cities.map((city, index) => {
     const detailId = `region-city-detail-${index}`;
@@ -3071,18 +2977,18 @@ function renderRegionInspector(config, label, product = trtRegionProduct) {
       <td>
         <button class="region-city-expand" type="button" data-region-city-toggle="${detailId}" aria-expanded="false" aria-label="Развернуть список ТРТ">+</button>
         <strong>${escapeHtml(city.city)}</strong>
-        <small>${formatRegionMockNumber(city.population)} чел.</small>
+        <small>${city.trtRows.length} ТРТ</small>
       </td>
-      <td>${city.trtRows.length}</td>
-      <td>${regionCompactNumber(city.market)} м²</td>
-      <td>${regionCompactNumber(city.vogSales)} м²</td>
-      <td><strong>${regionPercent(city.share)}</strong></td>
+      <td>${formatRegionMockNumber(city.population)}</td>
+      <td>${formatRegionMockNumber(city.potential)}</td>
+      <td>${formatRegionMockNumber(city.sales)}</td>
+      <td><strong>${city.share.toFixed(1).replace(".", ",")}%</strong></td>
     </tr>
     <tr id="${detailId}" class="region-city-detail" hidden>
       <td colspan="5">
         <div class="region-trt-subtable-wrap">
           <table class="region-trt-subtable">
-            <thead><tr><th>ТРТ</th><th>План / мес.</th><th>Факт / мес.<small>макет</small></th><th>Выполнение</th></tr></thead>
+            <thead><tr><th>ТРТ</th><th>План / мес.</th><th>Факт / мес.<small>среднее за 3 мес.</small></th><th>Выполнение</th></tr></thead>
             <tbody>${trtRows}</tbody>
           </table>
         </div>
@@ -3097,10 +3003,12 @@ function openRegionInspector(feature, layer) {
   if (!config) return;
   const label = config.label || trtRegionFeatureName(feature) || config.key;
   state.trtSelectedId = "";
-  if (trtMap) {
-    try { trtRegionMapReturnView = { center: trtMap.getCenter(), zoom: trtMap.getZoom() }; } catch { trtRegionMapReturnView = null; }
+  renderRegionInspector(config, label);
+  if (layer?.getBounds && trtMap) {
+    window.setTimeout(() => {
+      try { trtMap.fitBounds(layer.getBounds().pad(0.06), { maxZoom: 7 }); } catch {}
+    }, 230);
   }
-  renderRegionInspector(config, label, trtRegionProduct);
 }
 
 function bindTrtRegion(feature, layer) {
@@ -4050,6 +3958,314 @@ async function commitSalesImport() {
   }
 }
 
+
+const MARKET_IMPORT_HEADERS = {
+  diy: {
+    required: {
+      direction: "направление",
+      region: "регион",
+      network: "сеть diy",
+      marketQuantity: "продажи рынка м2",
+      vogQuantity: "продажи вог м2",
+    },
+    optional: {
+      city: "город",
+      storeName: "магазин трт",
+      address: "адрес",
+      targetShare: "целевая доля вог",
+      pointCount: "количество магазинов",
+      comment: "комментарий",
+    },
+  },
+  traditional: {
+    required: {
+      direction: "направление",
+      region: "регион",
+      marketQuantity: "продажи рынка тр м2",
+      vogQuantity: "продажи вог м2",
+    },
+    optional: {
+      city: "город",
+      pointCount: "количество трт",
+      targetShare: "целевая доля вог",
+      comment: "комментарий",
+    },
+  },
+};
+const MARKET_IMPORT_LABELS = { diy: "DIY", traditional: "Традиционная розница" };
+const marketImportState = {
+  diy: { rows: [], preview: null, fileName: "" },
+  traditional: { rows: [], preview: null, fileName: "" },
+};
+
+function normalizeMarketHeader(value) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/²/g, "2")
+    .replace(/[^0-9a-zа-я]+/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function setDataImportTab(tab) {
+  const next = ["sales", "diy", "traditional"].includes(tab) ? tab : "sales";
+  document.querySelectorAll("[data-import-tab]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.importTab === next);
+    button.setAttribute("aria-selected", button.dataset.importTab === next ? "true" : "false");
+  });
+  document.querySelectorAll("[data-import-panel]").forEach((panel) => {
+    panel.hidden = panel.dataset.importPanel !== next;
+  });
+}
+
+function marketPanel(channel) {
+  return document.querySelector(`[data-market-import="${channel}"]`);
+}
+
+function initializeMarketImportPeriods() {
+  const now = new Date();
+  const previous = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  document.querySelectorAll("[data-market-import]").forEach((panel) => {
+    const yearSelect = panel.querySelector("[data-market-year]");
+    const monthSelect = panel.querySelector("[data-market-month]");
+    if (yearSelect && !yearSelect.options.length) {
+      const firstYear = Math.min(2025, previous.getFullYear());
+      const lastYear = Math.max(previous.getFullYear() + 1, now.getFullYear());
+      for (let year = lastYear; year >= firstYear; year -= 1) {
+        const option = document.createElement("option");
+        option.value = String(year);
+        option.textContent = String(year);
+        yearSelect.append(option);
+      }
+      yearSelect.value = String(previous.getFullYear());
+    }
+    if (monthSelect && !monthSelect.dataset.initialized) {
+      monthSelect.value = String(previous.getMonth() + 1);
+      monthSelect.dataset.initialized = "1";
+    }
+    updateMarketPreviewButton(panel.dataset.marketImport);
+  });
+}
+
+function resetMarketImport(channel, clearFile = true) {
+  const panel = marketPanel(channel);
+  if (!panel) return;
+  marketImportState[channel] = { rows: [], preview: null, fileName: "" };
+  panel.querySelector("[data-market-result]").hidden = true;
+  panel.querySelector("[data-market-error]").hidden = true;
+  panel.querySelector("[data-market-progress]").hidden = true;
+  panel.querySelector("[data-market-commit]").disabled = true;
+  if (clearFile) panel.querySelector("[data-market-file]").value = "";
+  updateMarketPreviewButton(channel);
+}
+
+function updateMarketPreviewButton(channel) {
+  const panel = marketPanel(channel);
+  if (!panel) return;
+  const file = panel.querySelector("[data-market-file]")?.files?.[0];
+  const button = panel.querySelector("[data-market-preview]");
+  if (button) button.disabled = !file || !isSystemAdmin();
+}
+
+function marketHeaderMaps(channel, originalHeaders) {
+  const normalizedToOriginal = new Map(originalHeaders.map((header) => [normalizeMarketHeader(header), header]));
+  const config = MARKET_IMPORT_HEADERS[channel];
+  const missing = Object.entries(config.required)
+    .filter(([, required]) => !normalizedToOriginal.has(required))
+    .map(([key]) => key);
+  const labelByKey = {
+    direction: "Направление",
+    region: "Регион",
+    network: "Сеть DIY",
+    marketQuantity: channel === "diy" ? "Продажи рынка, м²" : "Продажи рынка ТР, м²",
+    vogQuantity: "Продажи ВОГ, м²",
+  };
+  if (missing.length) throw new Error(`Не найдены обязательные столбцы: ${missing.map((key) => labelByKey[key]).join(", ")}.`);
+  const result = {};
+  Object.entries({ ...config.required, ...config.optional }).forEach(([key, normalized]) => {
+    result[key] = normalizedToOriginal.get(normalized) || "";
+  });
+  return result;
+}
+
+async function readMarketImportFile(file, channel) {
+  if (!window.XLSX) throw new Error("Модуль чтения Excel не загрузился. Обновите страницу и повторите попытку.");
+  const buffer = await file.arrayBuffer();
+  const workbook = XLSX.read(buffer, { type: "array", cellDates: false });
+  const sheetName = workbook.SheetNames.includes("Данные") ? "Данные" : workbook.SheetNames[0];
+  if (!sheetName) throw new Error("В Excel-файле нет листов.");
+  const rawRows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { defval: "", raw: true });
+  if (!rawRows.length) throw new Error("На листе «Данные» нет строк с данными.");
+  const originalHeaders = Object.keys(rawRows[0]);
+  const columns = marketHeaderMaps(channel, originalHeaders);
+  const value = (row, key) => columns[key] ? row[columns[key]] : "";
+  return rawRows.map((row, index) => ({
+    rowNumber: index + 2,
+    direction: String(value(row, "direction") ?? "").trim(),
+    region: String(value(row, "region") ?? "").trim(),
+    city: String(value(row, "city") ?? "").trim(),
+    network: String(value(row, "network") ?? "").trim(),
+    storeName: String(value(row, "storeName") ?? "").trim(),
+    address: String(value(row, "address") ?? "").trim(),
+    marketQuantity: value(row, "marketQuantity"),
+    vogQuantity: value(row, "vogQuantity"),
+    targetShare: value(row, "targetShare"),
+    pointCount: value(row, "pointCount"),
+    comment: String(value(row, "comment") ?? "").trim(),
+  }));
+}
+
+function formatMarketNumber(value) {
+  const number = Number(value || 0);
+  return Number.isFinite(number) ? number.toLocaleString("ru-RU", { maximumFractionDigits: 2 }) : "—";
+}
+
+function marketImportStatusBadge(row) {
+  return row.status === "valid"
+    ? '<span class="badge success">Готово</span>'
+    : '<span class="badge danger">Ошибка</span>';
+}
+
+function renderMarketImportPreview(channel, payload) {
+  const panel = marketPanel(channel);
+  if (!panel) return;
+  marketImportState[channel].preview = payload;
+  const summary = payload.summary || {};
+  panel.querySelector("[data-market-total-rows]").textContent = formatMarketNumber(summary.totalRows);
+  panel.querySelector("[data-market-valid-rows]").textContent = formatMarketNumber(summary.validRows);
+  panel.querySelector("[data-market-invalid-rows]").textContent = formatMarketNumber(summary.invalidRows);
+  panel.querySelector("[data-market-total-market]").textContent = `${formatMarketNumber(summary.marketQuantity)} м²`;
+  panel.querySelector("[data-market-total-vog]").textContent = `${formatMarketNumber(summary.vogQuantity)} м²`;
+  panel.querySelector("[data-market-share]").textContent = `${Number(summary.actualShare || 0).toLocaleString("ru-RU", { maximumFractionDigits: 2 })}%`;
+
+  const warning = panel.querySelector("[data-market-period-warning]");
+  warning.hidden = !payload.periodExists;
+  warning.textContent = payload.periodExists
+    ? `${payload.channelLabel} за ${payload.periodLabel} уже загружена. При подтверждении будет создана новая версия и сделана активной.`
+    : "";
+
+  const rows = Array.isArray(payload.rows) ? payload.rows : [];
+  const body = panel.querySelector("[data-market-preview-body]");
+  body.innerHTML = rows.slice(0, 500).map((row) => {
+    const territory = row.city || "Весь регион";
+    const detail = channel === "diy"
+      ? `<strong>${escapeHtml(row.network || "—")}</strong>${row.storeName ? `<small>${escapeHtml(row.storeName)}</small>` : ""}`
+      : formatMarketNumber(row.pointCount);
+    return `<tr class="market-import-row-${escapeHtml(row.status || "invalid")}">
+      <td>${escapeHtml(row.rowNumber)}</td>
+      <td>${escapeHtml(row.direction || "—")}</td>
+      <td>${escapeHtml(row.region || "—")}</td>
+      <td>${escapeHtml(territory)}</td>
+      <td>${detail}</td>
+      <td>${row.marketQuantity === null || row.marketQuantity === undefined ? "—" : formatMarketNumber(row.marketQuantity)}</td>
+      <td>${row.vogQuantity === null || row.vogQuantity === undefined ? "—" : formatMarketNumber(row.vogQuantity)}</td>
+      <td>${Number(row.actualShare || 0).toLocaleString("ru-RU", { maximumFractionDigits: 2 })}%</td>
+      <td>${marketImportStatusBadge(row)}${row.message ? `<small>${escapeHtml(row.message)}</small>` : ""}</td>
+    </tr>`;
+  }).join("");
+  if (rows.length > 500) body.insertAdjacentHTML("beforeend", `<tr><td colspan="9"><small>Показаны первые 500 строк из ${rows.length.toLocaleString("ru-RU")}.</small></td></tr>`);
+
+  panel.querySelector("[data-market-result]").hidden = false;
+  panel.querySelector("[data-market-commit]").disabled = Number(summary.invalidRows || 0) > 0 || Number(summary.validRows || 0) === 0;
+}
+
+async function previewMarketImport(channel) {
+  if (!isSystemAdmin()) return;
+  const panel = marketPanel(channel);
+  const file = panel?.querySelector("[data-market-file]")?.files?.[0];
+  if (!panel || !file) return;
+  const error = panel.querySelector("[data-market-error]");
+  const progress = panel.querySelector("[data-market-progress]");
+  error.hidden = true;
+  panel.querySelector("[data-market-result]").hidden = true;
+  progress.hidden = false;
+  panel.querySelector("[data-market-preview]").disabled = true;
+  try {
+    const rows = await readMarketImportFile(file, channel);
+    marketImportState[channel].rows = rows;
+    marketImportState[channel].fileName = file.name;
+    const payload = await api("/admin/sales-import", {
+      method: "POST",
+      body: JSON.stringify({
+        scope: "market",
+        operation: "preview",
+        channel,
+        year: Number(panel.querySelector("[data-market-year]").value),
+        month: Number(panel.querySelector("[data-market-month]").value),
+        fileName: file.name,
+        rows,
+      }),
+    });
+    renderMarketImportPreview(channel, payload);
+  } catch (err) {
+    error.textContent = err.message;
+    error.hidden = false;
+  } finally {
+    progress.hidden = true;
+    updateMarketPreviewButton(channel);
+  }
+}
+
+async function commitMarketImport(channel) {
+  if (!isSystemAdmin()) return;
+  const panel = marketPanel(channel);
+  const item = marketImportState[channel];
+  if (!panel || !item.preview || !item.rows.length) return;
+  const year = Number(panel.querySelector("[data-market-year]").value);
+  const month = Number(panel.querySelector("[data-market-month]").value);
+  const period = `${SALES_IMPORT_MONTHS[month - 1]} ${year}`;
+  const replace = Boolean(item.preview.periodExists);
+  const question = replace
+    ? `Загрузить новую активную версию «${MARKET_IMPORT_LABELS[channel]}» за ${period}? Предыдущая версия останется в истории.`
+    : `Загрузить «${MARKET_IMPORT_LABELS[channel]}» за ${period}?`;
+  if (!window.confirm(question)) return;
+  const button = panel.querySelector("[data-market-commit]");
+  const error = panel.querySelector("[data-market-error]");
+  error.hidden = true;
+  button.disabled = true;
+  button.textContent = "Загрузка…";
+  try {
+    const result = await api("/admin/sales-import", {
+      method: "POST",
+      body: JSON.stringify({
+        scope: "market",
+        operation: "commit",
+        channel,
+        year,
+        month,
+        fileName: item.fileName,
+        replace,
+        rows: item.rows,
+      }),
+    });
+    showToast(result.message || `Данные ${MARKET_IMPORT_LABELS[channel]} загружены.`);
+    resetMarketImport(channel, true);
+  } catch (err) {
+    error.textContent = err.message;
+    error.hidden = false;
+    button.disabled = false;
+  } finally {
+    button.textContent = channel === "diy" ? "Загрузить DIY" : "Загрузить ТР";
+  }
+}
+
+function downloadMarketTemplate(channel) {
+  if (!window.XLSX) return showToast("Модуль Excel не загрузился");
+  const diy = channel === "diy";
+  const headers = diy
+    ? ["Направление","Регион","Город","Сеть DIY","Магазин / ТРТ","Адрес","Продажи рынка, м²","Продажи ВОГ, м²","Целевая доля ВОГ, %","Количество магазинов","Комментарий"]
+    : ["Направление","Регион","Город","Продажи рынка ТР, м²","Продажи ВОГ, м²","Количество ТРТ","Целевая доля ВОГ, %","Комментарий"];
+  const example = diy
+    ? [["Плитка","Тверская область","","Лемана ПРО","","",180000,55000,35,3,"Агрегат по сети в регионе"]]
+    : [["Плитка","Тверская область","",500000,100000,240,22,"Агрегат по региону"]];
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([headers]), "Данные");
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([headers, ...example]), "Пример");
+  XLSX.writeFile(workbook, diy ? "VOG_Шаблон_рынок_DIY.xlsx" : "VOG_Шаблон_традиционная_розница.xlsx");
+}
+
 async function logout() {
   try { await api("/auth/logout", { method: "POST", body: "{}" }); } catch { /* Локальная сессия очищается в любом случае. */ }
   clearSession();
@@ -4310,13 +4526,6 @@ $("trt-sales-modal").addEventListener("click", (event) => {
   if (event.target === $("trt-sales-modal")) closeTrtSales();
 });
 $("map-inspector-close")?.addEventListener("click", closeMapInspector);
-$("region-product-toggle")?.addEventListener("click", (event) => {
-  const button = event.target.closest("[data-region-product]");
-  if (!button || !trtInspectorRegion) return;
-  const nextProduct = button.dataset.regionProduct === "wallpaper" ? "wallpaper" : "tiles";
-  if (nextProduct === trtRegionProduct) return;
-  renderRegionInspector(trtInspectorRegion.config, trtInspectorRegion.label, nextProduct);
-});
 $("region-inspector-city-body")?.addEventListener("click", (event) => {
   const button = event.target.closest("[data-region-city-toggle]");
   if (!button) return;
@@ -4790,6 +4999,23 @@ $("sales-import-month").addEventListener("change", () => resetSalesImport(false)
 $("sales-import-preview-button").addEventListener("click", previewSalesImport);
 $("sales-import-reset-button").addEventListener("click", () => resetSalesImport(true));
 $("sales-import-commit-button").addEventListener("click", commitSalesImport);
+
+document.querySelectorAll("[data-import-tab]").forEach((button) => {
+  button.addEventListener("click", () => setDataImportTab(button.dataset.importTab));
+});
+document.querySelectorAll("[data-market-import]").forEach((panel) => {
+  const channel = panel.dataset.marketImport;
+  panel.querySelector("[data-market-file]")?.addEventListener("change", () => {
+    resetMarketImport(channel, false);
+    updateMarketPreviewButton(channel);
+  });
+  panel.querySelector("[data-market-year]")?.addEventListener("change", () => resetMarketImport(channel, false));
+  panel.querySelector("[data-market-month]")?.addEventListener("change", () => resetMarketImport(channel, false));
+  panel.querySelector("[data-market-preview]")?.addEventListener("click", () => previewMarketImport(channel));
+  panel.querySelector("[data-market-reset]")?.addEventListener("click", () => resetMarketImport(channel, true));
+  panel.querySelector("[data-market-commit]")?.addEventListener("click", () => commitMarketImport(channel));
+  panel.querySelector("[data-market-template]")?.addEventListener("click", () => downloadMarketTemplate(channel));
+});
 
 ["activity-search", "activity-employee-filter", "activity-action-filter", "activity-source-filter", "activity-date-from", "activity-date-to"].forEach((id) => {
   const element = $(id);
