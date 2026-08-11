@@ -4329,23 +4329,29 @@ async function readAnalysisImportFile(file, kind) {
     if (missing.length) throw new Error(`Не найдены обязательные столбцы: ${missing.join(", ")}.`);
     const monthColumns = headers.map((header, column) => ({ column, parsed: parseAnalysisMonthValue(header) })).filter((item) => item.parsed);
     if (!monthColumns.length) throw new Error("Не найдены месячные столбцы (например «Январь 26» или дата 01.01.2026).");
+    // v8.14: keep one browser row per source TRT and put monthly values inside it.
+    // The previous implementation expanded every TRT into 7+ JSON rows before the
+    // request, which made normal files unnecessarily large for API Gateway.
     const rows = [];
     for (let rowIndex = headerRowIndex + 1; rowIndex < matrix.length; rowIndex += 1) {
       const row = matrix[rowIndex] || [];
       const trtName = String(row[trtCol] ?? "").trim();
       const client = String(row[clientCol] ?? "").trim();
       if (!trtName && !client) continue;
+      const months = [];
       monthColumns.forEach(({ column, parsed }) => {
         const quantity = row[column];
         if (quantity === "" || quantity === null || quantity === undefined) return;
-        rows.push({
-          rowNumber: rowIndex + 1, year: parsed.year, month: parsed.month,
-          direction: String(row[directionCol] ?? "").trim(),
-          manager: managerCol >= 0 ? String(row[managerCol] ?? "").trim() : "",
-          client, trtName,
-          address: addressCol >= 0 ? String(row[addressCol] ?? "").trim() : "",
-          quantity,
-        });
+        months.push({ year: parsed.year, month: parsed.month, quantity });
+      });
+      if (!months.length) continue;
+      rows.push({
+        rowNumber: rowIndex + 1,
+        direction: String(row[directionCol] ?? "").trim(),
+        manager: managerCol >= 0 ? String(row[managerCol] ?? "").trim() : "",
+        client, trtName,
+        address: addressCol >= 0 ? String(row[addressCol] ?? "").trim() : "",
+        months,
       });
     }
     if (!rows.length) throw new Error("В месячных столбцах нет значений плана.");
@@ -4382,6 +4388,7 @@ async function readAnalysisImportFile(file, kind) {
   const incomplete = pairs.filter((item) => item.total < 0 || item.vog < 0);
   if (incomplete.length) throw new Error("Для некоторых месяцев найдена только одна колонка из пары: общие продажи / продажи ВОГ.");
 
+  // v8.14: one browser row per DIY store; months remain nested until the API.
   const rows = [];
   const dataStart = headerRowIndex + (hasMetricRow ? 2 : 1);
   for (let rowIndex = dataStart; rowIndex < matrix.length; rowIndex += 1) {
@@ -4389,14 +4396,17 @@ async function readAnalysisImportFile(file, kind) {
     const network = String(row[networkCol] ?? "").trim();
     const address = String(row[addressCol] ?? "").trim();
     if (!network && !address) continue;
+    const months = [];
     pairs.forEach((item) => {
       const totalQuantity = row[item.total];
       const vogQuantity = row[item.vog];
       if ([totalQuantity, vogQuantity].every((value) => value === "" || value === null || value === undefined)) return;
-      rows.push({
-        rowNumber: rowIndex + 1, year: item.year, month: item.month,
-        direction: String(row[directionCol] ?? "").trim(), network, address, totalQuantity, vogQuantity,
-      });
+      months.push({ year: item.year, month: item.month, totalQuantity, vogQuantity });
+    });
+    if (!months.length) continue;
+    rows.push({
+      rowNumber: rowIndex + 1,
+      direction: String(row[directionCol] ?? "").trim(), network, address, months,
     });
   }
   if (!rows.length) throw new Error("В месячных столбцах DIY sell-out нет данных.");
