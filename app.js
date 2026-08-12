@@ -1,6 +1,6 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.16";
+const VOG_WEB_VERSION = "8.17";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
@@ -4294,7 +4294,7 @@ function renderSalesImportPreview(payload) {
       <td>${escapeHtml(row.direction || "—")}</td>
       <td>${escapeHtml(shortPersonName(row.manager) || "—")}</td>
       <td>${escapeHtml(row.client || "—")}</td>
-      <td><strong>${escapeHtml(row.location || "—")}</strong>${row.message ? `<small>${escapeHtml(row.message)}</small>` : ""}</td>
+      <td><strong>${escapeHtml(row.location || "—")}</strong>${row.message ? `<small>${escapeHtml(row.message)}</small>` : ""}${(row.masterId || row.pointId) ? `<small class="sales-master-meta">master: ${escapeHtml(row.masterId || "—")} · point: ${escapeHtml(row.pointId || "—")} · ${escapeHtml(row.matchMethod || "")}</small>` : ""}</td>
       <td>${row.quantity === null || row.quantity === undefined ? "—" : escapeHtml(Number(row.quantity).toLocaleString("ru-RU"))}</td>
       <td>${salesImportStatusBadge(row)}</td>
     </tr>`).join("");
