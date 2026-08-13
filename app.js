@@ -1,6 +1,6 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.22";
+const VOG_WEB_VERSION = "8.23";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
@@ -2528,9 +2528,11 @@ function initTrtMap() {
           const average = sizes.length
             ? sizes.reduce((sum, value) => sum + value, 0) / sizes.length
             : null;
-          const color = trtColor(average);
+          const origins = markers.map((marker) => String(marker.options.originKey || ""));
+          const allNewBulk = origins.length > 0 && origins.every((origin) => origin === "new_bulk");
+          const color = allNewBulk ? "#4b5563" : trtColor(average);
           return L.divIcon({
-            html: `<div class="legacy-cluster" style="background:${color}"><span>${markers.length}</span></div>`,
+            html: `<div class="legacy-cluster${allNewBulk ? " trt-new-bulk-cluster" : ""}" style="background:${color}"><span>${markers.length}</span></div>`,
             className: "",
             iconSize: [40, 40],
           });
@@ -2567,9 +2569,12 @@ function filteredTrtPoints() {
 }
 
 function trtMarkerIcon(point) {
+  const isNewBulk = trtOriginKey(point) === "new_bulk";
+  const color = isNewBulk ? "#4b5563" : trtColor(point.size);
+  const title = isNewBulk ? "Новая ТРТ" : "";
   return L.divIcon({
     className: "",
-    html: `<div class="legacy-size-marker" style="background:${trtColor(point.size)}"></div>`,
+    html: `<div class="legacy-size-marker${isNewBulk ? " trt-new-bulk-marker" : ""}" style="background:${color}"${title ? ` title="${title}"` : ""}></div>`,
     iconSize: [18, 18],
     iconAnchor: [9, 9],
   });
@@ -3546,6 +3551,7 @@ function renderTrtMap() {
     const marker = L.marker([lat, lon], {
       icon: trtMarkerIcon(point),
       sizeValue: point.size,
+      originKey: trtOriginKey(point),
       title: point.client || point.holding || "ТРТ",
     });
     marker.bindTooltip(point.client || point.holding || "ТРТ");
@@ -4480,7 +4486,7 @@ async function commitTrtBulkImport() {
     await ensureTrtData();
     showToast(`Новые ТРТ: добавлено ${created}${duplicates ? ` · дублей ${duplicates}` : ""}${invalid ? ` · ошибок ${invalid}` : ""}`);
     progress.textContent = `Готово. Добавлено новых ТРТ: ${created}.`;
-    $("trt-import-map-button").hidden = created === 0;
+    $("trt-import-map-button").hidden = (created + duplicates) === 0;
   } catch (exc) {
     error.textContent = exc?.message || String(exc); error.hidden = false; progress.hidden = true;
   } finally {
@@ -4489,6 +4495,10 @@ async function commitTrtBulkImport() {
 }
 
 function openBulkNewTrtOnMap() {
+  const directionFilter = $("trt-direction-filter");
+  const managerFilter = $("trt-manager-filter");
+  if (directionFilter) directionFilter.value = "";
+  if (managerFilter) managerFilter.value = "";
   trtSmartFilters = [{ type: "source", value: "new_bulk", label: "Новые ТРТ" }];
   persistTrtSmartFilters();
   renderTrtSmartFilterChips();
