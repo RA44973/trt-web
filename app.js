@@ -1,6 +1,6 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.18";
+const VOG_WEB_VERSION = "8.19";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
@@ -4282,10 +4282,10 @@ async function loadTrtMasterAudit(force = false) {
     marketResolveStaticPlanRows();
     const sourceRows = trtMasterAuditSourceRows();
     if (!sourceRows.length) throw new Error("Статический файл планов ТРТ не найден.");
-    const result = await api("/admin/trt-master-audit", {
+    const result = await api("/admin/sales-import", {
       method: "POST",
       timeout: 90000,
-      body: JSON.stringify({ sourceType: "trt_plan", rows: sourceRows }),
+      body: JSON.stringify({ scope: "trt_master_audit", sourceType: "trt_plan", rows: sourceRows }),
     });
     const localStats = state.marketAnalysis?.staticPlanStats || {};
     state.trtMasterAudit = {
