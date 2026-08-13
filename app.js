@@ -1,6 +1,6 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.19";
+const VOG_WEB_VERSION = "8.20";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
@@ -4282,11 +4282,39 @@ async function loadTrtMasterAudit(force = false) {
     marketResolveStaticPlanRows();
     const sourceRows = trtMasterAuditSourceRows();
     if (!sourceRows.length) throw new Error("Статический файл планов ТРТ не найден.");
-    const result = await api("/admin/sales-import", {
-      method: "POST",
-      timeout: 90000,
-      body: JSON.stringify({ scope: "trt_master_audit", sourceType: "trt_plan", rows: sourceRows }),
-    });
+    const chunks = [];
+    const batchSize = 25;
+    for (let start = 0; start < sourceRows.length; start += batchSize) {
+      chunks.push(sourceRows.slice(start, start + batchSize));
+    }
+
+    const mergedRows = [];
+    const mergedSummary = {
+      totalRows: 0, aliasRows: 0, masterRows: 0, fallbackRows: 0, unresolvedRows: 0,
+      masterConflictRows: 0, masterOnlyRows: 0, masterAmbiguousRows: 0, matchedRows: 0,
+    };
+
+    for (let index = 0; index < chunks.length; index += 1) {
+      $("trt-master-audit-loading").textContent = `Проверка TRT Master… ${index + 1} / ${chunks.length}`;
+      const payload = await api("/admin/sales-import", {
+        method: "POST",
+        timeout: 90000,
+        body: JSON.stringify({
+          scope: "trt_master_audit",
+          sourceType: "trt_plan",
+          rows: chunks[index],
+        }),
+      });
+      if (Array.isArray(payload.rows)) mergedRows.push(...payload.rows);
+      const summary = payload.summary || {};
+      Object.keys(mergedSummary).forEach((key) => {
+        mergedSummary[key] += Number(summary[key] || 0);
+      });
+    }
+
+    mergedSummary.matchedRows =
+      mergedSummary.aliasRows + mergedSummary.masterRows + mergedSummary.fallbackRows;
+    const result = { rows: mergedRows, summary: mergedSummary };
     const localStats = state.marketAnalysis?.staticPlanStats || {};
     state.trtMasterAudit = {
       loaded: true,
