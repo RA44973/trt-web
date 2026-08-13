@@ -1,6 +1,6 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.23";
+const VOG_WEB_VERSION = "8.24";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
@@ -62,6 +62,9 @@ let mediaPreviewTouchStartX = null;
 let logisticsActiveTab = "overview";
 let warehouseMap = null;
 let warehouseMarker = null;
+let trtManualMap = null;
+let trtManualMarker = null;
+let trtManualReverseSequence = 0;
 let marketAnalysisDirection = "обои";
 let marketAnalysisYear = 2026;
 let marketAnalysisMonth = 7;
@@ -490,6 +493,9 @@ function showApp() {
   if (salesImportPage && !gdAdmin) salesImportPage.hidden = true;
   if (activityPage && !gdAdmin) activityPage.hidden = true;
   if (trtMasterAuditPage && !gdAdmin) trtMasterAuditPage.hidden = true;
+
+  const trtAddPointControl = $("trt-add-point-control");
+  if (trtAddPointControl) trtAddPointControl.hidden = !gdAdmin || trtMainView !== "map";
 
   $("add-employee-button").hidden = !gdAdmin;
   $("add-employee-button").title = gdAdmin
@@ -3619,6 +3625,8 @@ async function loadTrtMap() {
 function setTrtMainView(view) {
   trtMainView = view === "analytics" ? "analytics" : "map";
   const mapView = trtMainView === "map";
+  const trtAddPointControl = $("trt-add-point-control");
+  if (trtAddPointControl) trtAddPointControl.hidden = !mapView || !isSystemAdmin();
 
   $("view-map-button").classList.toggle("active", mapView);
   $("view-analytics-button").classList.toggle("active", !mapView);
@@ -6254,6 +6262,170 @@ async function commitLogistics() {
   }
 }
 
+
+function manualTrtSelectOptions(id, values, preferred = "") {
+  const select = $(id);
+  if (!select) return;
+  const unique = [...new Set(values.map((value) => String(value || "").trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, "ru"));
+  select.innerHTML = '<option value="">Выберите</option>' + unique.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join("");
+  if (preferred && unique.includes(preferred)) select.value = preferred;
+  else if (unique.length === 1) select.value = unique[0];
+}
+
+function setManualTrtLocation(lat, lon, { center = true, status = "Координаты выбраны." } = {}) {
+  const latitude = Number(lat);
+  const longitude = Number(lon);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
+  $("trt-add-point-lat").value = latitude.toFixed(6);
+  $("trt-add-point-lon").value = longitude.toFixed(6);
+  const statusNode = $("trt-add-point-location-status");
+  statusNode.textContent = status;
+  statusNode.classList.remove("error");
+  if (!trtManualMap) return;
+  if (trtManualMarker) trtManualMarker.remove();
+  trtManualMarker = L.circleMarker([latitude, longitude], {
+    radius: 9, weight: 3, color: "#ffffff", fillColor: "#4b5563", fillOpacity: 1,
+  }).addTo(trtManualMap);
+  if (center) trtManualMap.setView([latitude, longitude], Math.max(trtManualMap.getZoom(), 15));
+}
+
+async function reverseGeocodeManualTrt(lat, lon) {
+  const sequence = ++trtManualReverseSequence;
+  const statusNode = $("trt-add-point-location-status");
+  statusNode.textContent = "Точка выбрана. Определяю адрес…";
+  statusNode.classList.remove("error");
+  try {
+    const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&accept-language=ru&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`, { headers: { Accept: "application/json" } });
+    if (!response.ok) throw new Error("Адрес не определён");
+    const result = await response.json();
+    if (sequence !== trtManualReverseSequence) return;
+    const displayName = String(result?.display_name || "").trim();
+    if (displayName) $("trt-add-point-address").value = displayName;
+    statusNode.textContent = displayName ? "Координаты и адрес определены по точке на карте." : "Координаты выбраны. Адрес введите вручную.";
+  } catch (error) {
+    if (sequence !== trtManualReverseSequence) return;
+    statusNode.textContent = "Координаты выбраны. Адрес введите вручную.";
+  }
+}
+
+function initializeManualTrtMap() {
+  const host = $("trt-add-point-map");
+  if (!host || !window.L) return;
+  if (!trtManualMap) {
+    const center = trtMap?.getCenter?.();
+    const initialCenter = center ? [center.lat, center.lng] : DEFAULT_MAP_VIEW.center;
+    const initialZoom = trtMap ? Math.max(5, Math.min(12, trtMap.getZoom())) : 5;
+    trtManualMap = L.map(host).setView(initialCenter, initialZoom);
+    L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
+      subdomains: "abcd", maxZoom: 20, attribution: "© OpenStreetMap contributors · © CARTO",
+    }).addTo(trtManualMap);
+    trtManualMap.on("click", ({ latlng }) => {
+      setManualTrtLocation(latlng.lat, latlng.lng, { center: false, status: "Точка выбрана. Определяю адрес…" });
+      reverseGeocodeManualTrt(latlng.lat, latlng.lng);
+    });
+  }
+  window.setTimeout(() => trtManualMap?.invalidateSize(), 60);
+}
+
+function resetManualTrtForm() {
+  const form = $("trt-add-point-form");
+  form?.reset();
+  $("trt-add-point-status").value = "НАКБ";
+  $("trt-add-point-lat").value = "";
+  $("trt-add-point-lon").value = "";
+  $("trt-add-point-error").hidden = true;
+  const statusNode = $("trt-add-point-location-status");
+  statusNode.textContent = "Введите адрес и нажмите «Найти» или поставьте точку на карте справа.";
+  statusNode.classList.remove("error");
+  trtManualReverseSequence += 1;
+  if (trtManualMarker) { trtManualMarker.remove(); trtManualMarker = null; }
+}
+
+async function openManualTrtDialog() {
+  if (!isSystemAdmin()) return;
+  try { await ensureTrtData(); } catch (error) { showToast(error.message); return; }
+  resetManualTrtForm();
+  const currentDirection = $("trt-direction-filter")?.value || trtSmartFilters.find((item) => item.type === "direction")?.value || "";
+  manualTrtSelectOptions("trt-add-point-direction", state.trtPoints.map((point) => point.direction), currentDirection);
+  manualTrtSelectOptions("trt-add-point-format", state.trtPoints.map((point) => point.format));
+  const dialog = $("trt-add-point-dialog");
+  if (!dialog) return;
+  dialog.showModal();
+  initializeManualTrtMap();
+  window.setTimeout(() => $("trt-add-point-client")?.focus(), 80);
+}
+
+function closeManualTrtDialog() {
+  const dialog = $("trt-add-point-dialog");
+  if (dialog?.open) dialog.close();
+}
+
+async function geocodeManualTrtAddress() {
+  const address = $("trt-add-point-address").value.trim();
+  const statusNode = $("trt-add-point-location-status");
+  if (!address) return showToast("Введите адрес ТРТ");
+  statusNode.textContent = "Ищу адрес…";
+  statusNode.classList.remove("error");
+  try {
+    const response = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&accept-language=ru&q=${encodeURIComponent(address)}`, { headers: { Accept: "application/json" } });
+    if (!response.ok) throw new Error("Сервис поиска адреса недоступен");
+    const rows = await response.json();
+    if (!Array.isArray(rows) || !rows.length) throw new Error("Адрес не найден. Поставьте точку на карте вручную.");
+    const result = rows[0];
+    setManualTrtLocation(Number(result.lat), Number(result.lon), { status: "Адрес найден. Координаты проставлены автоматически." });
+  } catch (error) {
+    statusNode.textContent = error.message || "Не удалось найти адрес.";
+    statusNode.classList.add("error");
+  }
+}
+
+async function saveManualTrt(event) {
+  event?.preventDefault();
+  if (!isSystemAdmin()) return;
+  const errorBox = $("trt-add-point-error");
+  const button = $("trt-add-point-save");
+  errorBox.hidden = true;
+  const latRaw = $("trt-add-point-lat").value.trim();
+  const lonRaw = $("trt-add-point-lon").value.trim();
+  const payload = {
+    sourceType: "new_manual",
+    client: $("trt-add-point-client").value.trim(),
+    address: $("trt-add-point-address").value.trim(),
+    direction: $("trt-add-point-direction").value,
+    format: $("trt-add-point-format").value,
+    status: $("trt-add-point-status").value,
+    lat: latRaw ? Number(latRaw) : null,
+    lon: lonRaw ? Number(lonRaw) : null,
+  };
+  if (!payload.client || !payload.address || !payload.direction || !payload.format) {
+    errorBox.textContent = "Заполните название, адрес, направление и формат."; errorBox.hidden = false; return;
+  }
+  if (!Number.isFinite(payload.lat) || !Number.isFinite(payload.lon)) {
+    errorBox.textContent = "Сначала найдите адрес или поставьте точку на карте."; errorBox.hidden = false; return;
+  }
+  const original = button.textContent;
+  button.disabled = true; button.textContent = "Добавление…";
+  try {
+    const result = await api("/trt", { method: "POST", timeout: 60000, body: JSON.stringify(payload) });
+    const newPointId = String(result?.point?.id || "");
+    state.trtLoaded = false;
+    await ensureTrtData();
+    initTrtMap();
+    trtSmartFilters = [{ type: "source", value: "new_bulk", label: trtOriginLabel("new_bulk") }];
+    persistTrtSmartFilters();
+    renderTrtSmartFilterChips();
+    renderTrtMap();
+    closeManualTrtDialog();
+    showToast("Новая ТРТ добавлена");
+    if (newPointId) window.setTimeout(() => openTrtCard(newPointId, true), 80);
+  } catch (error) {
+    errorBox.textContent = error.message || "Не удалось добавить ТРТ."; errorBox.hidden = false;
+  } finally {
+    button.disabled = false; button.textContent = original;
+  }
+}
+
 async function loadLogisticsDictionaries(force=false) { if(state.logistics.dictionaries&&!force){renderLogisticsDictionaries();return;} try{state.logistics.dictionaries=await api("/logistics?view=dictionaries");renderLogisticsDictionaries();}catch(exc){$("logistics-error").textContent=exc.message;$("logistics-error").hidden=false;} }
 function populateLogisticsAliasSelects(){ const wa=new Set(state.logistics.observedWarehouses||[]), va=new Set(state.logistics.observedVehicles||[]); (state.logistics.dictionaries?.warehouseAliases||[]).forEach(a=>wa.add(a.sourceAlias)); (state.logistics.dictionaries?.vehicleAliases||[]).forEach(a=>va.add(a.sourceAlias));
   const w=$("warehouse-source-alias"), v=$("vehicle-source-alias"); if(w) w.innerHTML='<option value="">Выберите обозначение</option>'+[...wa].sort().map(a=>`<option>${escapeHtml(a)}</option>`).join(""); if(v) v.innerHTML='<option value="">Выберите обозначение</option>'+[...va].sort().map(a=>`<option>${escapeHtml(a)}</option>`).join(""); }
@@ -6268,6 +6440,14 @@ async function saveWarehouse(){ try{await api("/admin/logistics",{method:"POST",
 async function saveVehicle(){ try{await api("/admin/logistics",{method:"POST",body:JSON.stringify({operation:"save_vehicle",vehicleId:$("vehicle-id").value,sourceAlias:$("vehicle-source-alias").value,officialName:$("vehicle-name").value,capacityTons:Number($("vehicle-capacity").value),volumeM3:Number($("vehicle-volume").value),isActive:true})}); showToast("Автомобиль сохранён"); state.logistics.dictionaries=null; await loadLogisticsDictionaries(true);}catch(exc){showToast(exc.message);} }
 
 
+
+$("trt-add-point-button")?.addEventListener("click", openManualTrtDialog);
+$("trt-add-point-close")?.addEventListener("click", closeManualTrtDialog);
+$("trt-add-point-cancel")?.addEventListener("click", closeManualTrtDialog);
+$("trt-add-point-geocode")?.addEventListener("click", geocodeManualTrtAddress);
+$("trt-add-point-form")?.addEventListener("submit", saveManualTrt);
+$("trt-add-point-address")?.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); geocodeManualTrtAddress(); } });
+$("trt-add-point-dialog")?.addEventListener("cancel", (event) => { event.preventDefault(); closeManualTrtDialog(); });
 
 $("trt-import-file")?.addEventListener("change", () => { resetTrtBulkImport(false); updateTrtBulkPreviewButton(); });
 $("trt-import-preview-button")?.addEventListener("click", previewTrtBulkImport);

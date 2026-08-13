@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#384e86">
-  <meta name="vog-web-version" content="8.23">
+  <meta name="vog-web-version" content="8.24">
   <title>ТК ВОГ Офис</title>
   <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=20260810-gdebenz-v8-0">
   <link rel="apple-touch-icon" sizes="192x192" href="icon-192.png?v=20260810-gdebenz-v8-0">
@@ -13,6 +13,29 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
   <link rel="stylesheet" href="styles.css?v=20260811-regional-analytics-v8-12">
+
+  <style id="trt-manual-map-v824-styles">
+    .trt-add-point-control{position:absolute;left:20px;top:20px;z-index:780;display:flex;align-items:center;gap:8px}
+    .trt-add-point-button{border:0;border-radius:13px;background:#334b83;color:#fff;font:700 14px/1.1 inherit;padding:11px 16px;box-shadow:0 8px 24px rgba(31,50,91,.18);cursor:pointer;white-space:nowrap}
+    .trt-add-point-button:hover{filter:brightness(1.04)}
+    .trt-add-point-dialog{width:min(980px,calc(100vw - 36px));max-width:none;border:0;border-radius:22px;padding:0;box-shadow:0 30px 80px rgba(15,23,42,.28);overflow:hidden;color:#17233f}
+    .trt-add-point-dialog::backdrop{background:rgba(15,23,42,.42);backdrop-filter:blur(2px)}
+    .trt-add-point-form{padding:0;margin:0}
+    .trt-add-point-header{display:flex;justify-content:space-between;align-items:flex-start;gap:18px;padding:22px 24px 16px;border-bottom:1px solid #e7ebf3;background:#fff}
+    .trt-add-point-header h2{margin:2px 0 0;font-size:25px;line-height:1.15}.trt-add-point-header p{margin:0;color:#6b7893;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+    .trt-add-point-body{display:grid;grid-template-columns:minmax(300px, .9fr) minmax(420px,1.25fr);gap:18px;padding:20px 24px 22px;background:#f7f9fc}
+    .trt-add-point-fields{display:grid;gap:13px;align-content:start}.trt-add-point-fields label{display:grid;gap:6px;font-size:13px;font-weight:700;color:#43506b}
+    .trt-add-point-fields input,.trt-add-point-fields select{width:100%;box-sizing:border-box;border:1px solid #d8dfeb;border-radius:11px;background:#fff;padding:10px 12px;color:#17233f;font:500 14px/1.25 inherit;outline:none}
+    .trt-add-point-fields input:focus,.trt-add-point-fields select:focus{border-color:#6684c2;box-shadow:0 0 0 3px rgba(84,116,181,.12)}
+    .trt-add-point-address-row{display:grid;grid-template-columns:1fr auto;gap:8px}.trt-add-point-address-row button{align-self:end}
+    .trt-add-point-grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .trt-add-point-coords{display:grid;grid-template-columns:1fr 1fr;gap:10px}.trt-add-point-coords input{background:#eef2f7;color:#56627a}
+    .trt-add-point-map-wrap{display:grid;grid-template-rows:auto minmax(330px,1fr);gap:9px}.trt-add-point-map-hint{margin:0;color:#65718b;font-size:13px;line-height:1.4}
+    #trt-add-point-map{height:360px;min-height:330px;border:1px solid #d8dfeb;border-radius:16px;overflow:hidden;background:#e9edf3}
+    .trt-add-point-status{min-height:18px;margin:0;color:#65718b;font-size:12px;line-height:1.35}.trt-add-point-status.error{color:#b42318}
+    .trt-add-point-actions{display:flex;justify-content:flex-end;gap:10px;padding:15px 24px 20px;background:#fff;border-top:1px solid #e7ebf3}
+    @media(max-width:850px){.trt-add-point-body{grid-template-columns:1fr}.trt-add-point-control{left:14px;top:72px}#trt-add-point-map{height:310px;min-height:280px}}
+  </style>
 </head>
 <body>
   <div id="toast" class="toast" hidden></div>
@@ -916,6 +939,10 @@
           <div class="legacy-trt-main">
             <div id="trt-map" aria-label="Карта торгово-розничных точек"></div>
 
+            <div id="trt-add-point-control" class="trt-add-point-control" hidden>
+              <button id="trt-add-point-button" class="trt-add-point-button" type="button">+ Добавить ТРТ</button>
+            </div>
+
             <div id="trt-smart-search-control" class="trt-smart-search-control" role="search" aria-label="Умный поиск и фильтрация ТРТ">
               <div id="trt-smart-search-shell" class="trt-smart-search-shell">
                 <svg class="trt-smart-search-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -962,6 +989,46 @@
 
     </main>
   </div>
+
+
+  <dialog id="trt-add-point-dialog" class="trt-add-point-dialog">
+    <form id="trt-add-point-form" class="trt-add-point-form" autocomplete="off">
+      <header class="trt-add-point-header">
+        <div><p>Новые ТРТ · ручное добавление</p><h2>Добавить ТРТ на карту</h2></div>
+        <button id="trt-add-point-close" class="icon-button" type="button" aria-label="Закрыть">×</button>
+      </header>
+      <div class="trt-add-point-body">
+        <section class="trt-add-point-fields">
+          <label>Наименование ТРТ<input id="trt-add-point-client" maxlength="240" required placeholder="Например: Салон Обоев Плюс"></label>
+          <label>Адрес
+            <div class="trt-add-point-address-row">
+              <input id="trt-add-point-address" maxlength="500" required placeholder="Город, улица, дом">
+              <button id="trt-add-point-geocode" class="secondary-button" type="button">Найти</button>
+            </div>
+          </label>
+          <div class="trt-add-point-grid2">
+            <label>Направление<select id="trt-add-point-direction" required><option value="">Выберите</option></select></label>
+            <label>Формат<select id="trt-add-point-format" required><option value="">Выберите</option></select></label>
+          </div>
+          <label>Статус<select id="trt-add-point-status"><option value="НАКБ" selected>НАКБ</option><option value="АКБ">АКБ</option><option value="ЦНАКБ">ЦНАКБ</option><option value="ЦАКБ">ЦАКБ</option></select></label>
+          <div class="trt-add-point-coords">
+            <label>Широта<input id="trt-add-point-lat" type="text" readonly placeholder="—"></label>
+            <label>Долгота<input id="trt-add-point-lon" type="text" readonly placeholder="—"></label>
+          </div>
+          <p id="trt-add-point-location-status" class="trt-add-point-status">Введите адрес и нажмите «Найти» или поставьте точку на карте справа.</p>
+          <div id="trt-add-point-error" class="form-error" hidden></div>
+        </section>
+        <section class="trt-add-point-map-wrap">
+          <p class="trt-add-point-map-hint"><strong>Координаты можно задать двумя способами:</strong> найти введённый адрес или просто нажать нужное место на карте. При клике адрес попробуем заполнить автоматически.</p>
+          <div id="trt-add-point-map" aria-label="Выбор координат новой ТРТ"></div>
+        </section>
+      </div>
+      <footer class="trt-add-point-actions">
+        <button id="trt-add-point-cancel" class="secondary-button" type="button">Отмена</button>
+        <button id="trt-add-point-save" class="primary-button" type="submit">Добавить ТРТ</button>
+      </footer>
+    </form>
+  </dialog>
 
   <dialog id="employee-dialog" class="employee-dialog">
     <form id="employee-form" method="dialog" autocomplete="off">
@@ -1209,6 +1276,6 @@
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <script src="app.js?v=20260813-trt-new-graphite-v8-23"></script>
+  <script src="app.js?v=20260813-trt-manual-map-v8-24"></script>
 </body>
 </html>
