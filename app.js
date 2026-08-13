@@ -1,6 +1,6 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.20";
+const VOG_WEB_VERSION = "8.21";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
@@ -4192,6 +4192,7 @@ function trtMasterAuditLayerLabel(layer) {
     master: "TRT Master",
     fallback: "Legacy fallback",
     unresolved: "Не сопоставлено",
+    inactive: "Не участвует",
   };
   return labels[String(layer || "unresolved")] || String(layer || "—");
 }
@@ -4200,8 +4201,16 @@ function trtMasterAuditSourceRows() {
   const rows = [];
   (state.marketAnalysis?.staticPlanSources || []).forEach((source) => {
     const direction = marketDirectionKey(source._direction || source.direction);
+    const periods = Array.isArray(source.periods) ? source.periods : [];
+    const periodIndex = periods.findIndex((period) => (
+      Number(period?.year) === Number(marketAnalysisYear)
+      && Number(period?.month) === Number(marketAnalysisMonth)
+    ));
     (source.rows || []).forEach((row, index) => {
       const rowNumber = row.row || index + 2;
+      const quantities = Array.isArray(row.q) ? row.q : [];
+      const rawPlan = periodIndex >= 0 ? quantities[periodIndex] : 0;
+      const planQuantity = Number.isFinite(Number(rawPlan)) ? Math.max(0, Number(rawPlan)) : 0;
       rows.push({
         sourceKey: `${source._sourceUrl || "static"}|${direction}|${rowNumber}`,
         rowNumber,
@@ -4213,10 +4222,69 @@ function trtMasterAuditSourceRows() {
         city: row.city || "",
         region: row.region || "",
         format: row.format || "",
+        planQuantity,
       });
     });
   });
   return rows;
+}
+
+function applyTrtMasterAuditPeriodRules(rows, sourceRows) {
+  const sourceByKey = new Map(sourceRows.map((row) => [String(row.sourceKey || ""), row]));
+  const pointById = new Map((state.trtPoints || []).map((point) => [String(point.id || ""), point]));
+  const summary = {
+    totalRows: 0,
+    activeRows: 0,
+    inactiveRows: 0,
+    aliasRows: 0,
+    masterRows: 0,
+    fallbackRows: 0,
+    unresolvedRows: 0,
+    masterConflictRows: 0,
+    masterOnlyRows: 0,
+    masterAmbiguousRows: 0,
+    matchedRows: 0,
+  };
+
+  const result = (rows || []).map((row) => {
+    const source = sourceByKey.get(String(row.sourceKey || "")) || {};
+    const point = row.pointId ? pointById.get(String(row.pointId)) : null;
+    const planQuantity = Number(source.planQuantity || 0);
+    const factQuantity = point ? marketPointMonthFact(point, marketAnalysisYear, marketAnalysisMonth) : 0;
+    const hasAddress = Boolean(String(source.address || row.address || "").trim());
+    const inactive = !hasAddress && planQuantity <= 0 && factQuantity <= 0;
+    const next = {
+      ...row,
+      planQuantity,
+      factQuantity,
+      auditYear: Number(marketAnalysisYear),
+      auditMonth: Number(marketAnalysisMonth),
+    };
+
+    summary.totalRows += 1;
+    if (inactive) {
+      next.originalLayer = row.layer || "unresolved";
+      next.layer = "inactive";
+      next.status = "inactive_period";
+      next.message = "Не участвует в анализе периода: нет адреса, план = 0 и факт = 0.";
+      summary.inactiveRows += 1;
+      return next;
+    }
+
+    summary.activeRows += 1;
+    if (next.layer === "alias") summary.aliasRows += 1;
+    else if (next.layer === "master") summary.masterRows += 1;
+    else if (next.layer === "fallback") summary.fallbackRows += 1;
+    else summary.unresolvedRows += 1;
+
+    if (next.masterStatus === "point_conflict") summary.masterConflictRows += 1;
+    else if (next.masterStatus === "master_only") summary.masterOnlyRows += 1;
+    else if (next.masterStatus === "ambiguous") summary.masterAmbiguousRows += 1;
+    return next;
+  });
+
+  summary.matchedRows = summary.aliasRows + summary.masterRows + summary.fallbackRows;
+  return { rows: result, summary };
 }
 
 function filteredTrtMasterAuditRows() {
@@ -4239,6 +4307,7 @@ function renderTrtMasterAudit() {
   $("trt-master-audit-master").textContent = Number(s.masterRows || 0).toLocaleString("ru-RU");
   $("trt-master-audit-fallback").textContent = Number(s.fallbackRows || 0).toLocaleString("ru-RU");
   $("trt-master-audit-unresolved").textContent = Number(s.unresolvedRows || 0).toLocaleString("ru-RU");
+  $("trt-master-audit-inactive").textContent = Number(s.inactiveRows || 0).toLocaleString("ru-RU");
   $("trt-master-audit-web").textContent = `${Number(state.trtMasterAudit.currentWebMatched || 0).toLocaleString("ru-RU")} / ${Number(state.trtMasterAudit.currentWebTotal || 0).toLocaleString("ru-RU")}`;
 
   const details = [];
@@ -4246,18 +4315,21 @@ function renderTrtMasterAudit() {
   if (s.masterOnlyRows) details.push(`master без point_id: ${s.masterOnlyRows}`);
   if (s.masterAmbiguousRows) details.push(`неоднозначных master: ${s.masterAmbiguousRows}`);
   const note = $("trt-master-audit-note");
-  note.textContent = `Серверная цепочка: сохранённый alias → TRT Master → legacy fallback. Сопоставлено ${Number(s.matchedRows || 0)} из ${Number(s.totalRows || 0)}.${details.length ? ` Дополнительно: ${details.join(", ")}.` : ""}`;
+  const activeRows = Number(s.activeRows ?? (Number(s.totalRows || 0) - Number(s.inactiveRows || 0)));
+  note.textContent = `Период контроля: ${String(marketAnalysisMonth).padStart(2, "0")}.${marketAnalysisYear}. Серверная цепочка: сохранённый alias → TRT Master → legacy fallback. Сопоставлено ${Number(s.matchedRows || 0)} из ${activeRows} активных строк. Не участвует в анализе периода: ${Number(s.inactiveRows || 0)}.${details.length ? ` Дополнительно: ${details.join(", ")}.` : ""}`;
 
   const rows = filteredTrtMasterAuditRows();
   $("trt-master-audit-visible").textContent = `Показано: ${rows.length.toLocaleString("ru-RU")}`;
   $("trt-master-audit-empty").hidden = rows.length > 0;
   $("trt-master-audit-table-body").innerHTML = rows.map((row) => {
-    const badgeClass = row.layer === "unresolved" ? "danger" : row.layer === "fallback" ? "inactive" : row.layer === "alias" ? "success" : "account";
+    const badgeClass = row.layer === "unresolved" ? "danger" : row.layer === "inactive" ? "inactive" : row.layer === "fallback" ? "inactive" : row.layer === "alias" ? "success" : "account";
     return `<tr>
       <td>${escapeHtml(row.rowNumber ?? "—")}</td>
       <td>${escapeHtml(row.direction || "—")}</td>
       <td><strong>${escapeHtml(row.client || "—")}</strong><small>${escapeHtml(row.manager || "")}</small></td>
       <td><strong>${escapeHtml(row.trtName || "—")}</strong><small>${escapeHtml(row.address || "Адрес не указан")}</small></td>
+      <td>${Number(row.planQuantity || 0).toLocaleString("ru-RU")}</td>
+      <td>${Number(row.factQuantity || 0).toLocaleString("ru-RU")}</td>
       <td><span class="badge ${badgeClass}">${escapeHtml(trtMasterAuditLayerLabel(row.layer))}</span></td>
       <td><code>${escapeHtml(row.masterId || "—")}</code></td>
       <td><code>${escapeHtml(row.pointId || "—")}</code></td>
@@ -4312,9 +4384,7 @@ async function loadTrtMasterAudit(force = false) {
       });
     }
 
-    mergedSummary.matchedRows =
-      mergedSummary.aliasRows + mergedSummary.masterRows + mergedSummary.fallbackRows;
-    const result = { rows: mergedRows, summary: mergedSummary };
+    const result = applyTrtMasterAuditPeriodRules(mergedRows, sourceRows);
     const localStats = state.marketAnalysis?.staticPlanStats || {};
     state.trtMasterAudit = {
       loaded: true,
