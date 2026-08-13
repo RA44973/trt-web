@@ -1,6 +1,6 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.21";
+const VOG_WEB_VERSION = "8.22";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
@@ -442,7 +442,7 @@ function showPage(page, updateHash = true) {
   if (nextPage === "employees" && state.token && state.employees.length === 0) {
     loadEmployees();
   }
-  if (nextPage === "sales-import") { initializeSalesImportPeriod();  }
+  if (nextPage === "sales-import") { initializeSalesImportPeriod(); initializeTrtBulkImport(); }
   if (nextPage === "logistics") { initializeLogisticsPeriod(); loadLogistics(); }
   if (nextPage === "region-analytics") { loadRegionAnalyticsDirectory(); }
   if (nextPage === "trt-master-audit" && state.token) { loadTrtMasterAudit(); }
@@ -1301,6 +1301,25 @@ function trtStatusLabel(point) {
   return aliases[normalized] || raw || "АКБ";
 }
 
+
+function trtOriginKey(point) {
+  const explicit = String(point?.origin || "").trim();
+  if (explicit) return explicit;
+  const id = String(point?.id || "");
+  if (id.startsWith("trt-new-")) return "new_bulk";
+  if (id.startsWith("trt-mobile-")) return "mobile_created";
+  return "base";
+}
+
+function trtOriginLabel(pointOrOrigin) {
+  const origin = typeof pointOrOrigin === "string" ? pointOrOrigin : trtOriginKey(pointOrOrigin);
+  return {
+    new_bulk: "Новые ТРТ",
+    mobile_created: "Добавлено в МП",
+    base: "Основная БД",
+  }[origin] || String(origin || "Основная БД");
+}
+
 function renderTrtFourP(point) {
   const visit = latestFourPVisit(point?.id);
   const assessment = fourPAssessment(visit);
@@ -2000,6 +2019,7 @@ function trtSmartFilterTypeLabel(type) {
     manager: "Менеджер",
     city: "Город",
     region: "Регион",
+    source: "Источник",
     point: "ТРТ",
   }[type] || "Фильтр";
 }
@@ -2009,7 +2029,7 @@ function trtSmartFilterTokenKey(token) {
 }
 
 function sanitizeTrtSmartFilterToken(token) {
-  if (!token || !["direction", "manager", "city", "region", "point"].includes(token.type)) return null;
+  if (!token || !["direction", "manager", "city", "region", "source", "point"].includes(token.type)) return null;
   const value = String(token.value ?? "").trim();
   const label = String(token.label ?? "").trim();
   if (!value || !label) return null;
@@ -2042,6 +2062,7 @@ function pruneTrtSmartFilters() {
   const validManagers = new Set(state.trtPoints.map((point) => String(point.manager || "")).filter(Boolean));
   const validCities = new Set(state.trtPoints.map(trtPointCityKey).filter(Boolean));
   const validRegions = new Set(state.trtPoints.map(trtCanonicalRegionName).filter(Boolean));
+  const validSources = new Set(state.trtPoints.map(trtOriginKey).filter(Boolean));
   const validPoints = new Set(state.trtPoints.map((point) => String(point.id)));
   const before = trtSmartFilters.length;
   trtSmartFilters = trtSmartFilters.filter((token) => {
@@ -2049,6 +2070,7 @@ function pruneTrtSmartFilters() {
     if (token.type === "manager") return validManagers.has(token.value);
     if (token.type === "city") return validCities.has(token.value);
     if (token.type === "region") return validRegions.has(token.value);
+    if (token.type === "source") return validSources.has(token.value);
     if (token.type === "point") return validPoints.has(token.value);
     return false;
   });
@@ -2123,6 +2145,16 @@ function buildTrtSmartSuggestions(query) {
     add({ type: "region", value, label: value, meta: "Регион", score });
   });
 
+  const sourceMap = new Map();
+  state.trtPoints.forEach((point) => {
+    const value = trtOriginKey(point);
+    if (!sourceMap.has(value)) sourceMap.set(value, trtOriginLabel(value));
+  });
+  sourceMap.forEach((label, value) => {
+    const score = trtSmartMatchScore(`${label} ${value}`, q);
+    add({ type: "source", value, label, meta: "Источник", score });
+  });
+
   state.trtPoints.forEach((point) => {
     const fields = [
       ["ТРТ", point.client],
@@ -2132,6 +2164,7 @@ function buildTrtSmartSuggestions(query) {
       ["Менеджер", shortPersonName(point.manager)],
       ["Направление", point.direction],
       ["Регион", trtCanonicalRegionName(point)],
+      ["Источник", trtOriginLabel(point)],
     ].filter(([, value]) => String(value || "").trim());
 
     let best = null;
@@ -2157,7 +2190,7 @@ function buildTrtSmartSuggestions(query) {
     });
   });
 
-  const typePriority = { direction: 0, manager: 1, city: 2, region: 3, point: 4 };
+  const typePriority = { direction: 0, manager: 1, city: 2, region: 3, source: 4, point: 5 };
   const deduped = [];
   const seen = new Set();
   suggestions
@@ -2517,6 +2550,7 @@ function filteredTrtPoints() {
   const smartManagers = trtSmartFilterValues("manager");
   const smartCities = trtSmartFilterValues("city");
   const smartRegions = trtSmartFilterValues("region");
+  const smartSources = trtSmartFilterValues("source");
   const smartPoints = trtSmartFilterValues("point");
 
   return state.trtPoints.filter((point) => {
@@ -2526,6 +2560,7 @@ function filteredTrtPoints() {
     if (smartManagers.size && !smartManagers.has(String(point.manager || ""))) return false;
     if (smartCities.size && !smartCities.has(trtPointCityKey(point))) return false;
     if (smartRegions.size && !smartRegions.has(trtCanonicalRegionName(point))) return false;
+    if (smartSources.size && !smartSources.has(trtOriginKey(point))) return false;
     if (smartPoints.size && !smartPoints.has(String(point.id))) return false;
     return true;
   });
@@ -2614,7 +2649,10 @@ function openTrtCard(pointId, focusMap = true) {
   $("trt-card-manager").textContent = shortPersonName(point.manager) || "—";
   $("trt-card-holding").textContent = point.holding || point.client || "—";
   $("trt-card-format").textContent = point.format || "—";
-  $("trt-card-status").textContent = trtStatusLabel(point);
+  const origin = trtOriginKey(point);
+  $("trt-card-status").textContent = origin === "base"
+    ? trtStatusLabel(point)
+    : `${trtStatusLabel(point)} · ${trtOriginLabel(origin)}`;
   $("trt-card-address").textContent = point.address || "—";
   renderTrtFourP(point);
 
@@ -4174,6 +4212,9 @@ const SALES_IMPORT_HEADER_LABELS = {
 let salesImportSourceRows = [];
 let salesImportPreview = null;
 let salesImportFileName = "";
+let trtBulkImportRows = [];
+let trtBulkImportPreview = [];
+let trtBulkImportFileName = "";
 
 function normalizeSalesHeader(value) {
   return String(value ?? "")
@@ -4185,6 +4226,276 @@ function normalizeSalesHeader(value) {
     .replace(/\s+/g, " ");
 }
 
+
+
+function normalizeTrtBulkHeader(value) {
+  return String(value ?? "")
+    .trim().toLowerCase().replace(/ё/g, "е")
+    .replace(/[._-]+/g, " ").replace(/\s+/g, " ");
+}
+
+function trtBulkColumnIndex(headers, aliases) {
+  const normalized = headers.map(normalizeTrtBulkHeader);
+  for (const alias of aliases) {
+    const target = normalizeTrtBulkHeader(alias);
+    const exact = normalized.findIndex((value) => value === target);
+    if (exact >= 0) return exact;
+  }
+  return -1;
+}
+
+function trtBulkText(value) {
+  return String(value ?? "").trim().replace(/\s+/g, " ");
+}
+
+function trtBulkNumber(value) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  const parsed = Number(String(value ?? "").trim().replace(/\s/g, "").replace(",", "."));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+async function readTrtBulkImportFile(file) {
+  if (!window.XLSX) throw new Error("Библиотека Excel не загрузилась. Обновите страницу.");
+  const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: false });
+  const sheetName = workbook.SheetNames[0];
+  if (!sheetName) throw new Error("В Excel-файле нет листов.");
+  const matrix = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: "", raw: true });
+  if (!matrix.length) throw new Error("Excel-файл пуст.");
+
+  let headerRow = -1;
+  let indexes = null;
+  for (let i = 0; i < Math.min(matrix.length, 12); i += 1) {
+    const headers = matrix[i] || [];
+    const candidate = {
+      name: trtBulkColumnIndex(headers, ["Наименование ТРТ", "ТРТ", "Торговая точка", "Клиент"]),
+      city: trtBulkColumnIndex(headers, ["Город", "Населенный пункт", "Населённый пункт"]),
+      address: trtBulkColumnIndex(headers, ["Адрес", "Исходный адрес"]),
+      fullAddress: trtBulkColumnIndex(headers, ["Адрес ТРТ", "Полный адрес", "Адрес для геокодера"]),
+      lat: trtBulkColumnIndex(headers, ["Широта", "Latitude", "Lat"]),
+      lon: trtBulkColumnIndex(headers, ["Долгота", "Longitude", "Lon", "Lng"]),
+      geocodeStatus: trtBulkColumnIndex(headers, ["Статус геокодирования", "Статус геокодера"]),
+      foundAddress: trtBulkColumnIndex(headers, ["Адрес, найденный Яндексом", "Найденный адрес", "Адрес найденный Яндексом"]),
+      precision: trtBulkColumnIndex(headers, ["Точность", "Precision"]),
+      direction: trtBulkColumnIndex(headers, ["Направление деятельности", "Направление"]),
+      format: trtBulkColumnIndex(headers, ["Формат", "Формат ТРТ"]),
+      businessStatus: trtBulkColumnIndex(headers, ["Статус ТРТ", "Статус"]),
+      manager: trtBulkColumnIndex(headers, ["Менеджер"]),
+    };
+    if (candidate.name >= 0 && candidate.lat >= 0 && candidate.lon >= 0) {
+      headerRow = i; indexes = candidate; break;
+    }
+  }
+  if (headerRow < 0 || !indexes) {
+    throw new Error("Не найдены обязательные столбцы: Наименование ТРТ, Широта, Долгота.");
+  }
+
+  const rows = [];
+  for (let i = headerRow + 1; i < matrix.length; i += 1) {
+    const source = matrix[i] || [];
+    if (!source.some((value) => trtBulkText(value))) continue;
+    const name = trtBulkText(source[indexes.name]);
+    const city = indexes.city >= 0 ? trtBulkText(source[indexes.city]) : "";
+    const shortAddress = indexes.address >= 0 ? trtBulkText(source[indexes.address]) : "";
+    const fullAddress = indexes.fullAddress >= 0 ? trtBulkText(source[indexes.fullAddress]) : "";
+    const foundAddress = indexes.foundAddress >= 0 ? trtBulkText(source[indexes.foundAddress]) : "";
+    const address = fullAddress || [city, shortAddress].filter(Boolean).join(", ") || foundAddress;
+    rows.push({
+      rowNumber: i + 1,
+      client: name,
+      city,
+      sourceAddress: shortAddress,
+      address,
+      foundAddress,
+      lat: trtBulkNumber(source[indexes.lat]),
+      lon: trtBulkNumber(source[indexes.lon]),
+      geocodeStatus: indexes.geocodeStatus >= 0 ? trtBulkText(source[indexes.geocodeStatus]) : "",
+      precision: indexes.precision >= 0 ? trtBulkText(source[indexes.precision]).toLowerCase() : "",
+      direction: indexes.direction >= 0 ? trtBulkText(source[indexes.direction]) : "",
+      format: indexes.format >= 0 ? trtBulkText(source[indexes.format]) : "",
+      status: indexes.businessStatus >= 0 ? trtBulkText(source[indexes.businessStatus]).toUpperCase() : "",
+      manager: indexes.manager >= 0 ? trtBulkText(source[indexes.manager]) : "",
+    });
+  }
+  return rows;
+}
+
+function trtBulkNormalizeMatch(value) {
+  return normalizeText(value).replace(/[^a-zа-я0-9]+/gi, " ").trim();
+}
+
+function trtBulkDistanceMeters(a, b) {
+  const lat1 = Number(a?.lat), lon1 = Number(a?.lon), lat2 = Number(b?.lat), lon2 = Number(b?.lon);
+  if (![lat1, lon1, lat2, lon2].every(Number.isFinite)) return Number.POSITIVE_INFINITY;
+  const r = 6371000;
+  const toRad = (value) => value * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1), dLon = toRad(lon2 - lon1);
+  const x = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return r * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(Math.max(0, 1 - x)));
+}
+
+function buildTrtBulkPreview(rows) {
+  const existing = (state.trtPoints || []).map((point) => ({
+    id: String(point.id || ""),
+    name: trtBulkNormalizeMatch(point.client || point.holding || ""),
+    address: trtBulkNormalizeMatch(point.address || ""),
+    lat: Number(point.lat), lon: Number(point.lon),
+  }));
+  return rows.map((row) => {
+    let level = "ready";
+    let message = "Готово к загрузке";
+    if (!row.client) { level = "invalid"; message = "Нет наименования ТРТ"; }
+    else if (!row.address) { level = "invalid"; message = "Нет адреса"; }
+    else if (!Number.isFinite(Number(row.lat)) || !Number.isFinite(Number(row.lon))) { level = "invalid"; message = "Нет корректных координат"; }
+    else if (row.geocodeStatus && normalizeText(row.geocodeStatus) !== "ok") { level = "invalid"; message = `Геокодер: ${row.geocodeStatus}`; }
+    else {
+      const name = trtBulkNormalizeMatch(row.client);
+      const address = trtBulkNormalizeMatch(row.address);
+      const duplicate = existing.find((point) => (
+        point.name === name && ((address && point.address === address) || trtBulkDistanceMeters(row, point) <= 35)
+      ));
+      if (duplicate) { level = "duplicate"; message = `Уже есть на карте · ${duplicate.id}`; }
+      else if (row.precision && row.precision !== "exact") { level = "warning"; message = `Точность геокодера: ${row.precision}`; }
+    }
+    return { ...row, level, message };
+  });
+}
+
+async function initializeTrtBulkImport() {
+  const direction = $("trt-import-direction");
+  const format = $("trt-import-format");
+  if (!direction || !format) return;
+  try { await ensureTrtData(); } catch (error) { console.warn("TRT bulk import directory unavailable", error); }
+  const currentDirection = direction.value;
+  const currentFormat = format.value;
+  const directions = [...new Set(state.trtPoints.map((point) => trtBulkText(point.direction)).filter(Boolean))].sort((a,b)=>a.localeCompare(b,"ru"));
+  const formats = [...new Set(state.trtPoints.map((point) => trtBulkText(point.format)).filter(Boolean))].sort((a,b)=>a.localeCompare(b,"ru"));
+  direction.innerHTML = '<option value="">Выберите направление</option>' + directions.map((value)=>`<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join("");
+  format.innerHTML = '<option value="">Выберите формат</option>' + formats.map((value)=>`<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join("");
+  if (directions.includes(currentDirection)) direction.value = currentDirection;
+  if (formats.includes(currentFormat)) format.value = currentFormat;
+}
+
+function resetTrtBulkImport(clearFile = true) {
+  trtBulkImportRows = [];
+  trtBulkImportPreview = [];
+  trtBulkImportFileName = "";
+  if ($("trt-import-result")) $("trt-import-result").hidden = true;
+  if ($("trt-import-error")) $("trt-import-error").hidden = true;
+  if ($("trt-import-progress")) $("trt-import-progress").hidden = true;
+  if ($("trt-import-commit-button")) $("trt-import-commit-button").disabled = true;
+  if ($("trt-import-map-button")) $("trt-import-map-button").hidden = true;
+  if (clearFile && $("trt-import-file")) $("trt-import-file").value = "";
+  updateTrtBulkPreviewButton();
+}
+
+function updateTrtBulkPreviewButton() {
+  const button = $("trt-import-preview-button");
+  if (!button) return;
+  button.disabled = !$("trt-import-file")?.files?.[0] || !isSystemAdmin();
+}
+
+function trtBulkRowsForCommit() {
+  const includeWarnings = Boolean($("trt-import-include-warning")?.checked);
+  return trtBulkImportPreview.filter((row) => row.level === "ready" || (includeWarnings && row.level === "warning"));
+}
+
+function renderTrtBulkPreview() {
+  const rows = trtBulkImportPreview;
+  const count = (level) => rows.filter((row) => row.level === level).length;
+  $("trt-import-total-rows").textContent = rows.length.toLocaleString("ru-RU");
+  $("trt-import-ready-rows").textContent = count("ready").toLocaleString("ru-RU");
+  $("trt-import-warning-rows").textContent = count("warning").toLocaleString("ru-RU");
+  $("trt-import-duplicate-rows").textContent = count("duplicate").toLocaleString("ru-RU");
+  $("trt-import-invalid-rows").textContent = count("invalid").toLocaleString("ru-RU");
+  $("trt-import-table-body").innerHTML = rows.map((row) => {
+    const badgeClass = row.level === "ready" ? "success" : row.level === "warning" ? "account" : row.level === "duplicate" ? "muted" : "danger";
+    return `<tr class="sales-import-row-${escapeHtml(row.level)}"><td>${row.rowNumber}</td><td><strong>${escapeHtml(row.client || "—")}</strong><small>${escapeHtml(row.city || "")}</small></td><td>${escapeHtml(row.address || "—")}</td><td>${Number.isFinite(Number(row.lat)) ? Number(row.lat).toFixed(6) : "—"}<br>${Number.isFinite(Number(row.lon)) ? Number(row.lon).toFixed(6) : "—"}</td><td>${escapeHtml(row.precision || "—")}</td><td><span class="badge ${badgeClass}">${escapeHtml(row.message)}</span></td></tr>`;
+  }).join("");
+  $("trt-import-result").hidden = false;
+  updateTrtBulkCommitButton();
+}
+
+function updateTrtBulkCommitButton() {
+  const button = $("trt-import-commit-button");
+  if (!button) return;
+  const metadataReady = Boolean($("trt-import-direction")?.value && $("trt-import-format")?.value && $("trt-import-status")?.value);
+  button.disabled = !isSystemAdmin() || !metadataReady || trtBulkRowsForCommit().length === 0;
+}
+
+async function previewTrtBulkImport() {
+  const file = $("trt-import-file")?.files?.[0];
+  if (!file) return;
+  const error = $("trt-import-error"), progress = $("trt-import-progress"), button = $("trt-import-preview-button");
+  error.hidden = true; progress.hidden = false; progress.textContent = "Проверка файла новых ТРТ…"; button.disabled = true;
+  try {
+    await initializeTrtBulkImport();
+    trtBulkImportRows = await readTrtBulkImportFile(file);
+    trtBulkImportFileName = file.name;
+    trtBulkImportPreview = buildTrtBulkPreview(trtBulkImportRows);
+    renderTrtBulkPreview();
+  } catch (exc) {
+    error.textContent = exc?.message || String(exc); error.hidden = false;
+  } finally {
+    progress.hidden = true; updateTrtBulkPreviewButton();
+  }
+}
+
+function trtBulkChunk(items, size = 50) {
+  const chunks = [];
+  for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size));
+  return chunks;
+}
+
+async function commitTrtBulkImport() {
+  const rows = trtBulkRowsForCommit();
+  if (!rows.length || !isSystemAdmin()) return;
+  const direction = $("trt-import-direction").value;
+  const format = $("trt-import-format").value;
+  const status = $("trt-import-status").value;
+  const manager = $("trt-import-manager").value.trim();
+  if (!direction || !format || !status) { updateTrtBulkCommitButton(); return; }
+  const button = $("trt-import-commit-button"), error = $("trt-import-error"), progress = $("trt-import-progress");
+  button.disabled = true; error.hidden = true; progress.hidden = false;
+  try {
+    const chunks = trtBulkChunk(rows, 50);
+    let created = 0, duplicates = 0, invalid = 0;
+    for (let i = 0; i < chunks.length; i += 1) {
+      progress.textContent = `Загрузка новых ТРТ… ${i + 1} / ${chunks.length}`;
+      const payloadRows = chunks[i].map((row) => ({
+        rowNumber: row.rowNumber, client: row.client, address: row.address,
+        lat: row.lat, lon: row.lon,
+        direction: row.direction || direction, format: row.format || format,
+        status: row.status || status, manager: row.manager || manager,
+      }));
+      const result = await api("/admin/sales-import", {
+        method: "POST", timeout: 90000,
+        body: JSON.stringify({ scope: "trt_bulk_import", operation: "commit", direction, format, status, manager, fileName: trtBulkImportFileName, rows: payloadRows }),
+      });
+      created += Number(result.summary?.createdRows || 0);
+      duplicates += Number(result.summary?.duplicateRows || 0);
+      invalid += Number(result.summary?.invalidRows || 0);
+    }
+    state.trtLoaded = false;
+    state.trtPoints = [];
+    await ensureTrtData();
+    showToast(`Новые ТРТ: добавлено ${created}${duplicates ? ` · дублей ${duplicates}` : ""}${invalid ? ` · ошибок ${invalid}` : ""}`);
+    progress.textContent = `Готово. Добавлено новых ТРТ: ${created}.`;
+    $("trt-import-map-button").hidden = created === 0;
+  } catch (exc) {
+    error.textContent = exc?.message || String(exc); error.hidden = false; progress.hidden = true;
+  } finally {
+    updateTrtBulkCommitButton();
+  }
+}
+
+function openBulkNewTrtOnMap() {
+  trtSmartFilters = [{ type: "source", value: "new_bulk", label: "Новые ТРТ" }];
+  persistTrtSmartFilters();
+  renderTrtSmartFilterChips();
+  state.trtFitRequested = true;
+  showPage("trt");
+  window.setTimeout(() => renderTrtMap(), 50);
+}
 
 function trtMasterAuditLayerLabel(layer) {
   const labels = {
@@ -4654,7 +4965,7 @@ function analysisFindColumn(headers, aliases) {
 }
 
 function setDataImportTab(tab) {
-  const allowed = ["sales", "trt-plan", "diy-sellout"];
+  const allowed = ["sales", "trt-plan", "diy-sellout", "trt-new"];
   const next = allowed.includes(tab) ? tab : "sales";
   document.querySelectorAll("[data-import-tab]").forEach((button) => {
     button.classList.toggle("active", button.dataset.importTab === next);
@@ -5946,6 +6257,15 @@ async function geocodeWarehouse(){ const address=$("warehouse-address").value.tr
 async function saveWarehouse(){ try{await api("/admin/logistics",{method:"POST",body:JSON.stringify({operation:"save_warehouse",warehouseId:$("warehouse-id").value,sourceAlias:$("warehouse-source-alias").value,officialName:$("warehouse-name").value,address:$("warehouse-address").value,lat:Number($("warehouse-lat").value),lon:Number($("warehouse-lon").value),isActive:true})}); showToast("Склад сохранён"); state.logistics.dictionaries=null; await loadLogisticsDictionaries(true);}catch(exc){showToast(exc.message);} }
 async function saveVehicle(){ try{await api("/admin/logistics",{method:"POST",body:JSON.stringify({operation:"save_vehicle",vehicleId:$("vehicle-id").value,sourceAlias:$("vehicle-source-alias").value,officialName:$("vehicle-name").value,capacityTons:Number($("vehicle-capacity").value),volumeM3:Number($("vehicle-volume").value),isActive:true})}); showToast("Автомобиль сохранён"); state.logistics.dictionaries=null; await loadLogisticsDictionaries(true);}catch(exc){showToast(exc.message);} }
 
+
+
+$("trt-import-file")?.addEventListener("change", () => { resetTrtBulkImport(false); updateTrtBulkPreviewButton(); });
+$("trt-import-preview-button")?.addEventListener("click", previewTrtBulkImport);
+$("trt-import-reset-button")?.addEventListener("click", () => resetTrtBulkImport(true));
+$("trt-import-commit-button")?.addEventListener("click", commitTrtBulkImport);
+$("trt-import-map-button")?.addEventListener("click", openBulkNewTrtOnMap);
+$("trt-import-include-warning")?.addEventListener("change", updateTrtBulkCommitButton);
+["trt-import-direction", "trt-import-format", "trt-import-status"].forEach((id) => $(id)?.addEventListener("change", updateTrtBulkCommitButton));
 
 $("sales-import-file").addEventListener("change", () => {
   resetSalesImport(false);
