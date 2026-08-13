@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#384e86">
-  <meta name="vog-web-version" content="8.21">
+  <meta name="vog-web-version" content="8.22">
   <title>ТК ВОГ Офис</title>
   <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=20260810-gdebenz-v8-0">
   <link rel="apple-touch-icon" sizes="192x192" href="icon-192.png?v=20260810-gdebenz-v8-0">
@@ -499,7 +499,7 @@
           <div>
             <p class="eyebrow">Настройки · Загрузка</p>
             <h1>Загрузка данных</h1>
-            <p class="page-description">Продажи ВОГ и DIY sell-out загружаются через API. Планы ТРТ размещаются непосредственно в Web как подготовленные статические наборы данных.</p>
+            <p class="page-description">Продажи ВОГ, DIY sell-out и новые ТРТ загружаются через API. Планы ТРТ размещаются непосредственно в Web как подготовленные статические наборы данных.</p>
           </div>
         </header>
 
@@ -507,6 +507,7 @@
           <button class="data-import-tab active" type="button" data-import-tab="sales">Продажи ВОГ</button>
           <button class="data-import-tab" type="button" data-import-tab="trt-plan">Планы ТРТ</button>
           <button class="data-import-tab" type="button" data-import-tab="diy-sellout">DIY sell-out</button>
+          <button class="data-import-tab" type="button" data-import-tab="trt-new">Новые ТРТ</button>
         </div>
 
         <section data-import-panel="sales">
@@ -567,6 +568,41 @@
               <div class="sales-import-warning" data-analysis-period-warning hidden></div>
               <div class="table-wrap market-import-table-wrap"><table class="market-import-table"><thead><tr><th>Строка</th><th>Период</th><th>Направление</th><th>Сеть</th><th>Адрес</th><th>Всего</th><th>ВОГ</th><th>Совпадение</th><th>Результат</th></tr></thead><tbody data-analysis-preview-body></tbody></table></div>
               <div class="sales-import-actions"><button class="secondary-button" type="button" data-analysis-reset>Выбрать другой файл</button><button class="primary-button" type="button" data-analysis-commit disabled>Загрузить DIY sell-out</button></div>
+            </section>
+          </section>
+        </section>
+
+        <section data-import-panel="trt-new" hidden>
+          <section class="content-card sales-import-card">
+            <div class="section-heading market-import-heading">
+              <div>
+                <h2>Новые ТРТ · оптовая загрузка</h2>
+                <p>Загружает новые точки на карту из Excel с координатами. Они сохраняются отдельно от основной БД с признаком <strong>«Новые ТРТ»</strong> и затем фильтруются на карте по источнику.</p>
+              </div>
+            </div>
+            <div class="sales-import-period-grid">
+              <label>Направление<select id="trt-import-direction"><option value="">Выберите направление</option></select></label>
+              <label>Формат<select id="trt-import-format"><option value="">Выберите формат</option></select></label>
+              <label>Статус ТРТ<select id="trt-import-status"><option value="НАКБ" selected>НАКБ</option><option value="АКБ">АКБ</option><option value="ЦАКБ">ЦАКБ</option><option value="ЦНАКБ">ЦНАКБ</option></select></label>
+              <label>Менеджер, необязательно<input id="trt-import-manager" type="text" placeholder="Один менеджер на весь файл"></label>
+              <label class="sales-import-file-field">Excel-файл<input id="trt-import-file" type="file" accept=".xlsx,.xls"></label>
+              <button id="trt-import-preview-button" class="primary-button sales-import-preview-button" type="button" disabled>Проверить файл</button>
+            </div>
+            <div class="sales-import-help"><strong>Обязательные столбцы:</strong><span>Наименование ТРТ</span><span>Широта</span><span>Долгота</span><span>Адрес ТРТ либо Город + Адрес</span><em>Поддерживается файл Яндекс Геокодера. Строки с точностью не exact сначала помечаются предупреждением.</em></div>
+            <label class="remember-device-option"><input id="trt-import-include-warning" type="checkbox"><span>Загружать также строки с предупреждением геокодера</span></label>
+            <div id="trt-import-error" class="form-error" hidden></div>
+            <div id="trt-import-progress" class="loading-state" hidden>Проверка файла…</div>
+            <section id="trt-import-result" class="sales-import-result" hidden>
+              <div class="sales-import-summary-grid">
+                <article><span>Строк в файле</span><strong id="trt-import-total-rows">0</strong></article>
+                <article><span>Готово</span><strong id="trt-import-ready-rows">0</strong></article>
+                <article><span>Нужно проверить</span><strong id="trt-import-warning-rows">0</strong></article>
+                <article><span>Уже есть</span><strong id="trt-import-duplicate-rows">0</strong></article>
+                <article><span>Ошибок</span><strong id="trt-import-invalid-rows">0</strong></article>
+              </div>
+              <div class="sales-import-warning">Признак источника сохраняется независимо от бизнес-статуса АКБ/НАКБ: <strong>Новые ТРТ</strong>. Основная БД при последующих загрузках не стирает этот признак.</div>
+              <div class="table-wrap sales-import-table-wrap"><table class="sales-import-table"><thead><tr><th>Строка</th><th>ТРТ / город</th><th>Адрес</th><th>Координаты</th><th>Точность</th><th>Результат</th></tr></thead><tbody id="trt-import-table-body"></tbody></table></div>
+              <div class="sales-import-actions"><button id="trt-import-reset-button" class="secondary-button" type="button">Выбрать другой файл</button><button id="trt-import-map-button" class="secondary-button" type="button" hidden>Показать новые ТРТ на карте</button><button id="trt-import-commit-button" class="primary-button" type="button" disabled>Добавить новые ТРТ</button></div>
             </section>
           </section>
         </section>
@@ -888,7 +924,7 @@
                 </svg>
                 <div id="trt-smart-filter-chips" class="trt-smart-filter-chips" aria-label="Выбранные фильтры"></div>
                 <input id="trt-smart-search-input" class="trt-smart-search-input" type="search" autocomplete="off" spellcheck="false"
-                  placeholder="ТРТ, город, регион, направление, менеджер или адрес" aria-label="Поиск по карте"
+                  placeholder="ТРТ, город, регион, направление, менеджер, источник или адрес" aria-label="Поиск по карте"
                   aria-controls="trt-smart-search-suggestions" aria-expanded="false">
                 <span id="trt-search-result-count" class="trt-search-result-count">—</span>
                 <button id="trt-smart-filter-clear" class="trt-smart-filter-clear" type="button" aria-label="Очистить все фильтры" hidden>×</button>
@@ -1173,6 +1209,6 @@
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <script src="app.js?v=20260813-trt-master-audit-period-rule-v8-21"></script>
+  <script src="app.js?v=20260813-trt-bulk-import-v8-22"></script>
 </body>
 </html>
