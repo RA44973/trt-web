@@ -1,6 +1,6 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.26";
+const VOG_WEB_VERSION = "8.27";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
@@ -6374,32 +6374,43 @@ function renderManualTrtAddressSuggestions() {
   host.hidden = false;
 }
 
-async function fetchManualTrtAddressSuggestions(query, { limit = 7 } = {}) {
+async function fetchManualTrtAddressSuggestions(query, { limit = 7, explicit = false } = {}) {
   const text = String(query || "").trim();
   if (text.length < 3) { hideManualTrtAddressSuggestions(); return []; }
   if (trtManualAddressSuggestAbort) trtManualAddressSuggestAbort.abort();
   const controller = new AbortController();
   trtManualAddressSuggestAbort = controller;
   const center = trtManualMap?.getCenter?.() || trtMap?.getCenter?.();
-  const params = new URLSearchParams({ q: text, limit: String(limit), lang: "ru" });
+  const payload = {
+    scope: "trt_address_lookup",
+    operation: explicit ? "find" : "suggest",
+    query: text,
+    limit,
+  };
   if (center && Number.isFinite(center.lat) && Number.isFinite(center.lng)) {
-    params.set("lat", String(center.lat));
-    params.set("lon", String(center.lng));
+    payload.lat = center.lat;
+    payload.lon = center.lng;
   }
-  const response = await fetch(`https://photon.komoot.io/api/?${params.toString()}`, { signal: controller.signal, headers: { Accept: "application/json" } });
-  if (!response.ok) throw new Error("Сервис подсказок адресов временно недоступен");
-  const data = await response.json();
-  const rows = (Array.isArray(data?.features) ? data.features : [])
-    .map((feature) => {
-      const coords = trtManualAddressCoordinates(feature);
-      if (!coords) return null;
-      return { feature, ...coords, label: trtManualAddressLabel(feature), hasHouse: trtManualAddressHasHouse(feature) };
-    })
-    .filter((item) => item && item.label)
-    .filter((item, index, all) => all.findIndex((candidate) => normalizeText(candidate.label) === normalizeText(item.label)) === index)
-    .slice(0, limit);
-  if (trtManualAddressSuggestAbort === controller) trtManualAddressSuggestAbort = null;
-  return rows;
+  try {
+    const data = await api("/admin/sales-import", {
+      method: "POST",
+      timeout: explicit ? 15000 : 9000,
+      signal: controller.signal,
+      body: JSON.stringify(payload),
+    });
+    const rows = (Array.isArray(data?.features) ? data.features : [])
+      .map((feature) => {
+        const coords = trtManualAddressCoordinates(feature);
+        if (!coords) return null;
+        return { feature, ...coords, label: trtManualAddressLabel(feature), hasHouse: trtManualAddressHasHouse(feature) };
+      })
+      .filter((item) => item && item.label)
+      .filter((item, index, all) => all.findIndex((candidate) => normalizeText(candidate.label) === normalizeText(item.label)) === index)
+      .slice(0, limit);
+    return rows;
+  } finally {
+    if (trtManualAddressSuggestAbort === controller) trtManualAddressSuggestAbort = null;
+  }
 }
 
 function focusManualTrtAddressSuggestion(item) {
@@ -6431,6 +6442,11 @@ async function updateManualTrtAddressSuggestions() {
   } catch (error) {
     if (error?.name === "AbortError") return;
     hideManualTrtAddressSuggestions();
+    const statusNode = $("trt-add-point-location-status");
+    if (statusNode) {
+      statusNode.textContent = "Подсказки сейчас не ответили. Можно продолжить ввод и нажать «Найти» — точный поиск работает через сервер VOG.";
+      statusNode.classList.remove("error");
+    }
   }
 }
 
@@ -6456,22 +6472,14 @@ async function reverseGeocodeManualTrt(lat, lon) {
   statusNode.classList.remove("error");
   let displayName = "";
   try {
-    const response = await fetch(`https://photon.komoot.io/reverse?lon=${encodeURIComponent(lon)}&lat=${encodeURIComponent(lat)}&lang=ru&limit=1`, { headers: { Accept: "application/json" } });
-    if (response.ok) {
-      const result = await response.json();
-      const feature = Array.isArray(result?.features) ? result.features[0] : null;
-      if (feature) displayName = trtManualAddressLabel(feature);
-    }
+    const result = await api("/admin/sales-import", {
+      method: "POST",
+      timeout: 15000,
+      body: JSON.stringify({ scope: "trt_address_lookup", operation: "reverse", lat, lon }),
+    });
+    const feature = Array.isArray(result?.features) ? result.features[0] : null;
+    if (feature) displayName = trtManualAddressLabel(feature);
   } catch {}
-  if (!displayName) {
-    try {
-      const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&addressdetails=1&accept-language=ru&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`, { headers: { Accept: "application/json" } });
-      if (response.ok) {
-        const result = await response.json();
-        displayName = manualTrtFallbackReverseAddress(result?.address || {});
-      }
-    } catch {}
-  }
   if (sequence !== trtManualReverseSequence) return;
   if (displayName) $("trt-add-point-address").value = displayName;
   statusNode.textContent = displayName ? "Координаты и адрес определены по точке на карте." : "Координаты выбраны. Адрес введите вручную.";
@@ -6571,7 +6579,7 @@ async function geocodeManualTrtAddress() {
   statusNode.textContent = "Ищу адрес…";
   statusNode.classList.remove("error");
   try {
-    const rows = await fetchManualTrtAddressSuggestions(address, { limit: 7 });
+    const rows = await fetchManualTrtAddressSuggestions(address, { limit: 7, explicit: true });
     trtManualAddressSuggestions = rows;
     if (!rows.length) throw new Error("Адрес не найден. Попробуйте ввести город и часть улицы или поставьте точку на карте.");
     const exact = rows.find((item) => item.hasHouse);
