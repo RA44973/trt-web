@@ -1,6 +1,6 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.17";
+const VOG_WEB_VERSION = "8.18";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
@@ -9,7 +9,7 @@ const TRT_MAP_VIEW_KEY = "trt_web_map_view_v3";
 const TRT_MAP_FILTER_KEY = "trt_web_map_filters_v1";
 const TRT_MAP_MODE_KEY = "trt_web_map_mode_v1";
 const DEFAULT_MAP_VIEW = Object.freeze({ center: [58.3, 47.0], zoom: 5 });
-const PAGES = new Set(["employees", "sales-import", "activity", "tasks", "visits", "trt", "region-analytics", "logistics"]);
+const PAGES = new Set(["employees", "sales-import", "activity", "tasks", "visits", "trt", "region-analytics", "logistics", "trt-master-audit"]);
 
 const state = {
   token: localStorage.getItem(SESSION_KEY) || sessionStorage.getItem(SESSION_KEY) || "",
@@ -35,6 +35,7 @@ const state = {
   trtFitRequested: true,
   logistics: { loaded: false, trips: [], summary: {}, dictionaries: null, aliasCatalog: null, aliasMap: new Map(), suggestionMap: new Map(), preview: null, sourceTrips: [], fileName: "", observedWarehouses: [], observedVehicles: [], matchResults: new Map(), uniqueMatchItems: [] },
   marketAnalysis: { loaded: false, catalog: null, plans: [], diy: [], staticPlanSources: [], staticPlanRows: null, staticPlanStats: null, staticPlanCacheKey: "" },
+  trtMasterAudit: { loaded: false, loading: false, rows: [], summary: {}, error: "", currentWebMatched: 0, currentWebTotal: 0 },
   currentPage: PAGES.has(location.hash.slice(1)) ? location.hash.slice(1) : "trt",
 };
 
@@ -133,6 +134,7 @@ function resetProtectedState() {
   state.trtFitRequested = true;
   state.logistics = { loaded: false, trips: [], summary: {}, dictionaries: null, aliasCatalog: null, aliasMap: new Map(), suggestionMap: new Map(), preview: null, sourceTrips: [], fileName: "", observedWarehouses: [], matchResults: new Map(), uniqueMatchItems: [] };
   state.marketAnalysis = { loaded: false, catalog: null, plans: [], diy: [], staticPlanSources: [], staticPlanRows: null, staticPlanStats: null, staticPlanCacheKey: "" };
+  state.trtMasterAudit = { loaded: false, loading: false, rows: [], summary: {}, error: "", currentWebMatched: 0, currentWebTotal: 0 };
 }
 
 function isGeneralDirector() {
@@ -153,7 +155,7 @@ function setNavGroupExpanded(groupName, expanded) {
 }
 
 function syncSidebarNavigation(page) {
-  const isSettings = page === "employees" || page === "sales-import" || page === "activity";
+  const isSettings = page === "employees" || page === "sales-import" || page === "activity" || page === "trt-master-audit";
   const isAnalytics = page === "logistics" || page === "region-analytics";
   if (isSettings) setNavGroupExpanded("settings", true);
   if (isAnalytics) setNavGroupExpanded("analytics", true);
@@ -415,7 +417,7 @@ function openTrtInspector() {
 
 function showPage(page, updateHash = true) {
   let nextPage = PAGES.has(page) ? page : "trt";
-  if (["employees", "sales-import", "activity"].includes(nextPage) && !isSystemAdmin()) nextPage = "trt";
+  if (["employees", "sales-import", "activity", "trt-master-audit"].includes(nextPage) && !isSystemAdmin()) nextPage = "trt";
   state.currentPage = nextPage;
   if (nextPage !== "trt" && trtInspectorMode) closeMapInspector();
   mountTrtToolsInMainSidebar();
@@ -443,6 +445,7 @@ function showPage(page, updateHash = true) {
   if (nextPage === "sales-import") { initializeSalesImportPeriod();  }
   if (nextPage === "logistics") { initializeLogisticsPeriod(); loadLogistics(); }
   if (nextPage === "region-analytics") { loadRegionAnalyticsDirectory(); }
+  if (nextPage === "trt-master-audit" && state.token) { loadTrtMasterAudit(); }
 
   if (nextPage === "activity" && state.token) {
     loadActivity();
@@ -479,19 +482,21 @@ function showApp() {
   const employeesPage = $("page-employees");
   const salesImportPage = $("page-sales-import");
   const activityPage = $("page-activity");
+  const trtMasterAuditPage = $("page-trt-master-audit");
   const gdAdmin = isSystemAdmin();
   if (settingsNavGroup) settingsNavGroup.hidden = !gdAdmin;
   if (analyticsNavGroup) analyticsNavGroup.hidden = !["GD","KD","RRO"].includes(String(state.user?.role || "").toUpperCase()) && !gdAdmin;
   if (employeesPage && !gdAdmin) employeesPage.hidden = true;
   if (salesImportPage && !gdAdmin) salesImportPage.hidden = true;
   if (activityPage && !gdAdmin) activityPage.hidden = true;
+  if (trtMasterAuditPage && !gdAdmin) trtMasterAuditPage.hidden = true;
 
   $("add-employee-button").hidden = !gdAdmin;
   $("add-employee-button").title = gdAdmin
     ? "Добавить сотрудника и создать ему учётную запись"
     : "Раздел доступен только администратору";
 
-  if (!gdAdmin && ["employees", "sales-import", "activity"].includes(state.currentPage)) state.currentPage = "trt";
+  if (!gdAdmin && ["employees", "sales-import", "activity", "trt-master-audit"].includes(state.currentPage)) state.currentPage = "trt";
   showPage(state.currentPage, true);
 }
 
@@ -4180,6 +4185,130 @@ function normalizeSalesHeader(value) {
     .replace(/\s+/g, " ");
 }
 
+
+function trtMasterAuditLayerLabel(layer) {
+  const labels = {
+    alias: "Alias",
+    master: "TRT Master",
+    fallback: "Legacy fallback",
+    unresolved: "Не сопоставлено",
+  };
+  return labels[String(layer || "unresolved")] || String(layer || "—");
+}
+
+function trtMasterAuditSourceRows() {
+  const rows = [];
+  (state.marketAnalysis?.staticPlanSources || []).forEach((source) => {
+    const direction = marketDirectionKey(source._direction || source.direction);
+    (source.rows || []).forEach((row, index) => {
+      const rowNumber = row.row || index + 2;
+      rows.push({
+        sourceKey: `${source._sourceUrl || "static"}|${direction}|${rowNumber}`,
+        rowNumber,
+        direction,
+        manager: row.manager || "",
+        client: row.client || "",
+        trtName: row.trt || row.trtName || "",
+        address: row.address || "",
+        city: row.city || "",
+        region: row.region || "",
+        format: row.format || "",
+      });
+    });
+  });
+  return rows;
+}
+
+function filteredTrtMasterAuditRows() {
+  const query = normalizeText($("trt-master-audit-search")?.value || "");
+  const layer = $("trt-master-audit-filter")?.value || "unresolved";
+  return (state.trtMasterAudit.rows || []).filter((row) => {
+    if (layer !== "all" && String(row.layer || "unresolved") !== layer) return false;
+    if (!query) return true;
+    return normalizeText([
+      row.rowNumber, row.direction, row.manager, row.client, row.trtName, row.address,
+      row.masterId, row.pointId, row.matchMethod, row.message, row.matchedName, row.matchedAddress,
+    ].join(" ")).includes(query);
+  });
+}
+
+function renderTrtMasterAudit() {
+  const s = state.trtMasterAudit.summary || {};
+  $("trt-master-audit-total").textContent = Number(s.totalRows || 0).toLocaleString("ru-RU");
+  $("trt-master-audit-alias").textContent = Number(s.aliasRows || 0).toLocaleString("ru-RU");
+  $("trt-master-audit-master").textContent = Number(s.masterRows || 0).toLocaleString("ru-RU");
+  $("trt-master-audit-fallback").textContent = Number(s.fallbackRows || 0).toLocaleString("ru-RU");
+  $("trt-master-audit-unresolved").textContent = Number(s.unresolvedRows || 0).toLocaleString("ru-RU");
+  $("trt-master-audit-web").textContent = `${Number(state.trtMasterAudit.currentWebMatched || 0).toLocaleString("ru-RU")} / ${Number(state.trtMasterAudit.currentWebTotal || 0).toLocaleString("ru-RU")}`;
+
+  const details = [];
+  if (s.masterConflictRows) details.push(`конфликтов point_id: ${s.masterConflictRows}`);
+  if (s.masterOnlyRows) details.push(`master без point_id: ${s.masterOnlyRows}`);
+  if (s.masterAmbiguousRows) details.push(`неоднозначных master: ${s.masterAmbiguousRows}`);
+  const note = $("trt-master-audit-note");
+  note.textContent = `Серверная цепочка: сохранённый alias → TRT Master → legacy fallback. Сопоставлено ${Number(s.matchedRows || 0)} из ${Number(s.totalRows || 0)}.${details.length ? ` Дополнительно: ${details.join(", ")}.` : ""}`;
+
+  const rows = filteredTrtMasterAuditRows();
+  $("trt-master-audit-visible").textContent = `Показано: ${rows.length.toLocaleString("ru-RU")}`;
+  $("trt-master-audit-empty").hidden = rows.length > 0;
+  $("trt-master-audit-table-body").innerHTML = rows.map((row) => {
+    const badgeClass = row.layer === "unresolved" ? "danger" : row.layer === "fallback" ? "inactive" : row.layer === "alias" ? "success" : "account";
+    return `<tr>
+      <td>${escapeHtml(row.rowNumber ?? "—")}</td>
+      <td>${escapeHtml(row.direction || "—")}</td>
+      <td><strong>${escapeHtml(row.client || "—")}</strong><small>${escapeHtml(row.manager || "")}</small></td>
+      <td><strong>${escapeHtml(row.trtName || "—")}</strong><small>${escapeHtml(row.address || "Адрес не указан")}</small></td>
+      <td><span class="badge ${badgeClass}">${escapeHtml(trtMasterAuditLayerLabel(row.layer))}</span></td>
+      <td><code>${escapeHtml(row.masterId || "—")}</code></td>
+      <td><code>${escapeHtml(row.pointId || "—")}</code></td>
+      <td><strong>${escapeHtml(row.matchMethod || "—")}</strong><small>${escapeHtml(row.message || "")}</small></td>
+    </tr>`;
+  }).join("");
+}
+
+async function loadTrtMasterAudit(force = false) {
+  if (!isSystemAdmin()) return;
+  if (state.trtMasterAudit.loading) return;
+  if (state.trtMasterAudit.loaded && !force) {
+    renderTrtMasterAudit();
+    return;
+  }
+  state.trtMasterAudit.loading = true;
+  $("trt-master-audit-loading").hidden = false;
+  $("trt-master-audit-loading").textContent = "Проверка TRT Master…";
+  $("trt-master-audit-error").hidden = true;
+  try {
+    await Promise.all([ensureTrtData(), loadRegionalMarketData(false)]);
+    marketResolveStaticPlanRows();
+    const sourceRows = trtMasterAuditSourceRows();
+    if (!sourceRows.length) throw new Error("Статический файл планов ТРТ не найден.");
+    const result = await api("/admin/trt-master-audit", {
+      method: "POST",
+      timeout: 90000,
+      body: JSON.stringify({ sourceType: "trt_plan", rows: sourceRows }),
+    });
+    const localStats = state.marketAnalysis?.staticPlanStats || {};
+    state.trtMasterAudit = {
+      loaded: true,
+      loading: false,
+      rows: Array.isArray(result.rows) ? result.rows : [],
+      summary: result.summary || {},
+      error: "",
+      currentWebMatched: Number(localStats.matchedRows || 0),
+      currentWebTotal: Number(localStats.sourceRows || 0),
+    };
+    renderTrtMasterAudit();
+  } catch (error) {
+    state.trtMasterAudit.loading = false;
+    state.trtMasterAudit.error = error.message || String(error);
+    $("trt-master-audit-error").textContent = state.trtMasterAudit.error;
+    $("trt-master-audit-error").hidden = false;
+  } finally {
+    $("trt-master-audit-loading").hidden = true;
+  }
+}
+
+
 function initializeSalesImportPeriod() {
   const yearSelect = $("sales-import-year");
   if (!yearSelect || yearSelect.options.length) return;
@@ -5778,6 +5907,10 @@ $("logistics-match-table")?.addEventListener("change",(event)=>{if(event.target.
 $("warehouse-geocode")?.addEventListener("click",geocodeWarehouse);
 $("warehouse-save")?.addEventListener("click",saveWarehouse);
 $("vehicle-save")?.addEventListener("click",saveVehicle);
+
+$("trt-master-audit-search")?.addEventListener("input", renderTrtMasterAudit);
+$("trt-master-audit-filter")?.addEventListener("change", renderTrtMasterAudit);
+$("trt-master-audit-refresh")?.addEventListener("click", () => loadTrtMasterAudit(true));
 
 window.addEventListener("hashchange", () => {
   const page = location.hash.slice(1);

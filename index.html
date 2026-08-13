@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#384e86">
-  <meta name="vog-web-version" content="8.17">
+  <meta name="vog-web-version" content="8.18">
   <title>ТК ВОГ Офис</title>
   <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=20260810-gdebenz-v8-0">
   <link rel="apple-touch-icon" sizes="192x192" href="icon-192.png?v=20260810-gdebenz-v8-0">
@@ -91,6 +91,7 @@
           <div class="nav-submenu" data-nav-submenu="settings" hidden>
             <button class="nav-subitem" type="button" data-page="employees">Сотрудники</button>
             <button class="nav-subitem" type="button" data-page="sales-import">Загрузка</button>
+            <button class="nav-subitem" type="button" data-page="trt-master-audit">TRT Master</button>
             <button class="nav-subitem" type="button" data-page="activity">Активность</button>
           </div>
         </div>
@@ -568,6 +569,51 @@
               <div class="sales-import-actions"><button class="secondary-button" type="button" data-analysis-reset>Выбрать другой файл</button><button class="primary-button" type="button" data-analysis-commit disabled>Загрузить DIY sell-out</button></div>
             </section>
           </section>
+        </section>
+      </section>
+
+      <section id="page-trt-master-audit" class="page-view" hidden>
+        <header class="page-header">
+          <div>
+            <p class="eyebrow">Настройки · Контроль сопоставления</p>
+            <h1>TRT Master</h1>
+            <p class="page-description">Контроль 675 плановых ТРТ: какой слой определил point_id и какие строки остались без надёжного соответствия.</p>
+          </div>
+          <button id="trt-master-audit-refresh" class="secondary-button" type="button">Обновить</button>
+        </header>
+
+        <section class="summary-grid" aria-label="Сводка TRT Master">
+          <article class="summary-card"><span>Строк плана</span><strong id="trt-master-audit-total">0</strong></article>
+          <article class="summary-card"><span>Сохранённый alias</span><strong id="trt-master-audit-alias">0</strong></article>
+          <article class="summary-card"><span>TRT Master</span><strong id="trt-master-audit-master">0</strong></article>
+          <article class="summary-card"><span>Legacy fallback</span><strong id="trt-master-audit-fallback">0</strong></article>
+          <article class="summary-card danger-summary"><span>Не сопоставлено</span><strong id="trt-master-audit-unresolved">0</strong></article>
+          <article class="summary-card"><span>Текущий Web matcher</span><strong id="trt-master-audit-web">0 / 0</strong></article>
+        </section>
+
+        <div id="trt-master-audit-error" class="form-error" hidden></div>
+        <div id="trt-master-audit-loading" class="loading-state" hidden>Проверка TRT Master…</div>
+
+        <section class="content-card">
+          <p id="trt-master-audit-note" class="page-description"></p>
+          <div class="table-toolbar">
+            <label class="search-field"><span>Поиск</span><input id="trt-master-audit-search" type="search" placeholder="Клиент, ТРТ, адрес, master_id, point_id"></label>
+            <label class="filter-field"><span>Слой</span><select id="trt-master-audit-filter">
+              <option value="unresolved" selected>Не сопоставлено</option>
+              <option value="master">TRT Master</option>
+              <option value="alias">Alias</option>
+              <option value="fallback">Legacy fallback</option>
+              <option value="all">Все строки</option>
+            </select></label>
+            <div id="trt-master-audit-visible" class="page-data-status">Показано: 0</div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Строка</th><th>Направление</th><th>Клиент</th><th>ТРТ / адрес</th><th>Слой</th><th>master_id</th><th>point_id</th><th>Метод</th></tr></thead>
+              <tbody id="trt-master-audit-table-body"></tbody>
+            </table>
+            <div id="trt-master-audit-empty" class="empty-state" hidden>Строк по выбранному фильтру нет.</div>
+          </div>
         </section>
       </section>
 
@@ -1125,6 +1171,6 @@
   <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <script src="app.js?v=20260812-trt-master-v8.17"></script>
+  <script src="app.js?v=20260813-trt-master-audit-v8.18"></script>
 </body>
 </html>
