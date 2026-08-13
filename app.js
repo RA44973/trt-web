@@ -1,6 +1,6 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.24";
+const VOG_WEB_VERSION = "8.26";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
@@ -64,7 +64,12 @@ let warehouseMap = null;
 let warehouseMarker = null;
 let trtManualMap = null;
 let trtManualMarker = null;
+let trtManualCityLabelLayer = null;
 let trtManualReverseSequence = 0;
+let trtManualAddressSuggestTimer = null;
+let trtManualAddressSuggestAbort = null;
+let trtManualAddressSuggestions = [];
+let trtManualAddressSuggestionIndex = -1;
 let marketAnalysisDirection = "обои";
 let marketAnalysisYear = 2026;
 let marketAnalysisMonth = 7;
@@ -1920,26 +1925,41 @@ function cleanTrtCityName(value) {
     .trim();
 }
 
+const TRT_CITY_RU_ALIASES = new Map([
+  ["minsk", "Минск"], ["мінск", "Минск"],
+  ["brest", "Брест"], ["брэст", "Брест"],
+  ["vitebsk", "Витебск"], ["viciebsk", "Витебск"], ["віцебск", "Витебск"],
+  ["gomel", "Гомель"], ["homiel", "Гомель"],
+  ["grodno", "Гродно"], ["hrodna", "Гродно"], ["гродна", "Гродно"],
+  ["mogilev", "Могилёв"], ["mahilyow", "Могилёв"], ["mahilioŭ", "Могилёв"], ["магілёў", "Могилёв"],
+]);
+
+function trtRussianCityName(value) {
+  const city = cleanTrtCityName(value);
+  if (!city) return "";
+  return TRT_CITY_RU_ALIASES.get(normalizeText(city)) || city;
+}
+
 function trtPointCity(point) {
   const explicit = point?.city || point?.town || point?.locality || point?.settlement;
-  if (explicit) return cleanTrtCityName(explicit);
+  if (explicit) return trtRussianCityName(explicit);
 
   const address = String(point?.address || "").trim();
   if (!address) return "";
 
   const prefixed = address.match(/(?:^|[,;]\s*|\s)(?:г(?:ород)?\.?|г\.\s*о\.)\s*([А-ЯЁA-Z][^,;]{1,50})/i);
   if (prefixed?.[1]) {
-    const candidate = cleanTrtCityName(prefixed[1].split(/\b(?:ул\.?|улица|пр-т|проспект|ш\.?|шоссе|д\.?|дом|мкр\.?|микрорайон)\b/i)[0]);
+    const candidate = trtRussianCityName(prefixed[1].split(/\b(?:ул\.?|улица|пр-т|проспект|ш\.?|шоссе|д\.?|дом|мкр\.?|микрорайон)\b/i)[0]);
     if (candidate) return candidate;
   }
 
-  const parts = address.split(/[,;]/).map((part) => cleanTrtCityName(part)).filter(Boolean);
+  const parts = address.split(/[,;]/).map((part) => trtRussianCityName(part)).filter(Boolean);
   const regionNorm = normalizeText(point?.region);
   const blocked = /\b(?:обл(?:асть)?|край|республика|район|р-н|улица|ул\.?|проспект|пр-т|шоссе|ш\.?|дом|д\.?|корпус|корп\.?|строение|стр\.?|мкр\.?|микрорайон)\b/i;
   for (const part of parts) {
     const normalized = normalizeText(part);
     if (!normalized || /^\d{5,6}$/.test(normalized)) continue;
-    if (normalized === "россия" || normalized === "рф") continue;
+    if (["россия", "рф", "российская федерация", "russia", "беларусь", "белоруссия", "республика беларусь", "belarus"].includes(normalized)) continue;
     if (["москва", "санкт-петербург", "санкт петербург"].includes(normalized)) return part;
     if (regionNorm && (normalized === regionNorm || regionNorm.includes(normalized) || normalized.includes(regionNorm))) continue;
     if (blocked.test(part)) continue;
@@ -2408,7 +2428,7 @@ function saveTrtMapView() {
 
 
 const TRT_MAJOR_CITY_LABELS = new Set([
-  "москва", "санкт-петербург", "санкт петербург", "воронеж"
+  "москва", "санкт-петербург", "санкт петербург", "воронеж", "минск"
 ]);
 
 const TRT_REGIONAL_CENTER_LABELS = new Set([
@@ -2416,8 +2436,18 @@ const TRT_REGIONAL_CENTER_LABELS = new Set([
   "липецк", "орел", "орёл", "рязань", "смоленск", "тамбов", "тверь", "тула", "ярославль",
   "москва", "санкт-петербург", "санкт петербург", "петрозаводск", "сыктывкар", "архангельск",
   "вологда", "калининград", "мурманск", "нарьян-мар", "нарьян мар", "великий новгород", "псков",
-  "нижний новгород", "киров", "чебоксары", "саранск", "йошкар-ола", "йошкар ола"
+  "нижний новгород", "киров", "чебоксары", "саранск", "йошкар-ола", "йошкар ола",
+  "минск", "брест", "витебск", "гомель", "гродно", "могилев"
 ]);
+
+const TRT_FIXED_RU_CITY_LABELS = [
+  { key: "by|minsk", city: "Минск", region: "Беларусь", lat: 53.9023, lon: 27.5619, count: 100, minZoom: 4, tier: "major", priority: 0 },
+  { key: "by|brest", city: "Брест", region: "Беларусь", lat: 52.0976, lon: 23.7341, count: 30, minZoom: 6, tier: "regional", priority: 1 },
+  { key: "by|vitebsk", city: "Витебск", region: "Беларусь", lat: 55.1848, lon: 30.2016, count: 30, minZoom: 6, tier: "regional", priority: 1 },
+  { key: "by|gomel", city: "Гомель", region: "Беларусь", lat: 52.4345, lon: 30.9754, count: 30, minZoom: 6, tier: "regional", priority: 1 },
+  { key: "by|grodno", city: "Гродно", region: "Беларусь", lat: 53.6694, lon: 23.8131, count: 30, minZoom: 6, tier: "regional", priority: 1 },
+  { key: "by|mogilev", city: "Могилёв", region: "Беларусь", lat: 53.9007, lon: 30.3314, count: 30, minZoom: 6, tier: "regional", priority: 1 },
+];
 
 function trtIsAdministrativeLabel(value) {
   const city = cleanTrtCityName(value);
@@ -2452,12 +2482,16 @@ function buildTrtCityLabelData() {
     row.lonSum += lon;
     row.count += 1;
   });
-  return [...groups.values()]
+  const derived = [...groups.values()]
     .map((row) => {
       const result = { ...row, lat: row.latSum / row.count, lon: row.lonSum / row.count };
       return { ...result, ...trtCityLabelProfile(result) };
-    })
-    .sort((a, b) => a.priority - b.priority || b.count - a.count || a.city.localeCompare(b.city, "ru"));
+    });
+  const seenCities = new Set(derived.map((row) => normalizeText(row.city)));
+  TRT_FIXED_RU_CITY_LABELS.forEach((row) => {
+    if (!seenCities.has(normalizeText(row.city))) derived.push({ ...row });
+  });
+  return derived.sort((a, b) => a.priority - b.priority || b.count - a.count || a.city.localeCompare(b.city, "ru"));
 }
 
 function trtCityLabelBox(row, point) {
@@ -6290,23 +6324,182 @@ function setManualTrtLocation(lat, lon, { center = true, status = "Коорди�
   if (center) trtManualMap.setView([latitude, longitude], Math.max(trtManualMap.getZoom(), 15));
 }
 
+function trtManualAddressProperties(feature) {
+  return feature?.properties || {};
+}
+
+function trtManualAddressLabel(feature) {
+  const props = trtManualAddressProperties(feature);
+  const city = trtRussianCityName(props.city || props.town || props.village || props.locality || props.district || "");
+  const street = String(props.street || ((props.osm_value === "street" || props.type === "street") ? props.name : "") || "").trim();
+  const house = String(props.housenumber || props.house_number || "").trim();
+  const name = String(props.name || "").trim();
+  const region = String(props.state || props.county || "").trim();
+  const parts = [];
+  if (city) parts.push(city);
+  if (street) parts.push(`${street}${house ? `, ${house}` : ""}`);
+  else if (name && normalizeText(name) !== normalizeText(city)) parts.push(`${name}${house ? `, ${house}` : ""}`);
+  if (region && !parts.some((part) => normalizeText(part) === normalizeText(region)) && !/область|район|республика/i.test(parts.join(" "))) parts.push(region);
+  return parts.filter(Boolean).join(", ") || name || city || "Адрес";
+}
+
+function trtManualAddressHasHouse(feature) {
+  const props = trtManualAddressProperties(feature);
+  return Boolean(String(props.housenumber || props.house_number || "").trim());
+}
+
+function trtManualAddressCoordinates(feature) {
+  const coords = feature?.geometry?.coordinates || [];
+  const lon = Number(coords[0]);
+  const lat = Number(coords[1]);
+  return Number.isFinite(lat) && Number.isFinite(lon) ? { lat, lon } : null;
+}
+
+function hideManualTrtAddressSuggestions() {
+  const host = $("trt-add-point-address-suggestions");
+  if (host) { host.hidden = true; host.innerHTML = ""; }
+  trtManualAddressSuggestions = [];
+  trtManualAddressSuggestionIndex = -1;
+}
+
+function renderManualTrtAddressSuggestions() {
+  const host = $("trt-add-point-address-suggestions");
+  if (!host) return;
+  if (!trtManualAddressSuggestions.length) return hideManualTrtAddressSuggestions();
+  host.innerHTML = trtManualAddressSuggestions.map((item, index) => `
+    <button type="button" class="trt-address-suggestion${index === trtManualAddressSuggestionIndex ? " active" : ""}" data-trt-address-suggestion="${index}" role="option" aria-selected="${index === trtManualAddressSuggestionIndex ? "true" : "false"}">
+      <strong>${escapeHtml(item.label)}</strong>
+      <span>${item.hasHouse ? "Точный адрес" : "Можно уточнить номер дома"}</span>
+    </button>`).join("") + '<div class="trt-address-suggest-source">Подсказки адресов · OpenStreetMap</div>';
+  host.hidden = false;
+}
+
+async function fetchManualTrtAddressSuggestions(query, { limit = 7 } = {}) {
+  const text = String(query || "").trim();
+  if (text.length < 3) { hideManualTrtAddressSuggestions(); return []; }
+  if (trtManualAddressSuggestAbort) trtManualAddressSuggestAbort.abort();
+  const controller = new AbortController();
+  trtManualAddressSuggestAbort = controller;
+  const center = trtManualMap?.getCenter?.() || trtMap?.getCenter?.();
+  const params = new URLSearchParams({ q: text, limit: String(limit), lang: "ru" });
+  if (center && Number.isFinite(center.lat) && Number.isFinite(center.lng)) {
+    params.set("lat", String(center.lat));
+    params.set("lon", String(center.lng));
+  }
+  const response = await fetch(`https://photon.komoot.io/api/?${params.toString()}`, { signal: controller.signal, headers: { Accept: "application/json" } });
+  if (!response.ok) throw new Error("Сервис подсказок адресов временно недоступен");
+  const data = await response.json();
+  const rows = (Array.isArray(data?.features) ? data.features : [])
+    .map((feature) => {
+      const coords = trtManualAddressCoordinates(feature);
+      if (!coords) return null;
+      return { feature, ...coords, label: trtManualAddressLabel(feature), hasHouse: trtManualAddressHasHouse(feature) };
+    })
+    .filter((item) => item && item.label)
+    .filter((item, index, all) => all.findIndex((candidate) => normalizeText(candidate.label) === normalizeText(item.label)) === index)
+    .slice(0, limit);
+  if (trtManualAddressSuggestAbort === controller) trtManualAddressSuggestAbort = null;
+  return rows;
+}
+
+function focusManualTrtAddressSuggestion(item) {
+  if (!item) return;
+  const input = $("trt-add-point-address");
+  const statusNode = $("trt-add-point-location-status");
+  if (input) input.value = item.label;
+  hideManualTrtAddressSuggestions();
+  if (item.hasHouse) {
+    setManualTrtLocation(item.lat, item.lon, { status: "Адрес выбран. Координаты проставлены автоматически." });
+    return;
+  }
+  $("trt-add-point-lat").value = "";
+  $("trt-add-point-lon").value = "";
+  if (trtManualMarker) { trtManualMarker.remove(); trtManualMarker = null; }
+  if (trtManualMap) trtManualMap.setView([item.lat, item.lon], Math.max(trtManualMap.getZoom(), 14));
+  statusNode.textContent = "Улица или населённый пункт найден. Допишите номер дома либо поставьте точку на карте.";
+  statusNode.classList.remove("error");
+}
+
+async function updateManualTrtAddressSuggestions() {
+  const input = $("trt-add-point-address");
+  const text = input?.value?.trim() || "";
+  if (text.length < 3) return hideManualTrtAddressSuggestions();
+  try {
+    trtManualAddressSuggestions = await fetchManualTrtAddressSuggestions(text);
+    trtManualAddressSuggestionIndex = -1;
+    renderManualTrtAddressSuggestions();
+  } catch (error) {
+    if (error?.name === "AbortError") return;
+    hideManualTrtAddressSuggestions();
+  }
+}
+
+function scheduleManualTrtAddressSuggestions() {
+  window.clearTimeout(trtManualAddressSuggestTimer);
+  trtManualAddressSuggestTimer = window.setTimeout(updateManualTrtAddressSuggestions, 280);
+}
+
+function manualTrtFallbackReverseAddress(address = {}) {
+  const city = trtRussianCityName(address.city || address.town || address.village || address.municipality || address.locality || "");
+  const street = String(address.road || address.pedestrian || address.residential || "").trim();
+  const house = String(address.house_number || "").trim();
+  const parts = [];
+  if (city) parts.push(city);
+  if (street) parts.push(`${street}${house ? `, ${house}` : ""}`);
+  return parts.join(", ");
+}
+
 async function reverseGeocodeManualTrt(lat, lon) {
   const sequence = ++trtManualReverseSequence;
   const statusNode = $("trt-add-point-location-status");
   statusNode.textContent = "Точка выбрана. Определяю адрес…";
   statusNode.classList.remove("error");
+  let displayName = "";
   try {
-    const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&accept-language=ru&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`, { headers: { Accept: "application/json" } });
-    if (!response.ok) throw new Error("Адрес не определён");
-    const result = await response.json();
-    if (sequence !== trtManualReverseSequence) return;
-    const displayName = String(result?.display_name || "").trim();
-    if (displayName) $("trt-add-point-address").value = displayName;
-    statusNode.textContent = displayName ? "Координаты и адрес определены по точке на карте." : "Координаты выбраны. Адрес введите вручную.";
-  } catch (error) {
-    if (sequence !== trtManualReverseSequence) return;
-    statusNode.textContent = "Координаты выбраны. Адрес введите вручную.";
+    const response = await fetch(`https://photon.komoot.io/reverse?lon=${encodeURIComponent(lon)}&lat=${encodeURIComponent(lat)}&lang=ru&limit=1`, { headers: { Accept: "application/json" } });
+    if (response.ok) {
+      const result = await response.json();
+      const feature = Array.isArray(result?.features) ? result.features[0] : null;
+      if (feature) displayName = trtManualAddressLabel(feature);
+    }
+  } catch {}
+  if (!displayName) {
+    try {
+      const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&addressdetails=1&accept-language=ru&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}`, { headers: { Accept: "application/json" } });
+      if (response.ok) {
+        const result = await response.json();
+        displayName = manualTrtFallbackReverseAddress(result?.address || {});
+      }
+    } catch {}
   }
+  if (sequence !== trtManualReverseSequence) return;
+  if (displayName) $("trt-add-point-address").value = displayName;
+  statusNode.textContent = displayName ? "Координаты и адрес определены по точке на карте." : "Координаты выбраны. Адрес введите вручную.";
+}
+
+function refreshManualTrtCityLabels() {
+  if (!trtManualMap || !trtManualCityLabelLayer) return;
+  trtManualCityLabelLayer.clearLayers();
+  const zoom = trtManualMap.getZoom();
+  const mapSize = trtManualMap.getSize();
+  const occupied = [];
+  const rows = buildTrtCityLabelData().filter((row) => zoom >= row.minZoom);
+
+  rows.forEach((row) => {
+    const point = trtManualMap.latLngToContainerPoint([row.lat, row.lon]);
+    if (point.x < -80 || point.y < -40 || point.x > mapSize.x + 80 || point.y > mapSize.y + 40) return;
+    const box = trtCityLabelBox(row, point);
+    if (occupied.some((existing) => trtCityLabelBoxesOverlap(existing, box))) return;
+    occupied.push(box);
+    L.marker([row.lat, row.lon], {
+      interactive: false, keyboard: false, zIndexOffset: -250,
+      icon: L.divIcon({
+        className: "trt-city-label-icon",
+        html: `<span class="trt-city-label trt-city-label-${row.tier}">${escapeHtml(row.city)}</span>`,
+        iconSize: null,
+      }),
+    }).addTo(trtManualCityLabelLayer);
+  });
 }
 
 function initializeManualTrtMap() {
@@ -6317,15 +6510,20 @@ function initializeManualTrtMap() {
     const initialCenter = center ? [center.lat, center.lng] : DEFAULT_MAP_VIEW.center;
     const initialZoom = trtMap ? Math.max(5, Math.min(12, trtMap.getZoom())) : 5;
     trtManualMap = L.map(host).setView(initialCenter, initialZoom);
-    L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
+    L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png", {
       subdomains: "abcd", maxZoom: 20, attribution: "© OpenStreetMap contributors · © CARTO",
     }).addTo(trtManualMap);
+    trtManualMap.attributionControl.setPrefix("");
+    trtManualCityLabelLayer = L.layerGroup().addTo(trtManualMap);
+    trtManualMap.on("moveend zoomend", refreshManualTrtCityLabels);
+    refreshManualTrtCityLabels();
     trtManualMap.on("click", ({ latlng }) => {
+      hideManualTrtAddressSuggestions();
       setManualTrtLocation(latlng.lat, latlng.lng, { center: false, status: "Точка выбрана. Определяю адрес…" });
       reverseGeocodeManualTrt(latlng.lat, latlng.lng);
     });
   }
-  window.setTimeout(() => trtManualMap?.invalidateSize(), 60);
+  window.setTimeout(() => { trtManualMap?.invalidateSize(); refreshManualTrtCityLabels(); }, 60);
 }
 
 function resetManualTrtForm() {
@@ -6336,9 +6534,13 @@ function resetManualTrtForm() {
   $("trt-add-point-lon").value = "";
   $("trt-add-point-error").hidden = true;
   const statusNode = $("trt-add-point-location-status");
-  statusNode.textContent = "Введите адрес и нажмите «Найти» или поставьте точку на карте справа.";
+  statusNode.textContent = "Начните вводить город, улицу или дом — появятся подсказки. Либо поставьте точку на карте справа.";
   statusNode.classList.remove("error");
   trtManualReverseSequence += 1;
+  window.clearTimeout(trtManualAddressSuggestTimer);
+  if (trtManualAddressSuggestAbort) trtManualAddressSuggestAbort.abort();
+  trtManualAddressSuggestAbort = null;
+  hideManualTrtAddressSuggestions();
   if (trtManualMarker) { trtManualMarker.remove(); trtManualMarker = null; }
 }
 
@@ -6357,6 +6559,7 @@ async function openManualTrtDialog() {
 }
 
 function closeManualTrtDialog() {
+  hideManualTrtAddressSuggestions();
   const dialog = $("trt-add-point-dialog");
   if (dialog?.open) dialog.close();
 }
@@ -6368,13 +6571,21 @@ async function geocodeManualTrtAddress() {
   statusNode.textContent = "Ищу адрес…";
   statusNode.classList.remove("error");
   try {
-    const response = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&accept-language=ru&q=${encodeURIComponent(address)}`, { headers: { Accept: "application/json" } });
-    if (!response.ok) throw new Error("Сервис поиска адреса недоступен");
-    const rows = await response.json();
-    if (!Array.isArray(rows) || !rows.length) throw new Error("Адрес не найден. Поставьте точку на карте вручную.");
-    const result = rows[0];
-    setManualTrtLocation(Number(result.lat), Number(result.lon), { status: "Адрес найден. Координаты проставлены автоматически." });
+    const rows = await fetchManualTrtAddressSuggestions(address, { limit: 7 });
+    trtManualAddressSuggestions = rows;
+    if (!rows.length) throw new Error("Адрес не найден. Попробуйте ввести город и часть улицы или поставьте точку на карте.");
+    const exact = rows.find((item) => item.hasHouse);
+    if (exact) {
+      focusManualTrtAddressSuggestion(exact);
+      return;
+    }
+    trtManualAddressSuggestionIndex = 0;
+    renderManualTrtAddressSuggestions();
+    const first = rows[0];
+    if (trtManualMap) trtManualMap.setView([first.lat, first.lon], Math.max(trtManualMap.getZoom(), 13));
+    statusNode.textContent = "Нашла несколько вариантов. Выберите подсказку; если это улица — допишите номер дома.";
   } catch (error) {
+    if (error?.name === "AbortError") return;
     statusNode.textContent = error.message || "Не удалось найти адрес.";
     statusNode.classList.add("error");
   }
@@ -6432,7 +6643,7 @@ function populateLogisticsAliasSelects(){ const wa=new Set(state.logistics.obser
 function renderLogisticsDictionaries(){ const d=state.logistics.dictionaries||{}; const wa=d.warehouseAliases||[], va=d.vehicleAliases||[];
   $("warehouses-table").innerHTML=(d.warehouses||[]).map(w=>`<tr data-warehouse-id="${escapeHtml(w.warehouseId)}"><td><strong>${escapeHtml(w.officialName)}</strong></td><td>${escapeHtml(w.address)}</td><td>${logisticsDecimal(w.lat,6)}, ${logisticsDecimal(w.lon,6)}</td><td>${wa.filter(a=>a.warehouseId===w.warehouseId).map(a=>escapeHtml(a.sourceAlias)).join("<br>")||"—"}</td></tr>`).join(""); $("warehouses-empty").hidden=Boolean((d.warehouses||[]).length);
   $("vehicles-table").innerHTML=(d.vehicles||[]).map(v=>`<tr><td><strong>${escapeHtml(v.officialName)}</strong></td><td>${logisticsDecimal(v.capacityTons,1)} т</td><td>${logisticsDecimal(v.volumeM3,1)} м³</td><td>${va.filter(a=>a.vehicleId===v.vehicleId).map(a=>escapeHtml(a.sourceAlias)).join("<br>")||"—"}</td></tr>`).join(""); $("vehicles-empty").hidden=Boolean((d.vehicles||[]).length); populateLogisticsAliasSelects(); renderWarehouseMarkers(); }
-function initializeWarehouseMap(){ if(warehouseMap){warehouseMap.invalidateSize();return;} const el=$("warehouse-map"); if(!el||!window.L)return; warehouseMap=L.map(el).setView([55.75,37.62],5); L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",{subdomains:"abcd",maxZoom:20,attribution:"© OpenStreetMap contributors · © CARTO"}).addTo(warehouseMap); warehouseMap.on("click",({latlng})=>setWarehousePoint(latlng.lat,latlng.lng)); renderWarehouseMarkers(); }
+function initializeWarehouseMap(){ if(warehouseMap){warehouseMap.invalidateSize();return;} const el=$("warehouse-map"); if(!el||!window.L)return; warehouseMap=L.map(el).setView([55.75,37.62],5); L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png",{subdomains:"abcd",maxZoom:20,attribution:"© OpenStreetMap contributors · © CARTO"}).addTo(warehouseMap); warehouseMap.attributionControl.setPrefix(""); warehouseMap.on("click",({latlng})=>setWarehousePoint(latlng.lat,latlng.lng)); renderWarehouseMarkers(); }
 function setWarehousePoint(lat,lon){ $("warehouse-lat").value=Number(lat).toFixed(6); $("warehouse-lon").value=Number(lon).toFixed(6); if(!warehouseMap)return; if(warehouseMarker)warehouseMarker.remove(); warehouseMarker=L.marker([lat,lon]).addTo(warehouseMap); warehouseMap.setView([lat,lon],14); }
 function renderWarehouseMarkers(){ if(!warehouseMap||!state.logistics.dictionaries)return; (state.logistics.dictionaries.warehouses||[]).forEach(w=>L.circleMarker([w.lat,w.lon],{radius:7}).addTo(warehouseMap).bindPopup(`<strong>${escapeHtml(w.officialName)}</strong><br>${escapeHtml(w.address)}`)); }
 async function geocodeWarehouse(){ const address=$("warehouse-address").value.trim(); if(!address)return showToast("Введите адрес склада"); try{const response=await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&accept-language=ru&q=${encodeURIComponent(address)}`,{headers:{"Accept":"application/json"}}); const rows=await response.json(); if(!rows.length)throw new Error("Адрес не найден"); setWarehousePoint(Number(rows[0].lat),Number(rows[0].lon));}catch(exc){showToast(exc.message||"Не удалось найти адрес");} }
@@ -6446,7 +6657,26 @@ $("trt-add-point-close")?.addEventListener("click", closeManualTrtDialog);
 $("trt-add-point-cancel")?.addEventListener("click", closeManualTrtDialog);
 $("trt-add-point-geocode")?.addEventListener("click", geocodeManualTrtAddress);
 $("trt-add-point-form")?.addEventListener("submit", saveManualTrt);
-$("trt-add-point-address")?.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); geocodeManualTrtAddress(); } });
+$("trt-add-point-address")?.addEventListener("input", scheduleManualTrtAddressSuggestions);
+$("trt-add-point-address")?.addEventListener("focus", scheduleManualTrtAddressSuggestions);
+$("trt-add-point-address")?.addEventListener("blur", () => window.setTimeout(hideManualTrtAddressSuggestions, 180));
+$("trt-add-point-address")?.addEventListener("keydown", (event) => {
+  if (event.key === "ArrowDown" && trtManualAddressSuggestions.length) { event.preventDefault(); trtManualAddressSuggestionIndex = Math.min(trtManualAddressSuggestions.length - 1, trtManualAddressSuggestionIndex + 1); renderManualTrtAddressSuggestions(); return; }
+  if (event.key === "ArrowUp" && trtManualAddressSuggestions.length) { event.preventDefault(); trtManualAddressSuggestionIndex = Math.max(0, trtManualAddressSuggestionIndex - 1); renderManualTrtAddressSuggestions(); return; }
+  if (event.key === "Escape") { hideManualTrtAddressSuggestions(); return; }
+  if (event.key === "Enter") {
+    event.preventDefault();
+    if (trtManualAddressSuggestionIndex >= 0 && trtManualAddressSuggestions[trtManualAddressSuggestionIndex]) focusManualTrtAddressSuggestion(trtManualAddressSuggestions[trtManualAddressSuggestionIndex]);
+    else geocodeManualTrtAddress();
+  }
+});
+$("trt-add-point-address-suggestions")?.addEventListener("mousedown", (event) => {
+  const button = event.target.closest?.("[data-trt-address-suggestion]");
+  if (!button) return;
+  event.preventDefault();
+  const item = trtManualAddressSuggestions[Number(button.dataset.trtAddressSuggestion)];
+  if (item) focusManualTrtAddressSuggestion(item);
+});
 $("trt-add-point-dialog")?.addEventListener("cancel", (event) => { event.preventDefault(); closeManualTrtDialog(); });
 
 $("trt-import-file")?.addEventListener("change", () => { resetTrtBulkImport(false); updateTrtBulkPreviewButton(); });
