@@ -1,6 +1,6 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.29";
+const VOG_WEB_VERSION = "8.30";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
@@ -5397,13 +5397,13 @@ function fillFdiyNetworkSelect() {
   const select = $("fdiy-network");
   if (!select) return;
   const previous = select.value;
-  select.innerHTML = '<option value="">Из файла / выберите сеть</option>' + fdiyDirectoryState.networks
-    .filter((item) => item.isActive)
+  const activeNetworks = fdiyDirectoryState.networks.filter((item) => item.isActive);
+  select.innerHTML = '<option value="">Из файла / выберите сеть</option>' + activeNetworks
     .map((item) => `<option value="${escapeHtml(item.networkId)}">${escapeHtml(item.networkName || item.clientName || item.networkId)}</option>`).join("");
   if ([...select.options].some((o) => o.value === previous)) select.value = previous;
-  else if (fdiyDirectoryState.networks.length === 1) select.value = fdiyDirectoryState.networks[0].networkId;
+  else if (activeNetworks.length === 1) select.value = activeNetworks[0].networkId;
   else {
-    const lemana = fdiyDirectoryState.networks.find((item) => fdiyNorm(item.networkName).includes("лемана"));
+    const lemana = activeNetworks.find((item) => fdiyNorm(item.networkName).includes("лемана"));
     if (lemana) select.value = lemana.networkId;
   }
 }
@@ -5500,6 +5500,7 @@ function fdiyParseLongMatrix(matrix) {
   }
   if (!columns) return null;
   const selectedNetwork = $("fdiy-network")?.value || "";
+  if (columns.network < 0 && !selectedNetwork) throw new Error("Для файла одной FDIY-сети выберите сеть перед проверкой.");
   const selectedYear = Number($("fdiy-month-year")?.value || 0), selectedMonth = Number($("fdiy-month")?.value || 0);
   const rows = [];
   for (let r = headerIndex + 1; r < matrix.length; r += 1) {
@@ -5566,13 +5567,35 @@ function fdiyParseWideMatrix(matrix) {
   return { mode: "wide", rows };
 }
 
+function fdiyLooksWideMatrix(matrix) {
+  for (let r = 1; r < Math.min(matrix.length, 8); r += 1) {
+    const headers = matrix[r] || [];
+    const direction = fdiyFindColumn(headers, ["Направление деятельности", "Направление"]);
+    const store = fdiyFindColumn(headers, ["Названия строк", "Название ТРТ", "Магазин"]);
+    const address = fdiyFindColumn(headers, ["Адрес", "Адрес ТРТ"]);
+    if (direction < 0 || store < 0 || address < 0) continue;
+    const monthRow = matrix[r - 1] || [];
+    let monthCells = 0, metricCells = 0;
+    for (let c = Math.max(direction, store, address) + 1; c < headers.length; c += 1) {
+      if (fdiyMonthNumber(monthRow[c])) monthCells += 1;
+      const metric = fdiyNorm(headers[c]);
+      if (["все", "вог", "общие продажи", "общие продажи нат ед", "продажи вог", "продажи вог нат ед"].includes(metric)) metricCells += 1;
+    }
+    // Исторический широкий файл имеет отдельную строку месяцев и повторяющиеся пары Все / ВОГ.
+    // Не даём первой паре ошибочно превратить такой файл в месячный формат.
+    if (monthCells >= 2 && metricCells >= 4) return true;
+  }
+  return false;
+}
+
 async function readFdiyFile(file) {
   if (!window.XLSX) throw new Error("Модуль чтения Excel не загрузился.");
   const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: false });
   const sheetName = workbook.SheetNames[0]; if (!sheetName) throw new Error("В файле нет листов.");
   const matrix = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: "", raw: true });
-  const longResult = fdiyParseLongMatrix(matrix);
-  const parsed = longResult || fdiyParseWideMatrix(matrix);
+  const looksWide = fdiyLooksWideMatrix(matrix);
+  const parsed = looksWide ? fdiyParseWideMatrix(matrix) : fdiyParseLongMatrix(matrix);
+  if (!parsed) throw new Error("Не распознан формат FDIY файла.");
   if (!parsed.rows.length) throw new Error("В FDIY файле нет значений продаж.");
   return { ...parsed, sheetName };
 }
