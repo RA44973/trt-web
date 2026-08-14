@@ -1,6 +1,6 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.34";
+const VOG_WEB_VERSION = "8.35";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
@@ -5808,7 +5808,15 @@ function renderFdiyPreview(payload) {
   set("fdiy-summary-matched", s.matchedValues); set("fdiy-summary-point", s.pointLinkedStoreCount); set("fdiy-summary-unmatched", s.unmatchedValues);
   set("fdiy-summary-invalid", s.invalidValues); set("fdiy-summary-periods", s.periodCount);
   const conflicts = payload.periodsExisting || [], conflict = $("fdiy-conflict-warning");
-  if (conflict) { conflict.hidden = !conflicts.length; conflict.textContent = conflicts.length ? `Уже загружены: ${conflicts.slice(0, 12).map((x) => `${x.networkName || x.networkId} · ${x.month}.${x.year} · ${x.direction}`).join("; ")}${conflicts.length > 12 ? ` и ещё ${conflicts.length - 12}` : ""}. При загрузке будет предложено заменить только эти сеть/месяц/направление.` : ""; }
+  if (conflict) {
+    conflict.hidden = !conflicts.length;
+    if (conflicts.length) {
+      const prefix = `Уже загружены: ${conflicts.slice(0, 12).map((x) => `${x.networkName || x.networkId} · ${x.month}.${x.year} · ${x.direction}`).join("; ")}${conflicts.length > 12 ? ` и ещё ${conflicts.length - 12}` : ""}.`;
+      conflict.textContent = fdiyImportState.mode === "wide"
+        ? `${prefix} Историческая загрузка продолжится с отсутствующих периодов; уже загруженные будут пропущены.`
+        : `${prefix} Для месячной загрузки перед заменой будет запрошено подтверждение.`;
+    } else conflict.textContent = "";
+  }
   const warning = $("fdiy-data-warning");
   if (warning) { const parts = []; if (Number(s.warningValues || 0)) parts.push(`Предупреждений: ${Number(s.warningValues).toLocaleString("ru-RU")} (в т.ч. отрицательные корректировки или Master без point_id).`); if (Number(s.unmatchedValues || 0)) parts.push(`Несопоставленные значения не будут записаны: ${Number(s.unmatchedValues).toLocaleString("ru-RU")}.`); warning.hidden = !parts.length; warning.textContent = parts.join(" "); }
   if ($("fdiy-table-body")) $("fdiy-table-body").innerHTML = (payload.rows || []).slice(0, 400).map((row) => `<tr>
@@ -5816,7 +5824,15 @@ function renderFdiyPreview(payload) {
     <td><strong>${escapeHtml(row.storeName || "—")}</strong><small>${escapeHtml(row.address || "")}</small></td><td>${escapeHtml(row.direction || "—")}</td>
     <td>${escapeHtml(row.masterId || "—")}<small>${escapeHtml(row.matchMethod || row.message || "")}</small></td><td>${escapeHtml(row.pointId || "—")}</td><td>${fdiyStatusBadge(row)}</td></tr>`).join("");
   if ($("fdiy-result")) $("fdiy-result").hidden = false;
-  if ($("fdiy-commit")) $("fdiy-commit").disabled = Number(s.matchedValues || 0) === 0 || Number(s.invalidValues || 0) > 0;
+  if ($("fdiy-commit")) {
+    const commitButton = $("fdiy-commit");
+    commitButton.disabled = Number(s.matchedValues || 0) === 0 || Number(s.invalidValues || 0) > 0;
+    const totalPeriods = Number(s.periodCount || 0);
+    const existingCount = conflicts.length;
+    commitButton.textContent = fdiyImportState.mode === "wide" && existingCount > 0 && existingCount < totalPeriods
+      ? `Продолжить загрузку (${Math.max(0, totalPeriods - existingCount)})`
+      : "Загрузить FDIY продажи";
+  }
 }
 
 async function previewFdiyImport() {
@@ -5842,31 +5858,114 @@ async function previewFdiyImport() {
 
 function fdiyPeriodKey(row) { return `${String(row.network || row.networkId || "")}|${Number(row.year)}|${Number(row.month)}|${fdiyNorm(row.direction)}`; }
 
+function fdiySleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
+
+async function fdiyCommitPeriodWithRetry(payload, progress, position, total) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      if (progress) progress.textContent = attempt === 1
+        ? `Загрузка FDIY: ${position} / ${total}…`
+        : `Загрузка FDIY: ${position} / ${total} · повтор ${attempt - 1} / 2…`;
+      return await api("/admin/sales-import", {
+        method: "POST", timeout: 90000,
+        body: JSON.stringify(payload),
+      });
+    } catch (exc) {
+      lastError = exc;
+      if (attempt >= 3) break;
+      await fdiySleep(attempt * 1200);
+    }
+  }
+  throw lastError || new Error("Не удалось сохранить период FDIY");
+}
+
 async function commitFdiyImport() {
-  const preview = fdiyImportState.preview || {}; const conflicts = preview.periodsExisting || [];
+  const preview = fdiyImportState.preview || {};
+  const conflicts = preview.periodsExisting || [];
   if (!fdiyImportState.rows.length) return;
   if (Number(preview.summary?.invalidValues || 0) > 0) return showToast("Сначала исправьте ошибки FDIY файла");
+
   const conflictKeys = new Set(conflicts.map((x) => `${x.networkId}|${Number(x.year)}|${Number(x.month)}|${fdiyNorm(x.direction)}`));
-  if (conflicts.length) {
-    const labels = conflicts.slice(0, 10).map((x) => `«${x.networkName || x.networkId}» · ${x.month}.${x.year} · ${x.direction}`).join("\n");
-    if (!window.confirm(`Данные уже загружены:\n${labels}${conflicts.length > 10 ? `\n…и ещё ${conflicts.length - 10}` : ""}\n\nИсправить на новые? Будут заменены только перечисленные сеть/месяц/направление.`)) return;
-  }
   const groups = new Map();
-  for (const row of fdiyImportState.rows) { const key = fdiyPeriodKey(row); if (!groups.has(key)) groups.set(key, []); groups.get(key).push(row); }
-  const entries = [...groups.entries()]; const button = $("fdiy-commit"), progress = $("fdiy-progress"), error = $("fdiy-error");
-  button.disabled = true; if (error) error.hidden = true; if (progress) progress.hidden = false;
-  let stored = 0;
+  for (const row of fdiyImportState.rows) {
+    const key = fdiyPeriodKey(row);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(row);
+  }
+  const allEntries = [...groups.entries()];
+  const isHistorical = fdiyImportState.mode === "wide";
+  let replaceExisting = false;
+  let entries = allEntries;
+  let skippedAlready = 0;
+
+  if (conflicts.length) {
+    if (isHistorical && conflicts.length < allEntries.length) {
+      // Safe resume: an interrupted historical upload continues from missing periods.
+      entries = allEntries.filter(([key]) => !conflictKeys.has(key));
+      skippedAlready = allEntries.length - entries.length;
+    } else {
+      const labels = conflicts.slice(0, 10).map((x) => `«${x.networkName || x.networkId}» · ${x.month}.${x.year} · ${x.direction}`).join("\n");
+      const question = isHistorical
+        ? `Все или почти все периоды этого исторического файла уже загружены:\n${labels}${conflicts.length > 10 ? `\n…и ещё ${conflicts.length - 10}` : ""}\n\nЗаменить существующие периоды новой версией?`
+        : `Данные уже загружены:\n${labels}${conflicts.length > 10 ? `\n…и ещё ${conflicts.length - 10}` : ""}\n\nИсправить на новые? Будут заменены только перечисленные сеть/месяц/направление.`;
+      if (!window.confirm(question)) return;
+      replaceExisting = true;
+    }
+  }
+
+  const button = $("fdiy-commit"), progress = $("fdiy-progress"), error = $("fdiy-error");
+  button.disabled = true;
+  if (error) error.hidden = true;
+  if (progress) {
+    progress.hidden = false;
+    progress.textContent = skippedAlready
+      ? `Продолжение FDIY: ${skippedAlready} уже загружено, осталось ${entries.length} периодов…`
+      : `Подготовка загрузки FDIY: ${entries.length} периодов…`;
+  }
+
+  if (!entries.length) {
+    if (progress) progress.textContent = `Готово. Все ${skippedAlready || allEntries.length} периодов уже загружены.`;
+    button.textContent = "Все периоды загружены";
+    return;
+  }
+
+  const sessionId = `fdiy-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  let stored = 0, uploadedPeriods = 0, skippedDuringRetry = 0;
   try {
     for (let i = 0; i < entries.length; i += 1) {
-      const [key, rows] = entries[i]; if (progress) progress.textContent = `Загрузка FDIY: ${i + 1} / ${entries.length}…`;
-      const result = await api("/admin/sales-import", { method: "POST", timeout: 90000, body: JSON.stringify({
-        scope: "fdiy", operation: "commit", fileName: fdiyImportState.fileName, rows, replace: conflictKeys.has(key),
-      }) });
-      stored += Number(result.storedValues || 0);
+      const [key, rows] = entries[i];
+      const requestId = `${sessionId}-p${String(i + 1).padStart(3, "0")}`;
+      const result = await fdiyCommitPeriodWithRetry({
+        scope: "fdiy",
+        operation: "commit_resumable",
+        fileName: fdiyImportState.fileName,
+        rows,
+        replace: replaceExisting && conflictKeys.has(key),
+        skipExisting: isHistorical && !replaceExisting,
+        requestId,
+      }, progress, i + 1, entries.length);
+      if (result?.skippedExisting) skippedDuringRetry += 1;
+      else {
+        stored += Number(result?.storedValues || 0);
+        uploadedPeriods += 1;
+      }
+      if (button) button.textContent = `Загрузка ${i + 1} / ${entries.length}`;
     }
-    if (progress) progress.textContent = `Готово. Сохранено ${stored.toLocaleString("ru-RU")} месячных значений FDIY.`;
-    state.trtLoaded = false; state.marketAnalysis.loaded = false; showToast("FDIY продажи загружены");
-  } catch (exc) { if (error) { error.textContent = exc?.message || String(exc); error.hidden = false; } if (progress) progress.hidden = true; button.disabled = false; }
+    const totalSkipped = skippedAlready + skippedDuringRetry;
+    if (progress) progress.textContent = `Готово. Добавлено периодов: ${uploadedPeriods}; уже было загружено: ${totalSkipped}; сохранено значений: ${stored.toLocaleString("ru-RU")}.`;
+    if (button) { button.textContent = "Загрузка завершена"; button.disabled = true; }
+    state.trtLoaded = false;
+    state.marketAnalysis.loaded = false;
+    showToast("FDIY продажи загружены");
+  } catch (exc) {
+    if (error) {
+      error.textContent = `${exc?.message || String(exc)} Загрузка остановлена. Уже сохранённые периоды не потеряны — нажмите «Продолжить загрузку» ещё раз.`;
+      error.hidden = false;
+    }
+    if (progress) progress.textContent = `Загрузка приостановлена после ${uploadedPeriods} новых периодов. Повторный запуск продолжит с оставшихся.`;
+    if (button) { button.disabled = false; button.textContent = "Продолжить загрузку"; }
+  }
 }
 
 function downloadFdiyTemplate() {
