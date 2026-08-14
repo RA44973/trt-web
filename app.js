@@ -1,6 +1,6 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.42";
+const VOG_WEB_VERSION = "8.43";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
@@ -5763,7 +5763,18 @@ function updateTileScenarioPreviewButton() {
 }
 
 function tileScenarioResultIsProblem(row) {
-  return !row.clientExists || ["missing", "direction_mismatch", "ambiguous", "point_conflict"].includes(row.masterStatus);
+  // Only rows that cannot be tied safely to a single Tile TRT are blocking.
+  // Missing client reference and missing point_id are warnings, not blockers,
+  // because tile plans are stored by master_id + NG + year/month.
+  return ["missing", "direction_mismatch", "ambiguous", "point_conflict"].includes(row.masterStatus);
+}
+
+function tileScenarioResultIsLoadable(row) {
+  return ["matched", "master_only"].includes(row.masterStatus);
+}
+
+function tileScenarioResultIsAmbiguous(row) {
+  return ["ambiguous", "point_conflict"].includes(row.masterStatus);
 }
 
 function renderTileScenario() {
@@ -5772,7 +5783,9 @@ function renderTileScenario() {
   const set = (id, value) => { if ($(id)) $(id).textContent = Number(value || 0).toLocaleString("ru-RU"); };
   set("tile-scenario-regions", summary.regionCount); set("tile-scenario-vog", summary.vogTrtCount); set("tile-scenario-other", summary.otherTrtCount);
   set("tile-scenario-clients", summary.clientCount); set("tile-scenario-trt", summary.trtCount); set("tile-scenario-groups", summary.groupCount);
-  set("tile-scenario-master", summary.tileMasterCount); set("tile-scenario-direction-issues", summary.directionMismatchCount); set("tile-scenario-missing", summary.missingMasterCount);
+  set("tile-scenario-loadable", summary.loadableCount); set("tile-scenario-no-point", summary.noPointCount);
+  set("tile-scenario-direction-issues", summary.directionMismatchCount); set("tile-scenario-missing", summary.missingMasterCount);
+  set("tile-scenario-ambiguous", summary.ambiguousCount); set("tile-scenario-client-warning", summary.clientWarningCount);
   set("tile-scenario-point", summary.pointLinkedCount); set("tile-scenario-unique-ng", summary.uniqueGroupCount); set("tile-scenario-plan-values", summary.planValueCount);
   set("tile-scenario-fact-values", summary.sourceFactValueCount);
   const metricsNote = $("tile-scenario-metrics-note");
@@ -5788,17 +5801,22 @@ function renderTileScenario() {
   const filter = $("tile-scenario-filter")?.value || "problems";
   let visible = rows.filter((row) => {
     if (filter === "problems") return tileScenarioResultIsProblem(row);
+    if (filter === "loadable") return tileScenarioResultIsLoadable(row);
+    if (filter === "no-point") return row.masterStatus === "master_only";
     if (filter === "missing") return row.masterStatus === "missing";
     if (filter === "direction") return row.masterStatus === "direction_mismatch";
-    if (filter === "master-only") return row.masterStatus === "master_only";
+    if (filter === "ambiguous") return tileScenarioResultIsAmbiguous(row);
+    if (filter === "client-warning") return !row.clientExists && tileScenarioResultIsLoadable(row);
+    if (filter === "vog") return row.territoryScope === "vog";
     if (filter === "other") return row.territoryScope === "other";
     return true;
   });
   const totalVisible = visible.length; visible = visible.slice(0, 500);
   if ($("tile-scenario-visible")) $("tile-scenario-visible").textContent = `Показано: ${visible.length.toLocaleString("ru-RU")}${totalVisible > visible.length ? ` из ${totalVisible.toLocaleString("ru-RU")}` : ""}`;
   if ($("tile-scenario-table-body")) $("tile-scenario-table-body").innerHTML = visible.map((row) => {
-    const masterLabel = row.masterStatus === "matched" ? "Сопоставлено" : row.masterStatus === "master_only" ? "Master найден" : row.masterStatus === "direction_mismatch" ? "Не Плитка" : row.masterStatus === "missing" ? "Не найдено" : "Проверить";
-    return `<tr><td>${row.rowNumber}</td><td>${row.territoryScope === "vog" ? "ВОГ" : "Другие"}</td><td><strong>${escapeHtml(row.region)}</strong><br><small>${escapeHtml(row.cityGroup || "")}</small></td><td>${escapeHtml(row.client || "—")}</td><td><strong>${escapeHtml(row.trtName || "—")}</strong><br><small>${escapeHtml(row.city || "")}</small></td><td>${escapeHtml(row.entityKind || "—")}</td><td>${escapeHtml(row.trtFormat || "—")}</td><td>${escapeHtml(row.trtStatus || "—")}</td><td><strong>${escapeHtml(masterLabel)}</strong><br><small>${escapeHtml(row.matchMethod || "")}</small></td><td>${escapeHtml(row.masterId || "—")}</td><td>${escapeHtml(row.pointId || "—")}</td></tr>`;
+    const masterLabel = row.masterStatus === "matched" ? "Готово" : row.masterStatus === "master_only" ? "Master найден · без point_id" : row.masterStatus === "direction_mismatch" ? "Не Плитка" : row.masterStatus === "missing" ? "Не найдено" : row.masterStatus === "point_conflict" ? "Несколько point_id" : row.masterStatus === "ambiguous" ? "Неоднозначно" : "Проверить";
+    const clientWarning = !row.clientExists && tileScenarioResultIsLoadable(row) ? '<br><small>Клиент не найден в справочнике — план по master_id загрузке не мешает</small>' : '';
+    return `<tr><td>${row.rowNumber}</td><td>${row.territoryScope === "vog" ? "ВОГ" : "Другие"}</td><td><strong>${escapeHtml(row.region)}</strong><br><small>${escapeHtml(row.cityGroup || "")}</small></td><td>${escapeHtml(row.client || "—")}</td><td><strong>${escapeHtml(row.trtName || "—")}</strong><br><small>${escapeHtml(row.city || "")}</small></td><td>${escapeHtml(row.entityKind || "—")}</td><td>${escapeHtml(row.trtFormat || "—")}</td><td>${escapeHtml(row.trtStatus || "—")}</td><td><strong>${escapeHtml(masterLabel)}</strong><br><small>${escapeHtml(row.matchMethod || "")}</small>${clientWarning}</td><td>${escapeHtml(row.masterId || "—")}</td><td>${escapeHtml(row.pointId || "—")}</td></tr>`;
   }).join("");
   if ($("tile-scenario-result")) $("tile-scenario-result").hidden = false;
   if ($("tile-scenario-commit")) $("tile-scenario-commit").disabled = !isSystemAdmin() || !tileScenarioState.previewReady;
@@ -5823,11 +5841,15 @@ async function previewTileScenario() {
     const summary = tileScenarioState.summary;
     summary.vogTrtCount = tileScenarioState.trtRows.filter((row) => row.territoryScope === "vog").length;
     summary.otherTrtCount = tileScenarioState.trtRows.filter((row) => row.territoryScope === "other").length;
-    summary.tileMasterCount = tileScenarioState.trtRows.filter((row) => !["missing", "direction_mismatch"].includes(row.masterStatus)).length;
+    summary.loadableCount = tileScenarioState.trtRows.filter(tileScenarioResultIsLoadable).length;
+    summary.noPointCount = tileScenarioState.trtRows.filter((row) => row.masterStatus === "master_only").length;
     summary.directionMismatchCount = tileScenarioState.trtRows.filter((row) => row.masterStatus === "direction_mismatch").length;
     summary.missingMasterCount = tileScenarioState.trtRows.filter((row) => row.masterStatus === "missing").length;
+    summary.ambiguousCount = tileScenarioState.trtRows.filter(tileScenarioResultIsAmbiguous).length;
     summary.pointLinkedCount = tileScenarioState.trtRows.filter((row) => Boolean(row.pointId)).length;
     summary.missingClientCount = new Set(tileScenarioState.trtRows.filter((row) => !row.clientExists && row.client).map((row) => normalizeText(row.client))).size;
+    summary.clientWarningCount = tileScenarioState.trtRows.filter((row) => !row.clientExists && tileScenarioResultIsLoadable(row)).length;
+    summary.blockingCount = tileScenarioState.trtRows.filter(tileScenarioResultIsProblem).length;
     tileScenarioState.previewReady = true;
     progress.hidden = true; renderTileScenario();
   } catch (exc) {
