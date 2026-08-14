@@ -1,6 +1,6 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.27";
+const VOG_WEB_VERSION = "8.29";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
@@ -9,7 +9,7 @@ const TRT_MAP_VIEW_KEY = "trt_web_map_view_v3";
 const TRT_MAP_FILTER_KEY = "trt_web_map_filters_v1";
 const TRT_MAP_MODE_KEY = "trt_web_map_mode_v1";
 const DEFAULT_MAP_VIEW = Object.freeze({ center: [58.3, 47.0], zoom: 5 });
-const PAGES = new Set(["employees", "sales-import", "activity", "tasks", "visits", "trt", "region-analytics", "logistics", "trt-master-audit"]);
+const PAGES = new Set(["employees", "sales-import", "trt-directory", "activity", "tasks", "visits", "trt", "region-analytics", "logistics", "trt-master-audit"]);
 
 const state = {
   token: localStorage.getItem(SESSION_KEY) || sessionStorage.getItem(SESSION_KEY) || "",
@@ -143,6 +143,8 @@ function resetProtectedState() {
   state.logistics = { loaded: false, trips: [], summary: {}, dictionaries: null, aliasCatalog: null, aliasMap: new Map(), suggestionMap: new Map(), preview: null, sourceTrips: [], fileName: "", observedWarehouses: [], matchResults: new Map(), uniqueMatchItems: [] };
   state.marketAnalysis = { loaded: false, catalog: null, plans: [], diy: [], staticPlanSources: [], staticPlanRows: null, staticPlanStats: null, staticPlanCacheKey: "" };
   state.trtMasterAudit = { loaded: false, loading: false, rows: [], summary: {}, error: "", currentWebMatched: 0, currentWebTotal: 0 };
+  fdiyDirectoryState = { loaded: false, loading: false, clients: [], networks: [], summary: {} };
+  fdiyImportState = { rows: [], preview: null, fileName: "", mode: "", sourceSheet: "" };
 }
 
 function isGeneralDirector() {
@@ -163,7 +165,7 @@ function setNavGroupExpanded(groupName, expanded) {
 }
 
 function syncSidebarNavigation(page) {
-  const isSettings = page === "employees" || page === "sales-import" || page === "activity" || page === "trt-master-audit";
+  const isSettings = page === "employees" || page === "sales-import" || page === "trt-directory" || page === "activity" || page === "trt-master-audit";
   const isAnalytics = page === "logistics" || page === "region-analytics";
   if (isSettings) setNavGroupExpanded("settings", true);
   if (isAnalytics) setNavGroupExpanded("analytics", true);
@@ -425,7 +427,7 @@ function openTrtInspector() {
 
 function showPage(page, updateHash = true) {
   let nextPage = PAGES.has(page) ? page : "trt";
-  if (["employees", "sales-import", "activity", "trt-master-audit"].includes(nextPage) && !isSystemAdmin()) nextPage = "trt";
+  if (["employees", "sales-import", "trt-directory", "activity", "trt-master-audit"].includes(nextPage) && !isSystemAdmin()) nextPage = "trt";
   state.currentPage = nextPage;
   if (nextPage !== "trt" && trtInspectorMode) closeMapInspector();
   mountTrtToolsInMainSidebar();
@@ -450,7 +452,8 @@ function showPage(page, updateHash = true) {
   if (nextPage === "employees" && state.token && state.employees.length === 0) {
     loadEmployees();
   }
-  if (nextPage === "sales-import") { initializeSalesImportPeriod(); initializeTrtBulkImport(); }
+  if (nextPage === "sales-import") { initializeSalesImportPeriod(); initializeTrtBulkImport(); initializeFdiyPeriods(); loadFdiyDirectory(); }
+  if (nextPage === "trt-directory" && state.token) { loadFdiyDirectory(); }
   if (nextPage === "logistics") { initializeLogisticsPeriod(); loadLogistics(); }
   if (nextPage === "region-analytics") { loadRegionAnalyticsDirectory(); }
   if (nextPage === "trt-master-audit" && state.token) { loadTrtMasterAudit(); }
@@ -489,6 +492,7 @@ function showApp() {
   const analyticsNavGroup = $("analytics-nav-group");
   const employeesPage = $("page-employees");
   const salesImportPage = $("page-sales-import");
+  const trtDirectoryPage = $("page-trt-directory");
   const activityPage = $("page-activity");
   const trtMasterAuditPage = $("page-trt-master-audit");
   const gdAdmin = isSystemAdmin();
@@ -496,6 +500,7 @@ function showApp() {
   if (analyticsNavGroup) analyticsNavGroup.hidden = !["GD","KD","RRO"].includes(String(state.user?.role || "").toUpperCase()) && !gdAdmin;
   if (employeesPage && !gdAdmin) employeesPage.hidden = true;
   if (salesImportPage && !gdAdmin) salesImportPage.hidden = true;
+  if (trtDirectoryPage && !gdAdmin) trtDirectoryPage.hidden = true;
   if (activityPage && !gdAdmin) activityPage.hidden = true;
   if (trtMasterAuditPage && !gdAdmin) trtMasterAuditPage.hidden = true;
 
@@ -507,7 +512,7 @@ function showApp() {
     ? "Добавить сотрудника и создать ему учётную запись"
     : "Раздел доступен только администратору";
 
-  if (!gdAdmin && ["employees", "sales-import", "activity", "trt-master-audit"].includes(state.currentPage)) state.currentPage = "trt";
+  if (!gdAdmin && ["employees", "sales-import", "trt-directory", "activity", "trt-master-audit"].includes(state.currentPage)) state.currentPage = "trt";
   showPage(state.currentPage, true);
 }
 
@@ -4854,6 +4859,7 @@ function salesImportStatusBadge(row) {
   if (status === "matched") return `<span class="badge success">Найдено</span>`;
   if (status === "ambiguous") return `<span class="badge warning">Несколько ТРТ</span>`;
   if (status === "invalid") return `<span class="badge danger">Ошибка</span>`;
+  if (status === "skipped") return `<span class="badge warning">FDIY · отдельно</span>`;
   return `<span class="badge inactive">ТРТ не найдена</span>`;
 }
 
@@ -5016,8 +5022,665 @@ function analysisFindColumn(headers, aliases) {
   return "";
 }
 
+
+// ---------------------------------------------------------------------------
+// Плитка · сценарка v1 — структурный импорт и контроль TRT Master
+// ---------------------------------------------------------------------------
+let tileScenarioState = {
+  fileName: "",
+  sourceYear: 2026,
+  trtRows: [],
+  groupRows: [],
+  summary: null,
+  previewReady: false,
+};
+
+function tileScenarioText(value) {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function tileScenarioChunk(items, size) {
+  const chunks = [];
+  for (let index = 0; index < items.length; index += size) chunks.push(items.slice(index, index + size));
+  return chunks;
+}
+
+function tileScenarioSharedStrings(xmlText) {
+  const documentXml = new DOMParser().parseFromString(xmlText, "application/xml");
+  if (documentXml.querySelector("parsererror")) throw new Error("Не удалось прочитать sharedStrings.xml из Excel.");
+  return Array.from(documentXml.getElementsByTagName("si")).map((item) => (
+    Array.from(item.getElementsByTagName("t")).map((node) => node.textContent || "").join("")
+  ));
+}
+
+function tileScenarioCellValue(attrs, body, sharedStrings) {
+  const type = (attrs.match(/\bt="([^"]+)"/) || [])[1] || "";
+  if (type === "inlineStr") {
+    const matches = [...body.matchAll(/<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/g)];
+    if (!matches.length) return "";
+    const text = matches.map((match) => match[1]).join("");
+    const box = document.createElement("textarea"); box.innerHTML = text; return box.value;
+  }
+  const value = (body.match(/<v(?:\s[^>]*)?>([\s\S]*?)<\/v>/) || [])[1];
+  if (value == null) return "";
+  if (type === "s") return sharedStrings[Number(value)] ?? "";
+  const box = document.createElement("textarea"); box.innerHTML = value; return box.value;
+}
+
+function tileScenarioParseRows(sheetXml, sharedStrings) {
+  const rows = [];
+  const rowRegex = /<row\b([^>]*)>([\s\S]*?)<\/row>/g;
+  let rowMatch;
+  while ((rowMatch = rowRegex.exec(sheetXml))) {
+    const rowAttrs = rowMatch[1];
+    const rowBody = rowMatch[2];
+    const rowNumber = Number((rowAttrs.match(/\br="(\d+)"/) || [])[1] || 0);
+    if (!rowNumber) continue;
+    const result = { rowNumber, A: "", B: "", C: "", D: "", E: "", styleA: "" };
+    const cellRegex = /<c\b([^>]*\br="([A-E])(\d+)"[^>]*)>([\s\S]*?)<\/c>|<c\b([^>]*\br="([A-E])(\d+)"[^>]*)\/>/g;
+    let cellMatch;
+    while ((cellMatch = cellRegex.exec(rowBody))) {
+      const attrs = cellMatch[1] || cellMatch[5] || "";
+      const column = cellMatch[2] || cellMatch[6];
+      const body = cellMatch[4] || "";
+      result[column] = tileScenarioCellValue(attrs, body, sharedStrings);
+      if (column === "A") result.styleA = (attrs.match(/\bs="(\d+)"/) || [])[1] || "";
+    }
+    if (rowNumber <= 10 || result.A || result.B || result.C || result.D || result.E) rows.push(result);
+  }
+  return rows;
+}
+
+async function readTileScenarioFile(file) {
+  if (!window.JSZip) throw new Error("Модуль чтения большой сценарки не загрузился. Обновите страницу.");
+  const zip = await JSZip.loadAsync(await file.arrayBuffer());
+  const sharedEntry = zip.file("xl/sharedStrings.xml");
+  const sheetEntry = zip.file("xl/worksheets/sheet1.xml");
+  if (!sheetEntry) throw new Error("Не найден первый лист Excel.");
+  const sharedStrings = sharedEntry ? tileScenarioSharedStrings(await sharedEntry.async("string")) : [];
+  const rows = tileScenarioParseRows(await sheetEntry.async("string"), sharedStrings);
+  const byRow = new Map(rows.map((row) => [row.rowNumber, row]));
+  const expected = [[1,"Регион"],[2,"Город"],[3,"Клиент"],[4,"Торговая точка"],[5,"Бренд"]];
+  for (const [rowNumber, label] of expected) {
+    if (normalizeText(byRow.get(rowNumber)?.A || "") !== normalizeText(label)) {
+      throw new Error(`Структура файла отличается от сценарки плитки: в A${rowNumber} ожидается «${label}».`);
+    }
+  }
+  const styleMap = {
+    region: String(byRow.get(6)?.styleA || ""),
+    city: String(byRow.get(7)?.styleA || ""),
+    client: String(byRow.get(8)?.styleA || ""),
+    trt: String(byRow.get(9)?.styleA || ""),
+    group: String(byRow.get(10)?.styleA || ""),
+  };
+  if (Object.values(styleMap).some((value) => !value) || new Set(Object.values(styleMap)).size < 5) {
+    throw new Error("Не удалось определить уровни Регион → Город → Клиент → ТРТ → Бренд. Проверь шаблон файла.");
+  }
+
+  const trtRows = [];
+  const groupRows = [];
+  const regionNames = new Set();
+  const clientNames = new Set();
+  const groupNames = new Set();
+  let cityCount = 0;
+  const context = { region: "", cityGroup: "", client: "", trtRowNumber: 0 };
+
+  rows.forEach((row) => {
+    if (row.rowNumber <= 5) return;
+    const value = tileScenarioText(row.A);
+    if (!value && row.styleA !== styleMap.trt) return;
+    if (row.styleA === styleMap.region) {
+      if (!value) return;
+      context.region = value; context.cityGroup = ""; context.client = ""; context.trtRowNumber = 0;
+      regionNames.add(normalizeText(value));
+      return;
+    }
+    if (row.styleA === styleMap.city) {
+      if (!value) return;
+      context.cityGroup = value; context.client = ""; context.trtRowNumber = 0; cityCount += 1; return;
+    }
+    if (row.styleA === styleMap.client) {
+      if (!value) return;
+      context.client = value; context.trtRowNumber = 0; clientNames.add(normalizeText(value)); return;
+    }
+    if (row.styleA === styleMap.trt) {
+      if (!value) return;
+      context.trtRowNumber = row.rowNumber;
+      trtRows.push({
+        rowNumber: row.rowNumber,
+        region: context.region,
+        cityGroup: context.cityGroup,
+        client: context.client,
+        trtName: value,
+        city: tileScenarioText(row.B),
+        entityKind: tileScenarioText(row.C),
+        trtFormat: tileScenarioText(row.D),
+        trtStatus: tileScenarioText(row.E),
+      });
+      return;
+    }
+    if (row.styleA === styleMap.group && value) {
+      groupNames.add(normalizeText(value));
+      groupRows.push({ rowNumber: row.rowNumber, trtRowNumber: context.trtRowNumber, groupName: value });
+    }
+  });
+
+  if (!trtRows.length) throw new Error("В сценарке не найдены строки ТРТ.");
+  return {
+    trtRows,
+    groupRows,
+    summary: {
+      regionCount: regionNames.size,
+      cityCount,
+      clientCount: clientNames.size,
+      trtCount: trtRows.length,
+      groupCount: groupRows.length,
+      uniqueGroupCount: groupNames.size,
+    },
+  };
+}
+
+function resetTileScenario(clearFile = true) {
+  tileScenarioState = { fileName: "", sourceYear: Number($("tile-scenario-year")?.value || 2026), trtRows: [], groupRows: [], summary: null, previewReady: false };
+  if ($("tile-scenario-result")) $("tile-scenario-result").hidden = true;
+  if ($("tile-scenario-error")) $("tile-scenario-error").hidden = true;
+  if ($("tile-scenario-progress")) $("tile-scenario-progress").hidden = true;
+  if ($("tile-scenario-commit")) $("tile-scenario-commit").disabled = true;
+  if (clearFile && $("tile-scenario-file")) $("tile-scenario-file").value = "";
+  updateTileScenarioPreviewButton();
+}
+
+function updateTileScenarioPreviewButton() {
+  const button = $("tile-scenario-preview");
+  if (button) button.disabled = !isSystemAdmin() || !$("tile-scenario-file")?.files?.[0];
+}
+
+function tileScenarioResultIsProblem(row) {
+  return !row.clientExists || ["missing", "direction_mismatch", "ambiguous", "point_conflict"].includes(row.masterStatus);
+}
+
+function renderTileScenario() {
+  const rows = tileScenarioState.trtRows;
+  const summary = tileScenarioState.summary || {};
+  const set = (id, value) => { if ($(id)) $(id).textContent = Number(value || 0).toLocaleString("ru-RU"); };
+  set("tile-scenario-regions", summary.regionCount);
+  set("tile-scenario-vog", summary.vogTrtCount);
+  set("tile-scenario-other", summary.otherTrtCount);
+  set("tile-scenario-clients", summary.clientCount);
+  set("tile-scenario-trt", summary.trtCount);
+  set("tile-scenario-groups", summary.groupCount);
+  set("tile-scenario-master", summary.tileMasterCount);
+  set("tile-scenario-direction-issues", summary.directionMismatchCount);
+  set("tile-scenario-missing", summary.missingMasterCount);
+  set("tile-scenario-point", summary.pointLinkedCount);
+
+  const filter = $("tile-scenario-filter")?.value || "problems";
+  let visible = rows.filter((row) => {
+    if (filter === "all") return true;
+    if (filter === "problems") return tileScenarioResultIsProblem(row);
+    if (filter === "other") return row.territoryScope === "other";
+    if (filter === "vog") return row.territoryScope === "vog";
+    if (filter === "no-point") return !row.pointId;
+    if (filter === "missing") return row.masterStatus === "missing";
+    return true;
+  });
+  const totalVisible = visible.length;
+  visible = visible.slice(0, 500);
+  if ($("tile-scenario-visible")) $("tile-scenario-visible").textContent = `Показано: ${visible.length.toLocaleString("ru-RU")}${totalVisible > visible.length ? ` из ${totalVisible.toLocaleString("ru-RU")}` : ""}`;
+  if ($("tile-scenario-table-body")) $("tile-scenario-table-body").innerHTML = visible.map((row) => {
+    const scope = row.territoryScope === "vog" ? "ВОГ" : "Другие";
+    const statusLabels = {
+      matched: "Master + point_id", master_only: "Master без point_id", point_conflict: "Несколько point_id",
+      ambiguous: "Несколько Master", direction_mismatch: "Не Плитка в Master", missing: "Нет в Master",
+    };
+    const statusClass = ["matched"].includes(row.masterStatus) ? "success" : ["master_only"].includes(row.masterStatus) ? "muted" : "danger";
+    const clientNote = row.clientExists ? "" : '<small class="danger-text">Клиент не найден в Master</small>';
+    return `<tr>
+      <td>${row.rowNumber}</td><td><span class="badge ${row.territoryScope === "vog" ? "success" : "muted"}">${scope}</span></td>
+      <td>${escapeHtml(row.region || "—")}<small>${escapeHtml(row.cityGroup || "")}</small></td>
+      <td><strong>${escapeHtml(row.client || "—")}</strong>${clientNote}</td>
+      <td><strong>${escapeHtml(row.trtName || "—")}</strong><small>${escapeHtml(row.city || "")}</small></td>
+      <td>${escapeHtml(row.entityKind || "—")}</td><td>${escapeHtml(row.trtFormat || "—")}</td><td>${escapeHtml(row.trtStatus || "—")}</td>
+      <td><span class="badge ${statusClass}">${escapeHtml(statusLabels[row.masterStatus] || row.masterStatus || "—")}</span><small>${escapeHtml(row.matchMethod || "")}</small></td>
+      <td>${escapeHtml(row.masterId || "—")}</td><td>${escapeHtml(row.pointId || "—")}</td>
+    </tr>`;
+  }).join("");
+  if ($("tile-scenario-result")) $("tile-scenario-result").hidden = false;
+  if ($("tile-scenario-commit")) $("tile-scenario-commit").disabled = !isSystemAdmin() || !tileScenarioState.previewReady;
+}
+
+async function previewTileScenario() {
+  const file = $("tile-scenario-file")?.files?.[0];
+  if (!file || !isSystemAdmin()) return;
+  const error = $("tile-scenario-error"), progress = $("tile-scenario-progress"), button = $("tile-scenario-preview");
+  error.hidden = true; progress.hidden = false; button.disabled = true;
+  try {
+    progress.textContent = "Читаю структуру сценарки…";
+    const parsed = await readTileScenarioFile(file);
+    tileScenarioState = {
+      fileName: file.name,
+      sourceYear: Number($("tile-scenario-year")?.value || 2026),
+      trtRows: parsed.trtRows,
+      groupRows: parsed.groupRows,
+      summary: parsed.summary,
+      previewReady: false,
+    };
+    const chunks = tileScenarioChunk(tileScenarioState.trtRows, 200);
+    const matches = new Map();
+    for (let index = 0; index < chunks.length; index += 1) {
+      progress.textContent = `Проверяю TRT Master… ${index + 1} / ${chunks.length}`;
+      const payload = await api("/admin/sales-import", {
+        method: "POST", timeout: 90000,
+        body: JSON.stringify({
+          scope: "tile_scenario", operation: "preview",
+          rows: chunks[index].map((row) => ({
+            rowNumber: row.rowNumber, region: row.region, city: row.city,
+            client: row.client, trt: row.trtName, format: row.trtFormat,
+          })),
+        }),
+      });
+      (payload.rows || []).forEach((item) => matches.set(Number(item.rowNumber), item));
+    }
+    tileScenarioState.trtRows = tileScenarioState.trtRows.map((row) => ({ ...row, ...(matches.get(row.rowNumber) || {}) }));
+    const summary = tileScenarioState.summary;
+    summary.vogTrtCount = tileScenarioState.trtRows.filter((row) => row.territoryScope === "vog").length;
+    summary.otherTrtCount = tileScenarioState.trtRows.filter((row) => row.territoryScope === "other").length;
+    summary.tileMasterCount = tileScenarioState.trtRows.filter((row) => !["missing", "direction_mismatch"].includes(row.masterStatus)).length;
+    summary.directionMismatchCount = tileScenarioState.trtRows.filter((row) => row.masterStatus === "direction_mismatch").length;
+    summary.missingMasterCount = tileScenarioState.trtRows.filter((row) => row.masterStatus === "missing").length;
+    summary.pointLinkedCount = tileScenarioState.trtRows.filter((row) => Boolean(row.pointId)).length;
+    summary.missingClientCount = new Set(tileScenarioState.trtRows.filter((row) => !row.clientExists && row.client).map((row) => normalizeText(row.client))).size;
+    tileScenarioState.previewReady = true;
+    renderTileScenario();
+    progress.textContent = `Проверка завершена: ${summary.trtCount.toLocaleString("ru-RU")} ТРТ.`;
+    window.setTimeout(() => { if (progress) progress.hidden = true; }, 900);
+  } catch (exc) {
+    error.textContent = exc?.message || String(exc); error.hidden = false; progress.hidden = true;
+  } finally {
+    updateTileScenarioPreviewButton();
+  }
+}
+
+async function commitTileScenario() {
+  if (!tileScenarioState.previewReady || !isSystemAdmin()) return;
+  const button = $("tile-scenario-commit"), error = $("tile-scenario-error"), progress = $("tile-scenario-progress");
+  button.disabled = true; error.hidden = true; progress.hidden = false;
+  const random = (globalThis.crypto?.getRandomValues ? Array.from(crypto.getRandomValues(new Uint8Array(4))).map((value) => value.toString(16).padStart(2,"0")).join("") : Math.random().toString(16).slice(2,10));
+  const importId = `tile-scenario-${Date.now()}-${random}`;
+  try {
+    const trtChunks = tileScenarioChunk(tileScenarioState.trtRows, 100);
+    for (let index = 0; index < trtChunks.length; index += 1) {
+      progress.textContent = `Сохраняю ТРТ… ${index + 1} / ${trtChunks.length}`;
+      await api("/admin/sales-import", {
+        method: "POST", timeout: 90000,
+        body: JSON.stringify({ scope: "tile_scenario", operation: "commit_trt", importId, rows: trtChunks[index] }),
+      });
+    }
+    const groupChunks = tileScenarioChunk(tileScenarioState.groupRows.filter((row) => row.trtRowNumber), 200);
+    for (let index = 0; index < groupChunks.length; index += 1) {
+      progress.textContent = `Сохраняю группы… ${index + 1} / ${groupChunks.length}`;
+      await api("/admin/sales-import", {
+        method: "POST", timeout: 90000,
+        body: JSON.stringify({ scope: "tile_scenario", operation: "commit_groups", importId, rows: groupChunks[index] }),
+      });
+    }
+    progress.textContent = "Активирую новую структуру сценарки…";
+    await api("/admin/sales-import", {
+      method: "POST", timeout: 90000,
+      body: JSON.stringify({
+        scope: "tile_scenario", operation: "finalize", importId,
+        fileName: tileScenarioState.fileName, sourceYear: tileScenarioState.sourceYear,
+        summary: tileScenarioState.summary,
+      }),
+    });
+    progress.textContent = `Готово. Сохранено ${tileScenarioState.summary.trtCount.toLocaleString("ru-RU")} ТРТ и ${tileScenarioState.summary.groupCount.toLocaleString("ru-RU")} строк групп.`;
+    showToast("Сценарка плитки сохранена");
+  } catch (exc) {
+    error.textContent = exc?.message || String(exc); error.hidden = false; progress.hidden = true;
+  } finally {
+    button.disabled = !tileScenarioState.previewReady;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// FDIY v1 — федеральные DIY-сети: справочник источника продаж и загрузка.
+// ---------------------------------------------------------------------------
+let fdiyDirectoryState = { loaded: false, loading: false, clients: [], networks: [], summary: {} };
+let fdiyImportState = { rows: [], preview: null, fileName: "", mode: "", sourceSheet: "" };
+
+function fdiyNorm(value) {
+  return String(value ?? "").trim().toLowerCase().replace(/ё/g, "е")
+    .replace(/[—–_-]+/g, " ").replace(/[^0-9a-zа-я]+/gi, " ").replace(/\s+/g, " ").trim();
+}
+
+function fdiyMonthNumber(value) {
+  const text = fdiyNorm(value);
+  if (!text) return 0;
+  if (/^\d{1,2}$/.test(text)) { const n = Number(text); return n >= 1 && n <= 12 ? n : 0; }
+  for (const [name, number] of Object.entries(ANALYSIS_MONTHS)) {
+    if (new RegExp(`(^|\\s)${name}(\\s|$)`).test(text)) return Number(number);
+  }
+  return 0;
+}
+
+function fdiyLeadingCode(value) {
+  const match = String(value ?? "").match(/^\s*0*(\d{1,6})\b/);
+  if (!match) return "";
+  const n = Number(match[1]);
+  return n < 1000 ? String(n).padStart(3, "0") : String(n);
+}
+
+function fdiyResolveNetwork(value) {
+  const key = fdiyNorm(value);
+  if (!key) return null;
+  return fdiyDirectoryState.networks.find((item) =>
+    String(item.networkId || "") === String(value || "") ||
+    fdiyNorm(item.networkName) === key || fdiyNorm(item.clientName) === key
+  ) || null;
+}
+
+function initializeFdiyPeriods() {
+  const start = $("fdiy-start-year"), monthlyYear = $("fdiy-month-year"), monthlyMonth = $("fdiy-month");
+  if (start && !start.options.length) {
+    for (let year = 2024; year <= new Date().getFullYear() + 2; year += 1) start.add(new Option(String(year), String(year)));
+    start.value = "2025";
+  }
+  if (monthlyYear && !monthlyYear.options.length) {
+    for (let year = 2024; year <= new Date().getFullYear() + 2; year += 1) monthlyYear.add(new Option(String(year), String(year)));
+    const prev = new Date(); prev.setMonth(prev.getMonth() - 1);
+    monthlyYear.value = String(prev.getFullYear());
+    if (monthlyMonth) monthlyMonth.value = String(prev.getMonth() + 1);
+  }
+}
+
+function fillFdiyNetworkSelect() {
+  const select = $("fdiy-network");
+  if (!select) return;
+  const previous = select.value;
+  select.innerHTML = '<option value="">Из файла / выберите сеть</option>' + fdiyDirectoryState.networks
+    .filter((item) => item.isActive)
+    .map((item) => `<option value="${escapeHtml(item.networkId)}">${escapeHtml(item.networkName || item.clientName || item.networkId)}</option>`).join("");
+  if ([...select.options].some((o) => o.value === previous)) select.value = previous;
+  else if (fdiyDirectoryState.networks.length === 1) select.value = fdiyDirectoryState.networks[0].networkId;
+  else {
+    const lemana = fdiyDirectoryState.networks.find((item) => fdiyNorm(item.networkName).includes("лемана"));
+    if (lemana) select.value = lemana.networkId;
+  }
+}
+
+async function loadFdiyDirectory(force = false) {
+  if (!isSystemAdmin()) return;
+  if (fdiyDirectoryState.loading || (fdiyDirectoryState.loaded && !force)) { fillFdiyNetworkSelect(); return; }
+  fdiyDirectoryState.loading = true;
+  const progress = $("fdiy-directory-progress"), error = $("fdiy-directory-error");
+  if (progress) progress.hidden = false;
+  if (error) error.hidden = true;
+  try {
+    const payload = await api("/admin/sales-import", { method: "POST", timeout: 90000, body: JSON.stringify({ scope: "fdiy", operation: "directory" }) });
+    fdiyDirectoryState = { loaded: true, loading: false, clients: payload.clients || [], networks: payload.networks || [], summary: payload.summary || {} };
+    fillFdiyNetworkSelect(); renderFdiyDirectory(); initializeFdiyPeriods();
+  } catch (exc) {
+    fdiyDirectoryState.loading = false;
+    if (error) { error.textContent = exc?.message || String(exc); error.hidden = false; }
+  } finally { if (progress) progress.hidden = true; }
+}
+
+function renderFdiyDirectory() {
+  const summary = fdiyDirectoryState.summary || {};
+  if ($("fdiy-directory-clients")) $("fdiy-directory-clients").textContent = Number(summary.clientCount || 0).toLocaleString("ru-RU");
+  if ($("fdiy-directory-networks")) $("fdiy-directory-networks").textContent = Number(summary.fdiyClientCount || 0).toLocaleString("ru-RU");
+  if ($("fdiy-directory-trt")) $("fdiy-directory-trt").textContent = Number(summary.fdiyTrtCount || 0).toLocaleString("ru-RU");
+  const search = fdiyNorm($("fdiy-directory-search")?.value || "");
+  const filter = $("fdiy-directory-filter")?.value || "all";
+  const source = fdiyDirectoryState.clients || [];
+  const indexes = source.map((item, index) => ({ item, index })).filter(({ item }) => {
+    if (filter === "fdiy" && item.salesMode !== "FDIY") return false;
+    if (filter === "standard" && item.salesMode === "FDIY") return false;
+    if (search && !fdiyNorm(`${item.clientName || ""} ${item.network?.networkName || ""}`).includes(search)) return false;
+    return true;
+  });
+  const visible = indexes.slice(0, 300);
+  if ($("fdiy-directory-visible")) $("fdiy-directory-visible").textContent = `Показано: ${visible.length.toLocaleString("ru-RU")}${indexes.length > visible.length ? ` из ${indexes.length.toLocaleString("ru-RU")}` : ""}`;
+  const body = $("fdiy-directory-body"); if (!body) return;
+  body.innerHTML = visible.map(({ item, index }) => {
+    const network = item.network || {};
+    const fdiy = item.salesMode === "FDIY";
+    return `<tr data-fdiy-directory-index="${index}">
+      <td><strong>${escapeHtml(item.clientName || "—")}</strong></td>
+      <td>${Number(item.trtCount || 0).toLocaleString("ru-RU")}</td>
+      <td>${Number(item.pointLinkedCount || 0).toLocaleString("ru-RU")}</td>
+      <td>${escapeHtml((item.directions || []).join(", ") || "—")}</td>
+      <td><select data-fdiy-mode><option value="standard"${fdiy ? "" : " selected"}>Обычный</option><option value="FDIY"${fdiy ? " selected" : ""}>FDIY</option></select></td>
+      <td><input data-fdiy-network-name type="text" value="${escapeHtml(network.networkName || item.clientName || "")}" ${fdiy ? "" : "disabled"}></td>
+      <td><select data-fdiy-code-mode ${fdiy ? "" : "disabled"}><option value="manual"${network.storeCodeMode === "leading_number" ? "" : " selected"}>Вручную / из файла</option><option value="leading_number"${network.storeCodeMode === "leading_number" ? " selected" : ""}>Цифры в начале названия</option></select></td>
+      <td><button class="secondary-button" type="button" data-fdiy-save-rule>Сохранить</button></td>
+    </tr>`;
+  }).join("");
+}
+
+async function saveFdiyDirectoryRow(button) {
+  const tr = button.closest("tr[data-fdiy-directory-index]"); if (!tr) return;
+  const item = fdiyDirectoryState.clients[Number(tr.dataset.fdiyDirectoryIndex)]; if (!item) return;
+  const mode = tr.querySelector("[data-fdiy-mode]")?.value || "standard";
+  const networkName = tr.querySelector("[data-fdiy-network-name]")?.value?.trim() || item.clientName;
+  const storeCodeMode = tr.querySelector("[data-fdiy-code-mode]")?.value || "manual";
+  button.disabled = true;
+  try {
+    await api("/admin/sales-import", { method: "POST", timeout: 90000, body: JSON.stringify({
+      scope: "fdiy", operation: "save_network", clientName: item.clientName, salesMode: mode,
+      networkId: item.network?.networkId || "", networkName, storeCodeMode,
+    }) });
+    fdiyDirectoryState.loaded = false; await loadFdiyDirectory(true); showToast(mode === "FDIY" ? "Клиент отмечен как FDIY" : "Клиент переведён на обычную загрузку");
+  } catch (exc) { showToast(exc?.message || String(exc)); button.disabled = false; }
+}
+
+function fdiyFindColumn(headers, aliases) {
+  const normalized = headers.map((value, index) => [fdiyNorm(value), index]);
+  for (const alias of aliases) {
+    const key = fdiyNorm(alias); const exact = normalized.find(([value]) => value === key); if (exact) return exact[1];
+  }
+  return -1;
+}
+
+function fdiyParseLongMatrix(matrix) {
+  let headerIndex = -1, columns = null;
+  for (let r = 0; r < Math.min(matrix.length, 8); r += 1) {
+    const headers = matrix[r] || [];
+    const c = {
+      network: fdiyFindColumn(headers, ["Сеть", "FDIY сеть", "Network"]),
+      code: fdiyFindColumn(headers, ["Код ТРТ", "Код магазина", "Номер магазина", "Store code"]),
+      store: fdiyFindColumn(headers, ["Название ТРТ", "Названия строк", "Магазин", "ТРТ"]),
+      address: fdiyFindColumn(headers, ["Адрес", "Адрес ТРТ"]),
+      direction: fdiyFindColumn(headers, ["Направление", "Направление деятельности"]),
+      year: fdiyFindColumn(headers, ["Год"]), month: fdiyFindColumn(headers, ["Месяц"]),
+      total: fdiyFindColumn(headers, ["Общие продажи", "Общие продажи нат ед", "Все", "Всего"]),
+      vog: fdiyFindColumn(headers, ["Продажи ВОГ", "Продажи ВОГ нат ед", "ВОГ"]),
+    };
+    if (c.store >= 0 && c.direction >= 0 && (c.total >= 0 || c.vog >= 0)) { headerIndex = r; columns = c; break; }
+  }
+  if (!columns) return null;
+  const selectedNetwork = $("fdiy-network")?.value || "";
+  const selectedYear = Number($("fdiy-month-year")?.value || 0), selectedMonth = Number($("fdiy-month")?.value || 0);
+  const rows = [];
+  for (let r = headerIndex + 1; r < matrix.length; r += 1) {
+    const src = matrix[r] || [];
+    const storeName = String(src[columns.store] ?? "").trim();
+    const direction = String(src[columns.direction] ?? "").trim();
+    if (!storeName && !direction) continue;
+    const networkRaw = columns.network >= 0 ? String(src[columns.network] ?? "").trim() : "";
+    const network = fdiyResolveNetwork(networkRaw || selectedNetwork);
+    const year = columns.year >= 0 && Number(src[columns.year]) ? Number(src[columns.year]) : selectedYear;
+    const month = columns.month >= 0 ? (Number(src[columns.month]) || fdiyMonthNumber(src[columns.month])) : selectedMonth;
+    rows.push({ rowNumber: r + 1, network: network?.networkId || networkRaw || selectedNetwork,
+      storeCode: columns.code >= 0 ? String(src[columns.code] ?? "").trim() : fdiyLeadingCode(storeName),
+      storeName, address: columns.address >= 0 ? String(src[columns.address] ?? "").trim() : "", direction,
+      year, month, totalQuantity: columns.total >= 0 ? parseSalesQuantity(src[columns.total]) : null,
+      vogQuantity: columns.vog >= 0 ? parseSalesQuantity(src[columns.vog]) : null });
+  }
+  return { mode: "long", rows };
+}
+
+function fdiyParseWideMatrix(matrix) {
+  let headerIndex = -1, columns = null;
+  for (let r = 0; r < Math.min(matrix.length, 8); r += 1) {
+    const headers = matrix[r] || [];
+    const direction = fdiyFindColumn(headers, ["Направление деятельности", "Направление"]);
+    const store = fdiyFindColumn(headers, ["Названия строк", "Название ТРТ", "Магазин"]);
+    const address = fdiyFindColumn(headers, ["Адрес", "Адрес ТРТ"]);
+    if (direction >= 0 && store >= 0 && address >= 0) { headerIndex = r; columns = { direction, store, address }; break; }
+  }
+  if (!columns || headerIndex < 1) throw new Error("Не распознан формат FDIY. Нужны либо универсальные столбцы, либо широкая таблица с месяцами и парами Все / ВОГ.");
+  const selectedNetwork = $("fdiy-network")?.value || "";
+  if (!selectedNetwork) throw new Error("Для широкого исторического файла выберите FDIY-сеть.");
+  const monthRow = matrix[headerIndex - 1] || [], metricRow = matrix[headerIndex] || [];
+  let year = Number($("fdiy-start-year")?.value || 2025), lastMonth = 0, currentMonth = 0, currentYear = year;
+  const periods = new Map();
+  for (let c = Math.max(columns.direction, columns.store, columns.address) + 1; c < metricRow.length; c += 1) {
+    const top = monthRow[c];
+    if (String(top ?? "").trim()) {
+      const month = fdiyMonthNumber(top);
+      if (month) { if (lastMonth && month < lastMonth) currentYear += 1; currentMonth = month; lastMonth = month; }
+    }
+    if (!currentMonth) continue;
+    const metric = fdiyNorm(metricRow[c]);
+    if (!["все", "общие продажи", "общие продажи нат ед", "вог", "продажи вог", "продажи вог нат ед"].includes(metric)) continue;
+    const key = `${currentYear}-${currentMonth}`;
+    if (!periods.has(key)) periods.set(key, { year: currentYear, month: currentMonth, totalCol: -1, vogCol: -1 });
+    const spec = periods.get(key);
+    if (metric === "все" || metric.startsWith("общие продажи")) spec.totalCol = c; else spec.vogCol = c;
+  }
+  if (!periods.size) throw new Error("В широком FDIY файле не найдены месячные пары Все / ВОГ.");
+  const rows = [];
+  for (let r = headerIndex + 1; r < matrix.length; r += 1) {
+    const src = matrix[r] || []; const storeName = String(src[columns.store] ?? "").trim(); const direction = String(src[columns.direction] ?? "").trim();
+    if (!storeName && !direction) continue;
+    const base = { rowNumber: r + 1, network: selectedNetwork, storeCode: fdiyLeadingCode(storeName), storeName,
+      address: String(src[columns.address] ?? "").trim(), direction };
+    for (const spec of periods.values()) {
+      const total = spec.totalCol >= 0 ? parseSalesQuantity(src[spec.totalCol]) : null;
+      const vog = spec.vogCol >= 0 ? parseSalesQuantity(src[spec.vogCol]) : null;
+      if (total === null && vog === null) continue;
+      rows.push({ ...base, year: spec.year, month: spec.month, totalQuantity: total, vogQuantity: vog });
+    }
+  }
+  return { mode: "wide", rows };
+}
+
+async function readFdiyFile(file) {
+  if (!window.XLSX) throw new Error("Модуль чтения Excel не загрузился.");
+  const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: false });
+  const sheetName = workbook.SheetNames[0]; if (!sheetName) throw new Error("В файле нет листов.");
+  const matrix = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: "", raw: true });
+  const longResult = fdiyParseLongMatrix(matrix);
+  const parsed = longResult || fdiyParseWideMatrix(matrix);
+  if (!parsed.rows.length) throw new Error("В FDIY файле нет значений продаж.");
+  return { ...parsed, sheetName };
+}
+
+function resetFdiyImport(clearFile = true) {
+  fdiyImportState = { rows: [], preview: null, fileName: "", mode: "", sourceSheet: "" };
+  if ($("fdiy-result")) $("fdiy-result").hidden = true;
+  if ($("fdiy-error")) $("fdiy-error").hidden = true;
+  if ($("fdiy-progress")) $("fdiy-progress").hidden = true;
+  if ($("fdiy-commit")) $("fdiy-commit").disabled = true;
+  if (clearFile && $("fdiy-file")) $("fdiy-file").value = "";
+  updateFdiyPreviewButton();
+}
+
+function updateFdiyPreviewButton() {
+  if ($("fdiy-preview")) $("fdiy-preview").disabled = !isSystemAdmin() || !$("fdiy-file")?.files?.[0];
+}
+
+function fdiyStatusBadge(row) {
+  const status = String(row.status || "").toLowerCase();
+  if (status === "matched") return '<span class="badge success">Сопоставлено</span>';
+  if (status === "ambiguous") return '<span class="badge warning">Несколько ТРТ</span>';
+  if (status === "skipped") return '<span class="badge inactive">Нет данных</span>';
+  if (status === "invalid") return '<span class="badge danger">Ошибка</span>';
+  return '<span class="badge danger">Не найдено</span>';
+}
+
+function renderFdiyPreview(payload) {
+  fdiyImportState.preview = payload; const s = payload.summary || {};
+  const set = (id, value) => { if ($(id)) $(id).textContent = Number(value || 0).toLocaleString("ru-RU"); };
+  set("fdiy-summary-networks", s.networkCount); set("fdiy-summary-stores", s.storeCount); set("fdiy-summary-values", s.monthlyValues);
+  set("fdiy-summary-matched", s.matchedValues); set("fdiy-summary-point", s.pointLinkedStoreCount); set("fdiy-summary-unmatched", s.unmatchedValues);
+  set("fdiy-summary-invalid", s.invalidValues); set("fdiy-summary-periods", s.periodCount);
+  const conflicts = payload.periodsExisting || [], conflict = $("fdiy-conflict-warning");
+  if (conflict) { conflict.hidden = !conflicts.length; conflict.textContent = conflicts.length ? `Уже загружены: ${conflicts.slice(0, 12).map((x) => `${x.networkName || x.networkId} · ${x.month}.${x.year} · ${x.direction}`).join("; ")}${conflicts.length > 12 ? ` и ещё ${conflicts.length - 12}` : ""}. При загрузке будет предложено заменить только эти сеть/месяц/направление.` : ""; }
+  const warning = $("fdiy-data-warning");
+  if (warning) { const parts = []; if (Number(s.warningValues || 0)) parts.push(`Предупреждений: ${Number(s.warningValues).toLocaleString("ru-RU")} (в т.ч. отрицательные корректировки или Master без point_id).`); if (Number(s.unmatchedValues || 0)) parts.push(`Несопоставленные значения не будут записаны: ${Number(s.unmatchedValues).toLocaleString("ru-RU")}.`); warning.hidden = !parts.length; warning.textContent = parts.join(" "); }
+  if ($("fdiy-table-body")) $("fdiy-table-body").innerHTML = (payload.rows || []).slice(0, 400).map((row) => `<tr>
+    <td>${escapeHtml(row.rowNumber)}</td><td>${escapeHtml(row.networkName || row.networkId || "—")}</td><td>${escapeHtml(row.storeCode || "—")}</td>
+    <td><strong>${escapeHtml(row.storeName || "—")}</strong><small>${escapeHtml(row.address || "")}</small></td><td>${escapeHtml(row.direction || "—")}</td>
+    <td>${escapeHtml(row.masterId || "—")}<small>${escapeHtml(row.matchMethod || row.message || "")}</small></td><td>${escapeHtml(row.pointId || "—")}</td><td>${fdiyStatusBadge(row)}</td></tr>`).join("");
+  if ($("fdiy-result")) $("fdiy-result").hidden = false;
+  if ($("fdiy-commit")) $("fdiy-commit").disabled = Number(s.matchedValues || 0) === 0 || Number(s.invalidValues || 0) > 0;
+}
+
+async function previewFdiyImport() {
+  const file = $("fdiy-file")?.files?.[0]; if (!file) return;
+  const error = $("fdiy-error"), progress = $("fdiy-progress"), button = $("fdiy-preview");
+  if (error) error.hidden = true; if (progress) { progress.hidden = false; progress.textContent = "Чтение и проверка FDIY…"; } button.disabled = true;
+  try {
+    if (!fdiyDirectoryState.loaded) await loadFdiyDirectory();
+    const parsed = await readFdiyFile(file);
+    fdiyImportState = { rows: parsed.rows, preview: null, fileName: file.name, mode: parsed.mode, sourceSheet: parsed.sheetName };
+    const payload = await api("/admin/sales-import", { method: "POST", timeout: 90000, body: JSON.stringify({ scope: "fdiy", operation: "preview", rows: parsed.rows }) });
+    renderFdiyPreview(payload); if (progress) progress.hidden = true;
+  } catch (exc) { if (error) { error.textContent = exc?.message || String(exc); error.hidden = false; } if (progress) progress.hidden = true; }
+  finally { updateFdiyPreviewButton(); }
+}
+
+function fdiyPeriodKey(row) { return `${String(row.network || row.networkId || "")}|${Number(row.year)}|${Number(row.month)}|${fdiyNorm(row.direction)}`; }
+
+async function commitFdiyImport() {
+  const preview = fdiyImportState.preview || {}; const conflicts = preview.periodsExisting || [];
+  if (!fdiyImportState.rows.length) return;
+  if (Number(preview.summary?.invalidValues || 0) > 0) return showToast("Сначала исправьте ошибки FDIY файла");
+  const conflictKeys = new Set(conflicts.map((x) => `${x.networkId}|${Number(x.year)}|${Number(x.month)}|${fdiyNorm(x.direction)}`));
+  if (conflicts.length) {
+    const labels = conflicts.slice(0, 10).map((x) => `«${x.networkName || x.networkId}» · ${x.month}.${x.year} · ${x.direction}`).join("\n");
+    if (!window.confirm(`Данные уже загружены:\n${labels}${conflicts.length > 10 ? `\n…и ещё ${conflicts.length - 10}` : ""}\n\nИсправить на новые? Будут заменены только перечисленные сеть/месяц/направление.`)) return;
+  }
+  const groups = new Map();
+  for (const row of fdiyImportState.rows) { const key = fdiyPeriodKey(row); if (!groups.has(key)) groups.set(key, []); groups.get(key).push(row); }
+  const entries = [...groups.entries()]; const button = $("fdiy-commit"), progress = $("fdiy-progress"), error = $("fdiy-error");
+  button.disabled = true; if (error) error.hidden = true; if (progress) progress.hidden = false;
+  let stored = 0;
+  try {
+    for (let i = 0; i < entries.length; i += 1) {
+      const [key, rows] = entries[i]; if (progress) progress.textContent = `Загрузка FDIY: ${i + 1} / ${entries.length}…`;
+      const result = await api("/admin/sales-import", { method: "POST", timeout: 90000, body: JSON.stringify({
+        scope: "fdiy", operation: "commit", fileName: fdiyImportState.fileName, rows, replace: conflictKeys.has(key),
+      }) });
+      stored += Number(result.storedValues || 0);
+    }
+    if (progress) progress.textContent = `Готово. Сохранено ${stored.toLocaleString("ru-RU")} месячных значений FDIY.`;
+    state.trtLoaded = false; state.marketAnalysis.loaded = false; showToast("FDIY продажи загружены");
+  } catch (exc) { if (error) { error.textContent = exc?.message || String(exc); error.hidden = false; } if (progress) progress.hidden = true; button.disabled = false; }
+}
+
+function downloadFdiyTemplate() {
+  if (!window.XLSX) return showToast("Модуль Excel не загрузился");
+  const wb = XLSX.utils.book_new();
+  const headers = ["Сеть","Код ТРТ","Название ТРТ","Адрес","Направление","Год","Месяц","Общие продажи","Продажи ВОГ"];
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([headers]), "FDIY продажи");
+  const help = [
+    ["Правило","Описание"],
+    ["Одна сеть","Можно выбрать сеть на сайте и оставить столбец «Сеть» пустым."],
+    ["Несколько сетей","Заполните столбец «Сеть» для каждой строки."],
+    ["Период","Если Год/Месяц пусты в месячном файле, используется период, выбранный на сайте."],
+    ["Продажи","«Продажи ВОГ» входят в «Общие продажи». Пустое значение сохраняется как отсутствие данных, не как 0."],
+    ["Повторная загрузка","Заменяется только конкретная сеть + месяц + направление после подтверждения."],
+  ];
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(help), "Инструкция");
+  XLSX.writeFile(wb, "VOG_FDIY_Шаблон_месячной_загрузки.xlsx");
+}
+
+
 function setDataImportTab(tab) {
-  const allowed = ["sales", "trt-plan", "diy-sellout", "trt-new"];
+  const allowed = ["sales", "trt-plan", "diy-sellout", "fdiy", "trt-new", "tile-scenario"];
   const next = allowed.includes(tab) ? tab : "sales";
   document.querySelectorAll("[data-import-tab]").forEach((button) => {
     button.classList.toggle("active", button.dataset.importTab === next);
@@ -6694,6 +7357,31 @@ $("trt-import-commit-button")?.addEventListener("click", commitTrtBulkImport);
 $("trt-import-map-button")?.addEventListener("click", openBulkNewTrtOnMap);
 $("trt-import-include-warning")?.addEventListener("change", updateTrtBulkCommitButton);
 ["trt-import-direction", "trt-import-format", "trt-import-status"].forEach((id) => $(id)?.addEventListener("change", updateTrtBulkCommitButton));
+
+$("tile-scenario-file")?.addEventListener("change", () => { resetTileScenario(false); updateTileScenarioPreviewButton(); });
+$("tile-scenario-year")?.addEventListener("change", () => resetTileScenario(false));
+$("tile-scenario-preview")?.addEventListener("click", previewTileScenario);
+$("tile-scenario-reset")?.addEventListener("click", () => resetTileScenario(true));
+$("tile-scenario-commit")?.addEventListener("click", commitTileScenario);
+$("tile-scenario-filter")?.addEventListener("change", renderTileScenario);
+
+$("fdiy-directory-refresh")?.addEventListener("click", () => loadFdiyDirectory(true));
+$("fdiy-directory-search")?.addEventListener("input", renderFdiyDirectory);
+$("fdiy-directory-filter")?.addEventListener("change", renderFdiyDirectory);
+$("fdiy-directory-body")?.addEventListener("change", (event) => {
+  const tr = event.target.closest?.("tr[data-fdiy-directory-index]"); if (!tr) return;
+  if (event.target.matches("[data-fdiy-mode]")) { const fdiy = event.target.value === "FDIY"; tr.querySelector("[data-fdiy-network-name]").disabled = !fdiy; tr.querySelector("[data-fdiy-code-mode]").disabled = !fdiy; }
+});
+$("fdiy-directory-body")?.addEventListener("click", (event) => { const button = event.target.closest?.("[data-fdiy-save-rule]"); if (button) saveFdiyDirectoryRow(button); });
+$("fdiy-file")?.addEventListener("change", () => { resetFdiyImport(false); updateFdiyPreviewButton(); });
+$("fdiy-network")?.addEventListener("change", () => resetFdiyImport(false));
+$("fdiy-start-year")?.addEventListener("change", () => resetFdiyImport(false));
+$("fdiy-month-year")?.addEventListener("change", () => resetFdiyImport(false));
+$("fdiy-month")?.addEventListener("change", () => resetFdiyImport(false));
+$("fdiy-preview")?.addEventListener("click", previewFdiyImport);
+$("fdiy-reset")?.addEventListener("click", () => resetFdiyImport(true));
+$("fdiy-commit")?.addEventListener("click", commitFdiyImport);
+$("fdiy-template")?.addEventListener("click", downloadFdiyTemplate);
 
 $("sales-import-file").addEventListener("change", () => {
   resetSalesImport(false);
