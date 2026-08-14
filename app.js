@@ -1,6 +1,6 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.33";
+const VOG_WEB_VERSION = "8.34";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
@@ -2053,6 +2053,7 @@ function trtSmartFilterTypeLabel(type) {
     city: "Город",
     region: "Регион",
     source: "Источник",
+    network: "Сеть",
     point: "ТРТ",
   }[type] || "Фильтр";
 }
@@ -2062,7 +2063,7 @@ function trtSmartFilterTokenKey(token) {
 }
 
 function sanitizeTrtSmartFilterToken(token) {
-  if (!token || !["direction", "manager", "city", "region", "source", "point"].includes(token.type)) return null;
+  if (!token || !["direction", "manager", "city", "region", "source", "network", "point"].includes(token.type)) return null;
   const value = String(token.value ?? "").trim();
   const label = String(token.label ?? "").trim();
   if (!value || !label) return null;
@@ -2096,6 +2097,7 @@ function pruneTrtSmartFilters() {
   const validCities = new Set(state.trtPoints.map(trtPointCityKey).filter(Boolean));
   const validRegions = new Set(state.trtPoints.map(trtCanonicalRegionName).filter(Boolean));
   const validSources = new Set(state.trtPoints.map(trtOriginKey).filter(Boolean));
+  const validNetworks = new Set(state.trtPoints.map(trtFdiyNetworkKey).filter(Boolean));
   const validPoints = new Set(state.trtPoints.map((point) => String(point.id)));
   const before = trtSmartFilters.length;
   trtSmartFilters = trtSmartFilters.filter((token) => {
@@ -2104,6 +2106,7 @@ function pruneTrtSmartFilters() {
     if (token.type === "city") return validCities.has(token.value);
     if (token.type === "region") return validRegions.has(token.value);
     if (token.type === "source") return validSources.has(token.value);
+    if (token.type === "network") return validNetworks.has(token.value);
     if (token.type === "point") return validPoints.has(token.value);
     return false;
   });
@@ -2134,6 +2137,14 @@ function trtSmartMatchScore(value, query) {
 
 function trtSmartPointTitle(point) {
   return String(point?.client || point?.holding || point?.address || "ТРТ").trim() || "ТРТ";
+}
+
+function trtFdiyNetworkKey(point) {
+  return String(point?.fdiyNetworkId || point?.fdiyNetwork || "").trim();
+}
+
+function trtFdiyNetworkLabel(point) {
+  return String(point?.fdiyNetwork || point?.fdiyNetworkId || "").trim();
 }
 
 function buildTrtSmartSuggestions(query) {
@@ -2188,6 +2199,18 @@ function buildTrtSmartSuggestions(query) {
     add({ type: "source", value, label, meta: "Источник", score });
   });
 
+  const networkMap = new Map();
+  state.trtPoints.forEach((point) => {
+    const value = trtFdiyNetworkKey(point);
+    const label = trtFdiyNetworkLabel(point);
+    if (!value || !label || networkMap.has(value)) return;
+    networkMap.set(value, label);
+  });
+  networkMap.forEach((label, value) => {
+    const score = trtSmartMatchScore(`${label} ${value}`, q);
+    add({ type: "network", value, label, meta: "FDIY сеть", score });
+  });
+
   state.trtPoints.forEach((point) => {
     const fields = [
       ["ТРТ", point.client],
@@ -2198,6 +2221,7 @@ function buildTrtSmartSuggestions(query) {
       ["Направление", point.direction],
       ["Регион", trtCanonicalRegionName(point)],
       ["Источник", trtOriginLabel(point)],
+      ["Сеть", trtFdiyNetworkLabel(point)],
     ].filter(([, value]) => String(value || "").trim());
 
     let best = null;
@@ -2223,7 +2247,7 @@ function buildTrtSmartSuggestions(query) {
     });
   });
 
-  const typePriority = { direction: 0, manager: 1, city: 2, region: 3, source: 4, point: 5 };
+  const typePriority = { network: 0, direction: 1, manager: 2, city: 3, region: 4, source: 5, point: 6 };
   const deduped = [];
   const seen = new Set();
   suggestions
@@ -2259,7 +2283,7 @@ function renderTrtSmartSuggestions(query = $("trt-smart-search-input")?.value ||
 
   trtSmartSuggestions = buildTrtSmartSuggestions(q);
   if (!trtSmartSuggestions.length) {
-    list.innerHTML = `<div class="trt-smart-search-empty">Ничего не найдено. Попробуйте город, регион, название ТРТ, адрес, направление или фамилию менеджера.</div>`;
+    list.innerHTML = `<div class="trt-smart-search-empty">Ничего не найдено. Попробуйте сеть, город, регион, название ТРТ, адрес, направление или фамилию менеджера.</div>`;
     list.hidden = false;
     input.setAttribute("aria-expanded", "true");
     trtSmartSuggestionIndex = -1;
@@ -2296,7 +2320,7 @@ function renderTrtSmartFilterChips() {
   clear.hidden = trtSmartFilters.length === 0;
   input.placeholder = trtSmartFilters.length
     ? "Добавить фильтр…"
-    : "ТРТ, город, регион, направление, менеджер или адрес";
+    : "Сеть, ТРТ, город, регион, направление, менеджер или адрес";
 }
 
 function hasActiveTrtFilters() {
@@ -2600,6 +2624,7 @@ function filteredTrtPoints() {
   const smartCities = trtSmartFilterValues("city");
   const smartRegions = trtSmartFilterValues("region");
   const smartSources = trtSmartFilterValues("source");
+  const smartNetworks = trtSmartFilterValues("network");
   const smartPoints = trtSmartFilterValues("point");
 
   return state.trtPoints.filter((point) => {
@@ -2610,6 +2635,7 @@ function filteredTrtPoints() {
     if (smartCities.size && !smartCities.has(trtPointCityKey(point))) return false;
     if (smartRegions.size && !smartRegions.has(trtCanonicalRegionName(point))) return false;
     if (smartSources.size && !smartSources.has(trtOriginKey(point))) return false;
+    if (smartNetworks.size && !smartNetworks.has(trtFdiyNetworkKey(point))) return false;
     if (smartPoints.size && !smartPoints.has(String(point.id))) return false;
     return true;
   });
