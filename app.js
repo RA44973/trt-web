@@ -1,6 +1,6 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.30";
+const VOG_WEB_VERSION = "8.32";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
@@ -5482,6 +5482,37 @@ function fdiyFindColumn(headers, aliases) {
   return -1;
 }
 
+function fdiySelectedNetworkId() {
+  const explicit = $("fdiy-network")?.value || "";
+  if (explicit) return explicit;
+  const active = (fdiyDirectoryState.networks || []).filter((item) => item.isActive);
+  if (active.length === 1) {
+    const id = String(active[0].networkId || "");
+    const select = $("fdiy-network");
+    if (select && id && [...select.options].some((o) => o.value === id)) select.value = id;
+    return id;
+  }
+  return "";
+}
+
+function fdiyCountWidePeriods(matrix) {
+  for (let r = 1; r < Math.min(matrix.length, 8); r += 1) {
+    const headers = matrix[r] || [];
+    const direction = fdiyFindColumn(headers, ["Направление деятельности", "Направление"]);
+    const store = fdiyFindColumn(headers, ["Названия строк", "Название ТРТ", "Магазин"]);
+    const address = fdiyFindColumn(headers, ["Адрес", "Адрес ТРТ"]);
+    if (direction < 0 || store < 0 || address < 0) continue;
+    const monthRow = matrix[r - 1] || [];
+    let periods = 0;
+    for (let c = Math.max(direction, store, address) + 1; c < headers.length; c += 1) {
+      const metric = fdiyNorm(headers[c]);
+      if ((metric === "все" || metric.startsWith("общие продажи")) && fdiyMonthNumber(monthRow[c])) periods += 1;
+    }
+    return periods;
+  }
+  return 0;
+}
+
 function fdiyParseLongMatrix(matrix) {
   let headerIndex = -1, columns = null;
   for (let r = 0; r < Math.min(matrix.length, 8); r += 1) {
@@ -5499,7 +5530,7 @@ function fdiyParseLongMatrix(matrix) {
     if (c.store >= 0 && c.direction >= 0 && (c.total >= 0 || c.vog >= 0)) { headerIndex = r; columns = c; break; }
   }
   if (!columns) return null;
-  const selectedNetwork = $("fdiy-network")?.value || "";
+  const selectedNetwork = fdiySelectedNetworkId();
   if (columns.network < 0 && !selectedNetwork) throw new Error("Для файла одной FDIY-сети выберите сеть перед проверкой.");
   const selectedYear = Number($("fdiy-month-year")?.value || 0), selectedMonth = Number($("fdiy-month")?.value || 0);
   const rows = [];
@@ -5531,8 +5562,8 @@ function fdiyParseWideMatrix(matrix) {
     if (direction >= 0 && store >= 0 && address >= 0) { headerIndex = r; columns = { direction, store, address }; break; }
   }
   if (!columns || headerIndex < 1) throw new Error("Не распознан формат FDIY. Нужны либо универсальные столбцы, либо широкая таблица с месяцами и парами Все / ВОГ.");
-  const selectedNetwork = $("fdiy-network")?.value || "";
-  if (!selectedNetwork) throw new Error("Для широкого исторического файла выберите FDIY-сеть.");
+  const selectedNetwork = fdiySelectedNetworkId();
+  if (!selectedNetwork) throw new Error("Для широкого исторического файла выберите FDIY-сеть. Если активна только одна FDIY-сеть, она должна выбираться автоматически.");
   const monthRow = matrix[headerIndex - 1] || [], metricRow = matrix[headerIndex] || [];
   let year = Number($("fdiy-start-year")?.value || 2025), lastMonth = 0, currentMonth = 0, currentYear = year;
   const periods = new Map();
@@ -5564,7 +5595,7 @@ function fdiyParseWideMatrix(matrix) {
       rows.push({ ...base, year: spec.year, month: spec.month, totalQuantity: total, vogQuantity: vog });
     }
   }
-  return { mode: "wide", rows };
+  return { mode: "wide", rows, detectedPeriodCount: periods.size };
 }
 
 function fdiyLooksWideMatrix(matrix) {
@@ -5593,11 +5624,14 @@ async function readFdiyFile(file) {
   const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: false });
   const sheetName = workbook.SheetNames[0]; if (!sheetName) throw new Error("В файле нет листов.");
   const matrix = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: "", raw: true });
-  const looksWide = fdiyLooksWideMatrix(matrix);
+  const detectedWidePeriods = fdiyCountWidePeriods(matrix);
+  const looksWide = detectedWidePeriods >= 2 || fdiyLooksWideMatrix(matrix);
   const parsed = looksWide ? fdiyParseWideMatrix(matrix) : fdiyParseLongMatrix(matrix);
   if (!parsed) throw new Error("Не распознан формат FDIY файла.");
   if (!parsed.rows.length) throw new Error("В FDIY файле нет значений продаж.");
-  return { ...parsed, sheetName };
+  // Защита от тихой ошибки: исторический файл с несколькими месяцами нельзя трактовать как один месячный файл.
+  if (detectedWidePeriods >= 2 && parsed.mode !== "wide") throw new Error(`Файл содержит ${detectedWidePeriods} месяцев, но был распознан как месячный. Загрузка остановлена.`);
+  return { ...parsed, detectedPeriodCount: parsed.detectedPeriodCount || detectedWidePeriods || 1, sheetName };
 }
 
 function resetFdiyImport(clearFile = true) {
@@ -5605,6 +5639,7 @@ function resetFdiyImport(clearFile = true) {
   if ($("fdiy-result")) $("fdiy-result").hidden = true;
   if ($("fdiy-error")) $("fdiy-error").hidden = true;
   if ($("fdiy-progress")) $("fdiy-progress").hidden = true;
+  if ($("fdiy-format-note")) $("fdiy-format-note").hidden = true;
   if ($("fdiy-commit")) $("fdiy-commit").disabled = true;
   if (clearFile && $("fdiy-file")) $("fdiy-file").value = "";
   updateFdiyPreviewButton();
@@ -5616,6 +5651,7 @@ function updateFdiyPreviewButton() {
 
 function fdiyStatusBadge(row) {
   const status = String(row.status || "").toLowerCase();
+  if (status === "matched" && !row.pointId) return '<span class="badge warning">Master найден</span>';
   if (status === "matched") return '<span class="badge success">Сопоставлено</span>';
   if (status === "ambiguous") return '<span class="badge warning">Несколько ТРТ</span>';
   if (status === "skipped") return '<span class="badge inactive">Нет данных</span>';
@@ -5649,6 +5685,13 @@ async function previewFdiyImport() {
     if (!fdiyDirectoryState.loaded) await loadFdiyDirectory();
     const parsed = await readFdiyFile(file);
     fdiyImportState = { rows: parsed.rows, preview: null, fileName: file.name, mode: parsed.mode, sourceSheet: parsed.sheetName };
+    const formatNote = $("fdiy-format-note");
+    if (formatNote) {
+      const networkId = fdiySelectedNetworkId();
+      const network = (fdiyDirectoryState.networks || []).find((item) => String(item.networkId || "") === String(networkId || ""));
+      formatNote.textContent = `Распознан формат: ${parsed.mode === "wide" ? "исторический широкий" : "месячный"} · месяцев: ${parsed.detectedPeriodCount || 1}${network ? ` · сеть: ${network.networkName || network.clientName}` : ""} · Web ${VOG_WEB_VERSION}`;
+      formatNote.hidden = false;
+    }
     const payload = await api("/admin/sales-import", { method: "POST", timeout: 90000, body: JSON.stringify({ scope: "fdiy", operation: "preview", rows: parsed.rows }) });
     renderFdiyPreview(payload); if (progress) progress.hidden = true;
   } catch (exc) { if (error) { error.textContent = exc?.message || String(exc); error.hidden = false; } if (progress) progress.hidden = true; }

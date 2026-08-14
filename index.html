@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#384e86">
-  <meta name="vog-web-version" content="8.30">
+  <meta name="vog-web-version" content="8.32">
   <title>ТК ВОГ Офис</title>
   <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=20260810-gdebenz-v8-0">
   <link rel="apple-touch-icon" sizes="192x192" href="icon-192.png?v=20260810-gdebenz-v8-0">
@@ -654,6 +654,7 @@
               <em>Для файла одной сети столбец «Сеть» можно не заполнять — используется выбранная сеть. Если в месячном файле нет Года/Месяца, используется период, выбранный выше.</em>
             </div>
             <div id="fdiy-error" class="form-error" hidden></div>
+            <div id="fdiy-format-note" class="loading-state" hidden></div>
             <div id="fdiy-progress" class="loading-state" hidden>Чтение и проверка FDIY…</div>
             <section id="fdiy-result" class="sales-import-result" hidden>
               <div class="sales-import-summary-grid">
@@ -664,7 +665,7 @@
                 <article><span>Есть point_id</span><strong id="fdiy-summary-point">0</strong></article>
                 <article><span>Не сопоставлено</span><strong id="fdiy-summary-unmatched">0</strong></article>
                 <article><span>Ошибок</span><strong id="fdiy-summary-invalid">0</strong></article>
-                <article><span>Периодов</span><strong id="fdiy-summary-periods">0</strong></article>
+                <article><span>Периодов × направлений</span><strong id="fdiy-summary-periods">0</strong></article>
               </div>
               <div id="fdiy-conflict-warning" class="sales-import-warning" hidden></div>
               <div id="fdiy-data-warning" class="sales-import-warning" hidden></div>
@@ -1417,6 +1418,6 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-  <script src="app.js?v=20260814-fdiy-wide-parser-v8-30"></script>
+  <script src="app.js?v=20260814-fdiy-master-fallback-v8-32"></script>
 </body>
 </html>
