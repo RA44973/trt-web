@@ -1,6 +1,6 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.38";
+const VOG_WEB_VERSION = "8.39";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
@@ -5928,6 +5928,42 @@ function renderFdiyPreview(payload) {
   }
 }
 
+function fdiyBuildCompactPreview(rows) {
+  const groups = new Map();
+  const periods = new Map();
+  for (const row of (rows || [])) {
+    const network = String(row.network || row.networkId || "");
+    const direction = String(row.direction || "");
+    const code = String(row.storeCode || "");
+    const storeName = String(row.storeName || "");
+    const address = String(row.address || "");
+    const groupKey = `${network}|${code || storeName}|${address}|${fdiyNorm(direction)}`;
+    const periodKey = `${network}|${Number(row.year)}|${Number(row.month)}|${fdiyNorm(direction)}`;
+    if (!periods.has(periodKey)) periods.set(periodKey, { network, year: Number(row.year), month: Number(row.month), direction });
+    if (!groups.has(groupKey)) groups.set(groupKey, {
+      rowNumber: Number(row.rowNumber || 0), network, storeCode: code, storeName, address, direction,
+      year: Number(row.year), month: Number(row.month), totalQuantity: 0, vogQuantity: 0,
+      valueCount: 0, validValueCount: 0, invalidValueCount: 0, warningValueCount: 0,
+      totalQuantitySum: 0, vogQuantitySum: 0,
+    });
+    const item = groups.get(groupKey);
+    item.valueCount += 1;
+    const total = row.totalQuantity;
+    const vog = row.vogQuantity;
+    const invalid = total !== null && total !== undefined && vog !== null && vog !== undefined
+      && Number(total) >= 0 && Number(vog) >= 0 && Number(vog) > Number(total);
+    if (invalid) {
+      item.invalidValueCount += 1;
+      continue;
+    }
+    item.validValueCount += 1;
+    if ((total !== null && total !== undefined && Number(total) < 0) || (vog !== null && vog !== undefined && Number(vog) < 0)) item.warningValueCount += 1;
+    if (total !== null && total !== undefined && Number.isFinite(Number(total))) item.totalQuantitySum += Number(total);
+    if (vog !== null && vog !== undefined && Number.isFinite(Number(vog))) item.vogQuantitySum += Number(vog);
+  }
+  return { rows: [...groups.values()], periods: [...periods.values()] };
+}
+
 async function previewFdiyImport() {
   const file = $("fdiy-file")?.files?.[0]; if (!file) return;
   const error = $("fdiy-error"), progress = $("fdiy-progress"), button = $("fdiy-preview");
@@ -5946,7 +5982,9 @@ async function previewFdiyImport() {
       formatNote.textContent = `Распознан формат: ${formatLabel} · лист: ${parsed.sheetName || "—"} · месяцев: ${parsed.detectedPeriodCount || 1} · общих значений: ${Number(parsed.totalValueCount || 0).toLocaleString("ru-RU")} · ВОГ значений: ${Number(parsed.vogValueCount || 0).toLocaleString("ru-RU")}${network ? ` · сеть: ${network.networkName || network.clientName}` : ""} · Web ${VOG_WEB_VERSION}`;
       formatNote.hidden = false;
     }
-    const payload = await api("/admin/sales-import", { method: "POST", timeout: 90000, body: JSON.stringify({ scope: "fdiy", operation: "preview", rows: parsed.rows }) });
+    const compact = fdiyBuildCompactPreview(parsed.rows);
+    if (progress) progress.textContent = `Сверка FDIY: ${compact.rows.length.toLocaleString("ru-RU")} ТРТ/направлений · ${compact.periods.length} периодов…`;
+    const payload = await api("/admin/sales-import", { method: "POST", timeout: 90000, body: JSON.stringify({ scope: "fdiy", operation: "preview_compact", rows: compact.rows, periods: compact.periods }) });
     renderFdiyPreview(payload); if (progress) progress.hidden = true;
   } catch (exc) { if (error) { error.textContent = exc?.message || String(exc); error.hidden = false; } if (progress) progress.hidden = true; }
   finally { updateFdiyPreviewButton(); }
@@ -6042,8 +6080,18 @@ async function commitFdiyImport() {
 
   if (conflicts.length) {
     if (isHistorical && conflicts.length < allEntries.length) {
-      entries = allEntries.filter(([key]) => !conflictKeys.has(key));
-      skippedAlready = allEntries.length - entries.length;
+      const replacePartial = window.confirm(
+        `В базе уже есть ${conflicts.length} из ${allEntries.length} периодов этого исторического файла.\n\n` +
+        `ОК — заменить уже загруженные периоды данными из текущего файла и одновременно добавить отсутствующие.\n` +
+        `Отмена — сохранить существующие как есть и догрузить только отсутствующие.`
+      );
+      if (replacePartial) {
+        replaceExisting = true;
+        entries = allEntries;
+      } else {
+        entries = allEntries.filter(([key]) => !conflictKeys.has(key));
+        skippedAlready = allEntries.length - entries.length;
+      }
     } else {
       const labels = conflicts.slice(0, 10).map((x) => `«${x.networkName || x.networkId}» · ${x.month}.${x.year} · ${x.direction}`).join("\n");
       const question = isHistorical
