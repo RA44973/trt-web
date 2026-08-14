@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#384e86">
-  <meta name="vog-web-version" content="8.44">
+  <meta name="vog-web-version" content="8.45">
   <title>ТК ВОГ Офис</title>
   <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=20260810-gdebenz-v8-0">
   <link rel="apple-touch-icon" sizes="192x192" href="icon-192.png?v=20260810-gdebenz-v8-0">
@@ -756,6 +756,9 @@
                 <article><span>Без point_id · не блокирует</span><strong id="tile-scenario-no-point">0</strong></article>
                 <article><span>Другое направление</span><strong id="tile-scenario-direction-issues">0</strong></article>
                 <article><span>Нет в Master</span><strong id="tile-scenario-missing">0</strong></article>
+                <article><span>Блокирующих всего</span><strong id="tile-scenario-blocking">0</strong></article>
+                <article><span>Блокирующих с планом</span><strong id="tile-scenario-blocking-plan">0</strong></article>
+                <article><span>Блокирующих без плана</span><strong id="tile-scenario-blocking-no-plan">0</strong></article>
                 <article><span>Неоднозначно</span><strong id="tile-scenario-ambiguous">0</strong></article>
                 <article><span>Клиент не в справочнике · не блокирует</span><strong id="tile-scenario-client-warning">0</strong></article>
                 <article><span>Есть point_id</span><strong id="tile-scenario-point">0</strong></article>
@@ -782,7 +785,9 @@
               <div class="table-toolbar">
                 <span id="tile-scenario-visible">Показано: 0</span>
                 <select id="tile-scenario-filter">
-                  <option value="problems" selected>Только блокирующие</option>
+                  <option value="problems-plan" selected>Блокирующие с планом</option>
+                  <option value="problems">Все блокирующие</option>
+                  <option value="problems-no-plan">Блокирующие без плана</option>
                   <option value="loadable">Можно загрузить</option>
                   <option value="no-point">Без point_id · не блокирует</option>
                   <option value="direction">Другое направление</option>
@@ -794,7 +799,7 @@
                   <option value="all">Все ТРТ</option>
                 </select>
               </div>
-              <div class="table-wrap sales-import-table-wrap"><table class="sales-import-table"><thead><tr><th>Строка</th><th>Зона</th><th>Регион / группа города</th><th>Клиент</th><th>ТРТ / город</th><th>Вид</th><th>Формат</th><th>Статус</th><th>TRT Master</th><th>master_id</th><th>point_id</th></tr></thead><tbody id="tile-scenario-table-body"></tbody></table></div>
+              <div class="table-wrap sales-import-table-wrap"><table class="sales-import-table"><thead><tr><th>Строка</th><th>Зона</th><th>Регион / группа города</th><th>Клиент</th><th>ТРТ / город</th><th>Вид</th><th>Формат</th><th>Статус</th><th>План года</th><th>Месяцы с планом</th><th>TRT Master</th><th>master_id</th><th>point_id</th></tr></thead><tbody id="tile-scenario-table-body"></tbody></table></div>
               <div class="sales-import-actions"><button id="tile-scenario-reset" class="secondary-button" type="button">Выбрать другой файл</button><button id="tile-scenario-commit" class="primary-button" type="button" disabled>Сохранить сценарку</button></div>
             </section>
           </section>
@@ -1500,6 +1505,6 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-  <script src="app.js?v=8.44"></script>
+  <script src="app.js?v=8.45"></script>
 </body>
 </html>

@@ -1,6 +1,6 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.44";
+const VOG_WEB_VERSION = "8.45";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
@@ -5706,7 +5706,9 @@ async function readTileScenarioFile(file) {
       const item = {
         rowNumber: row.rowNumber, region: context.region, cityGroup: context.cityGroup, client: context.client,
         trtName: value, city: tileScenarioText(row.B), entityKind: tileScenarioText(row.C),
-        trtFormat: tileScenarioText(row.D), trtStatus: tileScenarioText(row.E), sourceFactTotals: Array(12).fill(null),
+        trtFormat: tileScenarioText(row.D), trtStatus: tileScenarioText(row.E),
+        sourceFactTotals: Array(12).fill(null), planMonthlyTotals: Array(12).fill(0),
+        annualPlan: 0, planMonths: [],
       };
       trtRows.push(item); trtByRow.set(row.rowNumber, item); return;
     }
@@ -5725,16 +5727,28 @@ async function readTileScenarioFile(file) {
         return raw;
       });
       const trt = trtByRow.get(context.trtRowNumber);
-      if (trt) sourceFact.forEach((amount, index) => {
-        if (amount === null) return;
-        trt.sourceFactTotals[index] = Number(trt.sourceFactTotals[index] || 0) + amount;
-      });
+      if (trt) {
+        plan.forEach((amount, index) => {
+          if (amount === null) return;
+          trt.planMonthlyTotals[index] = Number(trt.planMonthlyTotals[index] || 0) + Number(amount || 0);
+        });
+        sourceFact.forEach((amount, index) => {
+          if (amount === null) return;
+          trt.sourceFactTotals[index] = Number(trt.sourceFactTotals[index] || 0) + amount;
+        });
+      }
       groupRows.push({
         rowNumber: row.rowNumber, trtRowNumber: context.trtRowNumber, groupName: value,
         plan: plan.some((item) => item !== null) ? plan : [],
         sourceFact: sourceFact.some((item) => item !== null) ? sourceFact : [],
       });
     }
+  });
+
+  trtRows.forEach((trt) => {
+    const monthly = Array.isArray(trt.planMonthlyTotals) ? trt.planMonthlyTotals : Array(12).fill(0);
+    trt.annualPlan = monthly.reduce((sum, value) => sum + Number(value || 0), 0);
+    trt.planMonths = monthly.map((value, index) => Number(value || 0) !== 0 ? index + 1 : null).filter(Boolean);
   });
 
   if (!trtRows.length) throw new Error("В сценарке не найдены строки ТРТ.");
@@ -5777,6 +5791,15 @@ function tileScenarioResultIsAmbiguous(row) {
   return ["ambiguous", "point_conflict"].includes(row.masterStatus);
 }
 
+function tileScenarioResultHasPlan(row) {
+  return Math.abs(Number(row?.annualPlan || 0)) > 1e-9;
+}
+
+function tileScenarioPlanMonthsLabel(row) {
+  const labels = ["Янв", "Фев", "Мар", "Апр", "Май", "Июн", "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек"];
+  return (row?.planMonths || []).map((month) => labels[Number(month) - 1] || String(month)).join(", ") || "—";
+}
+
 function renderTileScenario() {
   const rows = tileScenarioState.trtRows;
   const summary = tileScenarioState.summary || {};
@@ -5788,6 +5811,9 @@ function renderTileScenario() {
   set("tile-scenario-ambiguous", summary.ambiguousCount); set("tile-scenario-client-warning", summary.clientWarningCount);
   set("tile-scenario-point", summary.pointLinkedCount); set("tile-scenario-unique-ng", summary.uniqueGroupCount); set("tile-scenario-plan-values", summary.planValueCount);
   set("tile-scenario-fact-values", summary.sourceFactValueCount);
+  set("tile-scenario-blocking", summary.blockingCount);
+  set("tile-scenario-blocking-plan", summary.blockingWithPlanCount);
+  set("tile-scenario-blocking-no-plan", summary.blockingWithoutPlanCount);
   const metricsNote = $("tile-scenario-metrics-note");
   if (metricsNote) {
     const emptyMetrics = !Number(summary.planValueCount || 0) && !Number(summary.sourceFactValueCount || 0);
@@ -5801,6 +5827,8 @@ function renderTileScenario() {
   const filter = $("tile-scenario-filter")?.value || "problems";
   let visible = rows.filter((row) => {
     if (filter === "problems") return tileScenarioResultIsProblem(row);
+    if (filter === "problems-plan") return tileScenarioResultIsProblem(row) && tileScenarioResultHasPlan(row);
+    if (filter === "problems-no-plan") return tileScenarioResultIsProblem(row) && !tileScenarioResultHasPlan(row);
     if (filter === "loadable") return tileScenarioResultIsLoadable(row);
     if (filter === "no-point") return row.masterStatus === "master_only";
     if (filter === "missing") return row.masterStatus === "missing";
@@ -5816,7 +5844,9 @@ function renderTileScenario() {
   if ($("tile-scenario-table-body")) $("tile-scenario-table-body").innerHTML = visible.map((row) => {
     const masterLabel = row.masterStatus === "matched" ? "Готово" : row.masterStatus === "master_only" ? "Master найден · без point_id" : row.masterStatus === "direction_mismatch" ? "Не Плитка" : row.masterStatus === "missing" ? "Не найдено" : row.masterStatus === "point_conflict" ? "Несколько point_id" : row.masterStatus === "ambiguous" ? "Неоднозначно" : "Проверить";
     const clientWarning = !row.clientExists && tileScenarioResultIsLoadable(row) ? '<br><small>Клиент не найден в справочнике — план по master_id загрузке не мешает</small>' : '';
-    return `<tr><td>${row.rowNumber}</td><td>${row.territoryScope === "vog" ? "ВОГ" : "Другие"}</td><td><strong>${escapeHtml(row.region)}</strong><br><small>${escapeHtml(row.cityGroup || "")}</small></td><td>${escapeHtml(row.client || "—")}</td><td><strong>${escapeHtml(row.trtName || "—")}</strong><br><small>${escapeHtml(row.city || "")}</small></td><td>${escapeHtml(row.entityKind || "—")}</td><td>${escapeHtml(row.trtFormat || "—")}</td><td>${escapeHtml(row.trtStatus || "—")}</td><td><strong>${escapeHtml(masterLabel)}</strong><br><small>${escapeHtml(row.matchMethod || "")}</small>${clientWarning}</td><td>${escapeHtml(row.masterId || "—")}</td><td>${escapeHtml(row.pointId || "—")}</td></tr>`;
+    const annualPlan = Math.round(Number(row.annualPlan || 0)).toLocaleString("ru-RU");
+    const planMonths = tileScenarioPlanMonthsLabel(row);
+    return `<tr><td>${row.rowNumber}</td><td>${row.territoryScope === "vog" ? "ВОГ" : "Другие"}</td><td><strong>${escapeHtml(row.region)}</strong><br><small>${escapeHtml(row.cityGroup || "")}</small></td><td>${escapeHtml(row.client || "—")}</td><td><strong>${escapeHtml(row.trtName || "—")}</strong><br><small>${escapeHtml(row.city || "")}</small></td><td>${escapeHtml(row.entityKind || "—")}</td><td>${escapeHtml(row.trtFormat || "—")}</td><td>${escapeHtml(row.trtStatus || "—")}</td><td><strong>${annualPlan}</strong></td><td><small>${escapeHtml(planMonths)}</small></td><td><strong>${escapeHtml(masterLabel)}</strong><br><small>${escapeHtml(row.matchMethod || "")}</small>${clientWarning}</td><td>${escapeHtml(row.masterId || "—")}</td><td>${escapeHtml(row.pointId || "—")}</td></tr>`;
   }).join("");
   if ($("tile-scenario-result")) $("tile-scenario-result").hidden = false;
   if ($("tile-scenario-commit")) $("tile-scenario-commit").disabled = !isSystemAdmin() || !tileScenarioState.previewReady;
@@ -5873,6 +5903,8 @@ async function previewTileScenario() {
     summary.missingClientCount = new Set(tileScenarioState.trtRows.filter((row) => !row.clientExists && row.client).map((row) => normalizeText(row.client))).size;
     summary.clientWarningCount = tileScenarioState.trtRows.filter((row) => !row.clientExists && tileScenarioResultIsLoadable(row)).length;
     summary.blockingCount = tileScenarioState.trtRows.filter(tileScenarioResultIsProblem).length;
+    summary.blockingWithPlanCount = tileScenarioState.trtRows.filter((row) => tileScenarioResultIsProblem(row) && tileScenarioResultHasPlan(row)).length;
+    summary.blockingWithoutPlanCount = Math.max(0, Number(summary.blockingCount || 0) - Number(summary.blockingWithPlanCount || 0));
     tileScenarioState.previewReady = true;
     progress.hidden = true; renderTileScenario();
   } catch (exc) {
