@@ -1,6 +1,6 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.39";
+const VOG_WEB_VERSION = "8.41";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
@@ -2686,6 +2686,7 @@ async function loadFdiyCardSeries(point, force = false) {
         renderTrtFdiyShare(point);
         updateTrtFdiySalesControl(point);
         renderTrtCardSalesChart(point);
+        renderTrtAverageSales(point);
       }
       return point.fdiySales;
     } catch (error) {
@@ -2737,7 +2738,7 @@ function trtFdiyLatestShare(point) {
   const vogByYear = point?.fdiySales?.vog || {};
   const years = [...new Set([...Object.keys(totalByYear), ...Object.keys(vogByYear)])]
     .map(Number).filter(Number.isFinite).sort((a, b) => a - b);
-  let latest = null;
+  const validMonths = [];
   years.forEach((year) => {
     const total = (Array.isArray(totalByYear[String(year)]) ? totalByYear[String(year)] : []).concat(Array(12).fill(null)).slice(0, 12);
     const vog = (Array.isArray(vogByYear[String(year)]) ? vogByYear[String(year)] : []).concat(Array(12).fill(null)).slice(0, 12);
@@ -2745,13 +2746,29 @@ function trtFdiyLatestShare(point) {
       const totalRaw = total[monthIndex], vogRaw = vog[monthIndex];
       if (totalRaw === null || totalRaw === undefined || totalRaw === "" || vogRaw === null || vogRaw === undefined || vogRaw === "") continue;
       const totalValue = Number(totalRaw), vogValue = Number(vogRaw);
-      // A pie chart is meaningful only for a normal positive sales month. Negative
-      // corrections remain visible in the bar chart but are not converted to a share.
+      // Negative corrections remain visible in the sales chart, but are not used
+      // in the rolling share. The share uses the latest three normal months where
+      // both total sell-out and VOG sell-out are present.
       if (!Number.isFinite(totalValue) || !Number.isFinite(vogValue) || totalValue <= 0 || vogValue < 0 || vogValue > totalValue) continue;
-      latest = { year, month: monthIndex + 1, total: totalValue, vog: vogValue, other: totalValue - vogValue, share: totalValue ? (vogValue / totalValue) * 100 : null };
+      validMonths.push({ year, month: monthIndex + 1, total: totalValue, vog: vogValue });
     }
   });
-  return latest;
+  const windowMonths = validMonths.slice(-3);
+  if (windowMonths.length < 3) return null;
+  const totalValue = windowMonths.reduce((sum, item) => sum + item.total, 0);
+  const vogValue = windowMonths.reduce((sum, item) => sum + item.vog, 0);
+  const first = windowMonths[0], last = windowMonths[windowMonths.length - 1];
+  return {
+    total: totalValue,
+    vog: vogValue,
+    other: totalValue - vogValue,
+    share: totalValue ? (vogValue / totalValue) * 100 : null,
+    months: windowMonths,
+    firstYear: first.year,
+    firstMonth: first.month,
+    lastYear: last.year,
+    lastMonth: last.month,
+  };
 }
 
 function renderTrtFdiyShare(point) {
@@ -2773,16 +2790,18 @@ function renderTrtFdiyShare(point) {
   const share = trtFdiyLatestShare(point);
   if (!share) {
     value.textContent = "—";
-    period.textContent = "Нет периода для корректного расчёта доли";
-    detail.textContent = "Доля рассчитывается для последнего месяца, где есть и общие продажи, и продажи ВОГ.";
+    period.textContent = "за 3 месяца";
+    detail.textContent = "Недостаточно трёх месяцев, где одновременно есть общие продажи и продажи ВОГ.";
     return;
   }
 
   const labels = analyticsMonthLabels();
   const unit = trtUnit(point);
   value.textContent = `${share.share.toFixed(1).replace(".", ",")}%`;
-  period.textContent = `${labels[share.month - 1]} ${share.year}`;
-  detail.textContent = `ВОГ ${Math.round(share.vog).toLocaleString("ru-RU")} из ${Math.round(share.total).toLocaleString("ru-RU")} ${unit}`;
+  period.textContent = "за 3 месяца";
+  const firstLabel = `${labels[share.firstMonth - 1]} ${share.firstYear}`;
+  const lastLabel = `${labels[share.lastMonth - 1]} ${share.lastYear}`;
+  detail.textContent = `ВОГ ${Math.round(share.vog).toLocaleString("ru-RU")} из ${Math.round(share.total).toLocaleString("ru-RU")} ${unit} · ${firstLabel}–${lastLabel}`;
 
   trtCardFdiyShareChart = new Chart(canvas, {
     type: "doughnut",
@@ -2864,6 +2883,68 @@ function renderTrtCardSalesChart(point) {
   });
 }
 
+
+function trtFdiyAverageVog(point) {
+  if (!isFdiyTrtPoint(point)) return null;
+  const source = point?.fdiySales?.vog || {};
+  const values = [];
+  Object.keys(source)
+    .map(Number)
+    .filter(Number.isFinite)
+    .sort((a, b) => a - b)
+    .forEach((year) => {
+      const months = Array.isArray(source[String(year)]) ? source[String(year)] : [];
+      months.slice(0, 12).forEach((raw) => {
+        // Blank means the month is outside the loaded history and must not dilute the average.
+        // A real zero is a valid month and therefore remains in the denominator.
+        if (raw === null || raw === undefined || raw === "") return;
+        const value = Number(raw);
+        if (Number.isFinite(value)) values.push(value);
+      });
+    });
+  if (!values.length) return null;
+  return {
+    value: values.reduce((sum, value) => sum + value, 0) / values.length,
+    months: values.length,
+  };
+}
+
+function renderTrtAverageSales(point) {
+  const badge = $("trt-card-size-badge");
+  const label = $("trt-card-average-label");
+  const period = $("trt-card-average-period");
+  if (!badge) return;
+
+  if (isFdiyTrtPoint(point)) {
+    if (label) label.textContent = "Среднемесячные продажи ВОГ";
+    const average = trtFdiyAverageVog(point);
+    if (average) {
+      badge.textContent = `${Math.round(average.value).toLocaleString("ru-RU")} ${trtUnit(point)}`;
+      badge.style.background = trtColor(average.value);
+      if (period) {
+        period.hidden = false;
+        period.textContent = `за ${average.months} мес.`;
+      }
+    } else {
+      badge.textContent = "—";
+      badge.style.background = trtColor(null);
+      if (period) {
+        period.hidden = false;
+        period.textContent = "нет данных ВОГ";
+      }
+    }
+    return;
+  }
+
+  if (label) label.textContent = "Среднемесячные продажи";
+  if (period) {
+    period.hidden = true;
+    period.textContent = "";
+  }
+  badge.textContent = formatTrtSize(point);
+  badge.style.background = trtColor(point.size);
+}
+
 function openTrtCard(pointId, focusMap = true) {
   const point = state.trtPoints.find((item) => String(item.id) === String(pointId));
   if (!point) return;
@@ -2894,9 +2975,7 @@ function openTrtCard(pointId, focusMap = true) {
   renderTrtFdiyShare(point);
   updateTrtFdiySalesControl(point);
 
-  const badge = $("trt-card-size-badge");
-  badge.textContent = formatTrtSize(point);
-  badge.style.background = trtColor(point.size);
+  renderTrtAverageSales(point);
 
   window.requestAnimationFrame(() => renderTrtCardSalesChart(point));
   if (isFdiyTrtPoint(point)) {

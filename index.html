@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#384e86">
-  <meta name="vog-web-version" content="8.39">
+  <meta name="vog-web-version" content="8.41">
   <title>ТК ВОГ Офис</title>
   <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=20260810-gdebenz-v8-0">
   <link rel="apple-touch-icon" sizes="192x192" href="icon-192.png?v=20260810-gdebenz-v8-0">
@@ -38,9 +38,12 @@
     @media(max-width:850px){.trt-add-point-body{grid-template-columns:1fr}.trt-add-point-control{left:14px;top:72px}#trt-add-point-map{height:310px;min-height:280px}}
 
     .trt-card-fdiy-share{margin:14px 0 4px;padding:14px 15px;border:1px solid #e2e7f0;border-radius:16px;background:linear-gradient(135deg,#f7f9fd,#fff)}
-    .trt-card-fdiy-share[hidden]{display:none!important}.trt-card-fdiy-share-grid{display:grid;grid-template-columns:minmax(0,1fr) 104px;align-items:center;gap:12px}.trt-card-fdiy-share-copy{display:grid;gap:4px}.trt-card-fdiy-share-copy .legacy-label{margin:0}.trt-card-fdiy-share-value{font-size:30px;line-height:1;font-weight:800;color:#273b70}.trt-card-fdiy-share-period{font-size:12px;font-weight:700;color:#56647f}.trt-card-fdiy-share-detail{font-size:11px;line-height:1.35;color:#7a869d}.trt-card-fdiy-share-chart-wrap{height:92px;min-width:92px}
+    .trt-card-fdiy-share[hidden]{display:none!important}.trt-card-fdiy-share-grid{display:grid;grid-template-columns:minmax(0,1fr) 104px;align-items:center;gap:12px}.trt-card-fdiy-share-copy{display:grid;gap:4px}.trt-card-fdiy-share-copy .legacy-label{margin:0}.trt-card-fdiy-share-value{font-size:30px;line-height:1;font-weight:800;color:#273b70}.trt-card-fdiy-share-period{font-size:11px;font-weight:500;color:#8a94a8}.trt-card-fdiy-share-detail{font-size:11px;line-height:1.35;color:#7a869d}.trt-card-fdiy-share-chart-wrap{height:92px;min-width:92px}
     .trt-card-fdiy-sales-control{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:9px 0 4px}.trt-card-fdiy-sales-control[hidden]{display:none!important}.trt-card-fdiy-sales-shown{font-size:11px;color:#69768f}.trt-card-fdiy-sales-toggle{border:1px solid #cfd8e7;border-radius:10px;background:#fff;color:#334b83;font:700 12px/1 inherit;padding:8px 11px;cursor:pointer;white-space:nowrap}.trt-card-fdiy-sales-toggle:hover{background:#f3f6fb}
-  </style>
+  
+    .trt-card-average-value-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+    .trt-card-average-period { color:#94a3b8; font-size:11px; line-height:1.2; font-weight:600; }
+</style>
 </head>
 <body>
   <div id="toast" class="toast" hidden></div>
@@ -1008,8 +1011,11 @@
                     </div>
 
                     <div class="legacy-field trt-card-average-sales">
-                      <div class="legacy-label">Среднемесячные продажи</div>
-                      <div><span id="trt-card-size-badge" class="legacy-size-badge">—</span></div>
+                      <div id="trt-card-average-label" class="legacy-label">Среднемесячные продажи</div>
+                      <div class="trt-card-average-value-row">
+                        <span id="trt-card-size-badge" class="legacy-size-badge">—</span>
+                        <span id="trt-card-average-period" class="trt-card-average-period" hidden></span>
+                      </div>
                     </div>
                   </section>
                 </div>
@@ -1438,6 +1444,6 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-  <script src="app.js?v=8.39"></script>
+  <script src="app.js?v=8.40"></script>
 </body>
 </html>
