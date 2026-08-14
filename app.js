@@ -1,6 +1,6 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.37";
+const VOG_WEB_VERSION = "8.38";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
@@ -146,7 +146,7 @@ function resetProtectedState() {
   state.marketAnalysis = { loaded: false, catalog: null, plans: [], diy: [], staticPlanSources: [], staticPlanRows: null, staticPlanStats: null, staticPlanCacheKey: "" };
   state.trtMasterAudit = { loaded: false, loading: false, rows: [], summary: {}, error: "", currentWebMatched: 0, currentWebTotal: 0 };
   fdiyDirectoryState = { loaded: false, loading: false, clients: [], networks: [], summary: {} };
-  fdiyImportState = { rows: [], preview: null, fileName: "", mode: "", sourceSheet: "" };
+  fdiyImportState = { rows: [], preview: null, fileName: "", mode: "", sourceSheet: "", historical: false, detectedPeriodCount: 0 };
 }
 
 function isGeneralDirector() {
@@ -5537,7 +5537,7 @@ async function commitTileScenario() {
 // FDIY v1 — федеральные DIY-сети: справочник источника продаж и загрузка.
 // ---------------------------------------------------------------------------
 let fdiyDirectoryState = { loaded: false, loading: false, clients: [], networks: [], summary: {} };
-let fdiyImportState = { rows: [], preview: null, fileName: "", mode: "", sourceSheet: "" };
+let fdiyImportState = { rows: [], preview: null, fileName: "", mode: "", sourceSheet: "", historical: false, detectedPeriodCount: 0 };
 
 function fdiyNorm(value) {
   return String(value ?? "").trim().toLowerCase().replace(/ё/g, "е")
@@ -5686,6 +5686,15 @@ function fdiySelectedNetworkId() {
   return "";
 }
 
+function fdiyMetricKind(value) {
+  const metric = fdiyNorm(value);
+  if (!metric) return "";
+  const tokens = metric.split(" ").filter(Boolean);
+  if (tokens.includes("вог") || tokens.includes("vog")) return "vog";
+  if (metric === "все" || metric === "всего" || metric.startsWith("общие продажи") || metric.startsWith("все продажи") || metric.startsWith("всего продаж")) return "total";
+  return "";
+}
+
 function fdiyCountWidePeriods(matrix) {
   for (let r = 1; r < Math.min(matrix.length, 8); r += 1) {
     const headers = matrix[r] || [];
@@ -5696,8 +5705,7 @@ function fdiyCountWidePeriods(matrix) {
     const monthRow = matrix[r - 1] || [];
     let periods = 0;
     for (let c = Math.max(direction, store, address) + 1; c < headers.length; c += 1) {
-      const metric = fdiyNorm(headers[c]);
-      if ((metric === "все" || metric.startsWith("общие продажи")) && fdiyMonthNumber(monthRow[c])) periods += 1;
+      if (fdiyMetricKind(headers[c]) === "total" && fdiyMonthNumber(monthRow[c])) periods += 1;
     }
     return periods;
   }
@@ -5765,14 +5773,17 @@ function fdiyParseWideMatrix(matrix) {
       if (month) { if (lastMonth && month < lastMonth) currentYear += 1; currentMonth = month; lastMonth = month; }
     }
     if (!currentMonth) continue;
-    const metric = fdiyNorm(metricRow[c]);
-    if (!["все", "общие продажи", "общие продажи нат ед", "вог", "продажи вог", "продажи вог нат ед"].includes(metric)) continue;
+    const metricKind = fdiyMetricKind(metricRow[c]);
+    if (!metricKind) continue;
     const key = `${currentYear}-${currentMonth}`;
     if (!periods.has(key)) periods.set(key, { year: currentYear, month: currentMonth, totalCol: -1, vogCol: -1 });
     const spec = periods.get(key);
-    if (metric === "все" || metric.startsWith("общие продажи")) spec.totalCol = c; else spec.vogCol = c;
+    if (metricKind === "total") spec.totalCol = c; else spec.vogCol = c;
   }
   if (!periods.size) throw new Error("В широком FDIY файле не найдены месячные пары Все / ВОГ.");
+  const vogPeriods = [...periods.values()].filter((item) => item.vogCol >= 0).length;
+  const totalPeriods = [...periods.values()].filter((item) => item.totalCol >= 0).length;
+  if (!vogPeriods && totalPeriods) throw new Error("В историческом FDIY-файле найдены общие продажи, но не найдены столбцы ВОГ. Загрузка остановлена, чтобы не потерять продажи ВОГ.");
   const rows = [];
   for (let r = headerIndex + 1; r < matrix.length; r += 1) {
     const src = matrix[r] || []; const storeName = String(src[columns.store] ?? "").trim(); const direction = String(src[columns.direction] ?? "").trim();
@@ -5786,7 +5797,7 @@ function fdiyParseWideMatrix(matrix) {
       rows.push({ ...base, year: spec.year, month: spec.month, totalQuantity: total, vogQuantity: vog });
     }
   }
-  return { mode: "wide", rows, detectedPeriodCount: periods.size };
+  return { mode: "wide", rows, detectedPeriodCount: periods.size, detectedVogPeriodCount: vogPeriods, detectedTotalPeriodCount: totalPeriods };
 }
 
 function fdiyLooksWideMatrix(matrix) {
@@ -5800,8 +5811,7 @@ function fdiyLooksWideMatrix(matrix) {
     let monthCells = 0, metricCells = 0;
     for (let c = Math.max(direction, store, address) + 1; c < headers.length; c += 1) {
       if (fdiyMonthNumber(monthRow[c])) monthCells += 1;
-      const metric = fdiyNorm(headers[c]);
-      if (["все", "вог", "общие продажи", "общие продажи нат ед", "продажи вог", "продажи вог нат ед"].includes(metric)) metricCells += 1;
+      if (fdiyMetricKind(headers[c])) metricCells += 1;
     }
     // Исторический широкий файл имеет отдельную строку месяцев и повторяющиеся пары Все / ВОГ.
     // Не даём первой паре ошибочно превратить такой файл в месячный формат.
@@ -5813,20 +5823,54 @@ function fdiyLooksWideMatrix(matrix) {
 async function readFdiyFile(file) {
   if (!window.XLSX) throw new Error("Модуль чтения Excel не загрузился.");
   const workbook = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: false });
-  const sheetName = workbook.SheetNames[0]; if (!sheetName) throw new Error("В файле нет листов.");
-  const matrix = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: "", raw: true });
-  const detectedWidePeriods = fdiyCountWidePeriods(matrix);
-  const looksWide = detectedWidePeriods >= 2 || fdiyLooksWideMatrix(matrix);
-  const parsed = looksWide ? fdiyParseWideMatrix(matrix) : fdiyParseLongMatrix(matrix);
-  if (!parsed) throw new Error("Не распознан формат FDIY файла.");
-  if (!parsed.rows.length) throw new Error("В FDIY файле нет значений продаж.");
-  // Защита от тихой ошибки: исторический файл с несколькими месяцами нельзя трактовать как один месячный файл.
-  if (detectedWidePeriods >= 2 && parsed.mode !== "wide") throw new Error(`Файл содержит ${detectedWidePeriods} месяцев, но был распознан как месячный. Загрузка остановлена.`);
-  return { ...parsed, detectedPeriodCount: parsed.detectedPeriodCount || detectedWidePeriods || 1, sheetName };
+  if (!workbook.SheetNames?.length) throw new Error("В файле нет листов.");
+
+  const candidates = [];
+  const errors = [];
+  for (const sheetName of workbook.SheetNames) {
+    const sheet = workbook.Sheets[sheetName];
+    if (!sheet) continue;
+    const matrix = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "", raw: true });
+    if (!matrix.length) continue;
+    try {
+      const detectedWidePeriods = fdiyCountWidePeriods(matrix);
+      const looksWide = detectedWidePeriods >= 2 || fdiyLooksWideMatrix(matrix);
+      const parsed = looksWide ? fdiyParseWideMatrix(matrix) : fdiyParseLongMatrix(matrix);
+      if (!parsed?.rows?.length) continue;
+      if (detectedWidePeriods >= 2 && parsed.mode !== "wide") {
+        throw new Error(`Лист содержит ${detectedWidePeriods} месяцев, но был распознан как месячный.`);
+      }
+      const totalValueCount = parsed.rows.filter((row) => row.totalQuantity !== null && row.totalQuantity !== undefined).length;
+      const vogValueCount = parsed.rows.filter((row) => row.vogQuantity !== null && row.vogQuantity !== undefined).length;
+      const periodCount = new Set(parsed.rows.map((row) => `${row.year}|${row.month}`)).size;
+      const score = (looksWide ? 1000000 : 0) + (periodCount * 10000) + parsed.rows.length + (vogValueCount ? 500000 : 0);
+      candidates.push({
+        ...parsed,
+        detectedPeriodCount: parsed.detectedPeriodCount || detectedWidePeriods || periodCount || 1,
+        totalValueCount,
+        vogValueCount,
+        sheetName,
+        score,
+      });
+    } catch (exc) {
+      errors.push(`${sheetName}: ${exc?.message || String(exc)}`);
+    }
+  }
+
+  if (!candidates.length) {
+    const details = errors.length ? ` ${errors.slice(0, 3).join(" ")}` : "";
+    throw new Error(`Не распознан формат FDIY файла.${details}`);
+  }
+  candidates.sort((a, b) => b.score - a.score);
+  const best = candidates[0];
+  if (best.mode === "wide" && Number(best.detectedVogPeriodCount || 0) === 0 && best.totalValueCount > 0) {
+    throw new Error("В историческом FDIY-файле не распознаны столбцы ВОГ. Загрузка остановлена.");
+  }
+  return best;
 }
 
 function resetFdiyImport(clearFile = true) {
-  fdiyImportState = { rows: [], preview: null, fileName: "", mode: "", sourceSheet: "" };
+  fdiyImportState = { rows: [], preview: null, fileName: "", mode: "", sourceSheet: "", historical: false, detectedPeriodCount: 0 };
   if ($("fdiy-result")) $("fdiy-result").hidden = true;
   if ($("fdiy-error")) $("fdiy-error").hidden = true;
   if ($("fdiy-progress")) $("fdiy-progress").hidden = true;
@@ -5861,7 +5905,7 @@ function renderFdiyPreview(payload) {
     conflict.hidden = !conflicts.length;
     if (conflicts.length) {
       const prefix = `Уже загружены: ${conflicts.slice(0, 12).map((x) => `${x.networkName || x.networkId} · ${x.month}.${x.year} · ${x.direction}`).join("; ")}${conflicts.length > 12 ? ` и ещё ${conflicts.length - 12}` : ""}.`;
-      conflict.textContent = fdiyImportState.mode === "wide"
+      conflict.textContent = fdiyImportState.historical
         ? `${prefix} Историческая загрузка продолжится с отсутствующих периодов; уже загруженные будут пропущены.`
         : `${prefix} Для месячной загрузки перед заменой будет запрошено подтверждение.`;
     } else conflict.textContent = "";
@@ -5878,7 +5922,7 @@ function renderFdiyPreview(payload) {
     commitButton.disabled = Number(s.matchedValues || 0) === 0 || Number(s.invalidValues || 0) > 0;
     const totalPeriods = Number(s.periodCount || 0);
     const existingCount = conflicts.length;
-    commitButton.textContent = fdiyImportState.mode === "wide" && existingCount > 0 && existingCount < totalPeriods
+    commitButton.textContent = fdiyImportState.historical && existingCount > 0 && existingCount < totalPeriods
       ? `Продолжить загрузку (${Math.max(0, totalPeriods - existingCount)})`
       : "Загрузить FDIY продажи";
   }
@@ -5891,12 +5935,15 @@ async function previewFdiyImport() {
   try {
     if (!fdiyDirectoryState.loaded) await loadFdiyDirectory();
     const parsed = await readFdiyFile(file);
-    fdiyImportState = { rows: parsed.rows, preview: null, fileName: file.name, mode: parsed.mode, sourceSheet: parsed.sheetName };
+    fdiyImportState = { rows: parsed.rows, preview: null, fileName: file.name, mode: parsed.mode, sourceSheet: parsed.sheetName, historical: Number(parsed.detectedPeriodCount || 0) > 1, detectedPeriodCount: Number(parsed.detectedPeriodCount || 0) };
     const formatNote = $("fdiy-format-note");
     if (formatNote) {
       const networkId = fdiySelectedNetworkId();
       const network = (fdiyDirectoryState.networks || []).find((item) => String(item.networkId || "") === String(networkId || ""));
-      formatNote.textContent = `Распознан формат: ${parsed.mode === "wide" ? "исторический широкий" : "месячный"} · месяцев: ${parsed.detectedPeriodCount || 1}${network ? ` · сеть: ${network.networkName || network.clientName}` : ""} · Web ${VOG_WEB_VERSION}`;
+      const formatLabel = Number(parsed.detectedPeriodCount || 0) > 1
+        ? (parsed.mode === "wide" ? "исторический широкий" : "исторический длинный")
+        : "месячный";
+      formatNote.textContent = `Распознан формат: ${formatLabel} · лист: ${parsed.sheetName || "—"} · месяцев: ${parsed.detectedPeriodCount || 1} · общих значений: ${Number(parsed.totalValueCount || 0).toLocaleString("ru-RU")} · ВОГ значений: ${Number(parsed.vogValueCount || 0).toLocaleString("ru-RU")}${network ? ` · сеть: ${network.networkName || network.clientName}` : ""} · Web ${VOG_WEB_VERSION}`;
       formatNote.hidden = false;
     }
     const payload = await api("/admin/sales-import", { method: "POST", timeout: 90000, body: JSON.stringify({ scope: "fdiy", operation: "preview", rows: parsed.rows }) });
@@ -5935,8 +5982,8 @@ async function fdiyCommitBatchWithRetry(entriesChunk, basePayload, progress, bat
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     try {
       if (progress) progress.textContent = attempt === 1
-        ? `Быстрая загрузка FDIY: пакет ${batchPosition} / ${batchTotal} · периодов ${periodsDone} / ${periodsTotal}…`
-        : `Быстрая загрузка FDIY: пакет ${batchPosition} / ${batchTotal} · повтор…`;
+        ? `Быстрая загрузка/исправление FDIY: пакет ${batchPosition} / ${batchTotal} · периодов ${periodsDone} / ${periodsTotal}…`
+        : `Быстрая загрузка/исправление FDIY: пакет ${batchPosition} / ${batchTotal} · повтор…`;
       return await api("/admin/sales-import", {
         method: "POST", timeout: 90000,
         body: JSON.stringify({ ...basePayload, rows }),
@@ -5988,7 +6035,7 @@ async function commitFdiyImport() {
     groups.get(key).push(row);
   }
   const allEntries = [...groups.entries()];
-  const isHistorical = fdiyImportState.mode === "wide";
+  const isHistorical = fdiyImportState.historical || allEntries.length > 2;
   let replaceExisting = false;
   let entries = allEntries;
   let skippedAlready = 0;
@@ -6026,10 +6073,10 @@ async function commitFdiyImport() {
   const sessionId = `fdiy-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
   let stored = 0, uploadedPeriods = 0, skippedDuringRetry = 0;
   try {
-    if (isHistorical && !replaceExisting) {
-      // Historical data is compact enough to upload several periods per HTTP request.
-      // Six periods keeps each Cloud Function call comfortably bounded while reducing
-      // dozens of sequential Gateway round-trips to only a handful.
+    if (isHistorical) {
+      // Historical import and historical correction both use multi-period packets.
+      // This is critical for recovery/overwrite: replacing 38 periods must not fall back
+      // to 38 slow sequential Cloud Function calls.
       const chunkSize = 6;
       const chunks = [];
       for (let i = 0; i < entries.length; i += chunkSize) chunks.push(entries.slice(i, i + chunkSize));
@@ -6043,8 +6090,8 @@ async function commitFdiyImport() {
           scope: "fdiy",
           operation: "commit_batch_resumable",
           fileName: fdiyImportState.fileName,
-          replace: false,
-          skipExisting: true,
+          replace: replaceExisting,
+          skipExisting: !replaceExisting,
           requestId: `${sessionId}-b${String(i + 1).padStart(2, "0")}`,
         }, progress, stats, { position: i + 1, total: chunks.length });
       }
