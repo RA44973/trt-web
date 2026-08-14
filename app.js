@@ -1,6 +1,6 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.43";
+const VOG_WEB_VERSION = "8.44";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
@@ -5830,13 +5830,36 @@ async function previewTileScenario() {
   try {
     const parsed = await readTileScenarioFile(file);
     tileScenarioState = { fileName: file.name, sourceYear: Number($("tile-scenario-year")?.value || 2026), trtRows: parsed.trtRows, groupRows: parsed.groupRows, summary: parsed.summary, previewReady: false };
-    const chunks = tileScenarioChunk(tileScenarioState.trtRows, 300);
+    // Large scenario previews are intentionally sequential. Parallel requests forced
+    // several Cloud Function instances to cold-start at once and occasionally surfaced
+    // as a browser-level network/CORS failure. A single warm instance is both faster
+    // and materially more reliable for this ~5k TRT file.
+    const chunks = tileScenarioChunk(tileScenarioState.trtRows, 250);
     const matches = new Map(); let finished = 0;
-    await tileScenarioRunPool(chunks, 4, async (chunk) => {
-      const result = await api("/admin/sales-import", { method: "POST", timeout: 90000, body: JSON.stringify({ scope: "tile_scenario", operation: "preview", rows: chunk }) });
+    const previewChunk = async (chunk, chunkIndex) => {
+      let lastError = null;
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          progress.textContent = `Проверка TRT Master: ${finished}/${chunks.length}${attempt > 1 ? ` · повтор ${attempt}/3` : ""}…`;
+          return await api("/admin/sales-import", {
+            method: "POST",
+            timeout: 120000,
+            body: JSON.stringify({ scope: "tile_scenario", operation: "preview", rows: chunk }),
+          });
+        } catch (exc) {
+          lastError = exc;
+          if (attempt >= 3) break;
+          await new Promise((resolve) => window.setTimeout(resolve, 900 * attempt));
+        }
+      }
+      throw new Error(`Не удалось проверить пакет ${chunkIndex + 1}/${chunks.length}. ${lastError?.message || "Сервер временно недоступен."}`);
+    };
+    for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
+      const result = await previewChunk(chunks[chunkIndex], chunkIndex);
       (result.rows || []).forEach((row) => matches.set(Number(row.rowNumber), row));
-      finished += 1; progress.textContent = `Проверка TRT Master: ${finished}/${chunks.length}…`;
-    });
+      finished += 1;
+      progress.textContent = `Проверка TRT Master: ${finished}/${chunks.length}…`;
+    }
     tileScenarioState.trtRows = tileScenarioState.trtRows.map((row) => ({ ...row, ...(matches.get(row.rowNumber) || {}) }));
     const summary = tileScenarioState.summary;
     summary.vogTrtCount = tileScenarioState.trtRows.filter((row) => row.territoryScope === "vog").length;
