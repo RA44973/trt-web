@@ -1,6 +1,6 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.41";
+const VOG_WEB_VERSION = "8.42";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
@@ -429,7 +429,7 @@ function openTrtInspector() {
 
 function showPage(page, updateHash = true) {
   let nextPage = PAGES.has(page) ? page : "trt";
-  if (["employees", "sales-import", "trt-directory", "activity", "trt-master-audit"].includes(nextPage) && !isSystemAdmin()) nextPage = "trt";
+  if (["employees", "sales-import", "trt-directory", "activity", "trt-master-audit", "logistics", "region-analytics"].includes(nextPage) && !isSystemAdmin()) nextPage = "trt";
   state.currentPage = nextPage;
   if (nextPage !== "trt" && trtInspectorMode) closeMapInspector();
   mountTrtToolsInMainSidebar();
@@ -499,7 +499,7 @@ function showApp() {
   const trtMasterAuditPage = $("page-trt-master-audit");
   const gdAdmin = isSystemAdmin();
   if (settingsNavGroup) settingsNavGroup.hidden = !gdAdmin;
-  if (analyticsNavGroup) analyticsNavGroup.hidden = !["GD","KD","RRO"].includes(String(state.user?.role || "").toUpperCase()) && !gdAdmin;
+  if (analyticsNavGroup) analyticsNavGroup.hidden = !gdAdmin;
   if (employeesPage && !gdAdmin) employeesPage.hidden = true;
   if (salesImportPage && !gdAdmin) salesImportPage.hidden = true;
   if (trtDirectoryPage && !gdAdmin) trtDirectoryPage.hidden = true;
@@ -508,13 +508,16 @@ function showApp() {
 
   const trtAddPointControl = $("trt-add-point-control");
   if (trtAddPointControl) trtAddPointControl.hidden = !gdAdmin || trtMainView !== "map";
+  const trtAnalyticsButton = $("view-analytics-button");
+  if (trtAnalyticsButton) trtAnalyticsButton.hidden = !gdAdmin;
+  if (!gdAdmin && trtMainView === "analytics") trtMainView = "map";
 
   $("add-employee-button").hidden = !gdAdmin;
   $("add-employee-button").title = gdAdmin
     ? "Добавить сотрудника и создать ему учётную запись"
     : "Раздел доступен только администратору";
 
-  if (!gdAdmin && ["employees", "sales-import", "trt-directory", "activity", "trt-master-audit"].includes(state.currentPage)) state.currentPage = "trt";
+  if (!gdAdmin && ["employees", "sales-import", "trt-directory", "activity", "trt-master-audit", "logistics", "region-analytics"].includes(state.currentPage)) state.currentPage = "trt";
   showPage(state.currentPage, true);
 }
 
@@ -2836,6 +2839,136 @@ function updateTrtFdiySalesControl(point) {
   button.setAttribute("aria-pressed", showingTotal ? "true" : "false");
 }
 
+function isTileTrtPoint(point) {
+  return normalizeText(point?.direction).includes("плит");
+}
+
+function tilePlanArray(point) {
+  const values = point?._tilePlanCard?.plan;
+  return (Array.isArray(values) ? values : []).concat(Array(12).fill(null)).slice(0, 12);
+}
+
+function tilePlanDataset(point, compact = false) {
+  if (!isTileTrtPoint(point) || !point?._tilePlanCard?.available) return null;
+  if (isFdiyTrtPoint(point) && trtCardFdiySalesMode === "total") return null;
+  const plan = tilePlanArray(point);
+  if (!plan.some((value) => value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value)))) return null;
+  return {
+    type: "line",
+    label: isFdiyTrtPoint(point) ? `План ВОГ ${point._tilePlanCard.sourceYear || 2026}` : `План ${point._tilePlanCard.sourceYear || 2026}`,
+    data: plan,
+    borderColor: "#d97706",
+    backgroundColor: "rgba(217,119,6,.08)",
+    borderWidth: compact ? 2 : 3,
+    pointRadius: compact ? 2 : 3,
+    pointHoverRadius: 4,
+    tension: .25,
+    spanGaps: false,
+    order: 0,
+  };
+}
+
+async function loadTilePlanCard(point, force = false) {
+  if (!point || !isTileTrtPoint(point)) {
+    if ($("trt-card-tile-plan")) $("trt-card-tile-plan").hidden = true;
+    return null;
+  }
+  if (point._tilePlanLoading) return point._tilePlanLoading;
+  if (point._tilePlanLoaded && !force) return point._tilePlanCard || null;
+  const selectedId = String(point.id || "");
+  const block = $("trt-card-tile-plan");
+  if (block && state.trtSelectedId === selectedId) block.hidden = false;
+  point._tilePlanLoading = (async () => {
+    try {
+      const payload = await api(`/trt-map-data?view=tile_plan_card&point_id=${encodeURIComponent(selectedId)}`, { timeout: 90000 });
+      point._tilePlanCard = payload || { available: false, groups: [], plan: [] };
+      point._tilePlanLoaded = true;
+      if (state.trtSelectedId === selectedId) {
+        renderTrtTilePlan(point);
+        renderTrtCardSalesChart(point);
+      }
+      return point._tilePlanCard;
+    } catch (error) {
+      point._tilePlanLoaded = false;
+      if (state.trtSelectedId === selectedId && block) {
+        block.hidden = false;
+        $("trt-card-ng-list").innerHTML = `<div class="trt-card-ng-empty">План плитки временно недоступен: ${escapeHtml(error?.message || String(error))}</div>`;
+      }
+      return null;
+    } finally { point._tilePlanLoading = null; }
+  })();
+  return point._tilePlanLoading;
+}
+
+function tilePlanLatestMonth(card, point) {
+  let latest = -1;
+  const candidates = [card?.plan || [], card?.sourceFactTotal || [], card?.fact || []];
+  candidates.forEach((values) => (Array.isArray(values) ? values : []).forEach((value, index) => {
+    if (value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value))) latest = Math.max(latest, index);
+  }));
+  if (latest < 0) {
+    const year = String(card?.sourceYear || analyticsCurrentYear());
+    (Array.isArray(point?.sales?.[year]) ? point.sales[year] : []).forEach((value, index) => {
+      if (value !== null && value !== undefined && value !== "") latest = Math.max(latest, index);
+    });
+  }
+  return latest >= 0 ? latest : 0;
+}
+
+function renderTrtTilePlan(point) {
+  const block = $("trt-card-tile-plan");
+  if (!block) return;
+  if (!isTileTrtPoint(point)) { block.hidden = true; return; }
+  block.hidden = false;
+  const card = point?._tilePlanCard;
+  const list = $("trt-card-ng-list");
+  if (!card || !point._tilePlanLoaded) {
+    if (list) list.innerHTML = '<div class="trt-card-ng-empty">Загрузка плана и номенклатурных групп…</div>';
+    return;
+  }
+  if (!card.available) {
+    $("trt-card-tile-plan-period").textContent = "ТРТ пока не найдена в активной сценарке";
+    $("trt-card-tile-plan-value").textContent = "—"; $("trt-card-tile-fact-value").textContent = "—"; $("trt-card-tile-completion").textContent = "—";
+    if (list) list.innerHTML = '<div class="trt-card-ng-empty">Для этой ТРТ нет структуры НГ в активной сценарке.</div>';
+    return;
+  }
+  const select = $("trt-card-tile-month");
+  const monthNames = ["Январь","Февраль","Март","Апрель","Май","Июнь","Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"];
+  const previous = Number(select?.value);
+  if (select && !select.options.length) monthNames.forEach((name, index) => select.add(new Option(name, String(index))));
+  const latest = tilePlanLatestMonth(card, point);
+  const monthIndex = Number.isInteger(previous) && previous >= 0 && previous <= 11 ? previous : latest;
+  if (select) select.value = String(monthIndex);
+  const year = Number(card.sourceYear || 2026);
+  $("trt-card-tile-plan-period").textContent = `${year} · ${Array.isArray(card.groups) ? card.groups.length : 0} НГ`;
+  const plan = Number(card.plan?.[monthIndex]);
+  const fact = Number(card.fact?.[monthIndex]);
+  const hasPlan = card.plan?.[monthIndex] !== null && card.plan?.[monthIndex] !== undefined && Number.isFinite(plan);
+  const hasFact = card.fact?.[monthIndex] !== null && card.fact?.[monthIndex] !== undefined && Number.isFinite(fact);
+  $("trt-card-tile-plan-value").textContent = hasPlan ? `${Math.round(plan).toLocaleString("ru-RU")} м²` : "—";
+  $("trt-card-tile-fact-value").textContent = hasFact ? `${Math.round(fact).toLocaleString("ru-RU")} м²` : "—";
+  $("trt-card-tile-completion").textContent = hasPlan && plan > 0 && hasFact ? `${(fact / plan * 100).toFixed(1).replace(".", ",")}%` : "—";
+  const audit = $("trt-card-tile-audit");
+  const mismatch = (card.factMismatchMonths || []).includes(monthIndex + 1);
+  if (audit) {
+    audit.hidden = !mismatch;
+    audit.textContent = mismatch ? "Факт по НГ из сценарки отличается от факта ТРТ. Общий факт на графике и в KPI взят из действующей базы и не заменён." : "";
+  }
+  const groups = Array.isArray(card.groups) ? card.groups : [];
+  if (!list) return;
+  if (!groups.length) { list.innerHTML = '<div class="trt-card-ng-empty">Номенклатурные группы для ТРТ не указаны.</div>'; return; }
+  const rows = groups.map((group) => {
+    const gpRaw = group.plan?.[monthIndex], gfRaw = group.sourceFact?.[monthIndex];
+    const gp = Number(gpRaw), gf = Number(gfRaw);
+    const hasGp = gpRaw !== null && gpRaw !== undefined && Number.isFinite(gp);
+    const hasGf = gfRaw !== null && gfRaw !== undefined && Number.isFinite(gf);
+    const completion = hasGp && gp > 0 && hasGf ? gf / gp * 100 : null;
+    return { name: group.name || "Без названия", plan: hasGp ? gp : null, fact: hasGf ? gf : null, completion };
+  }).sort((a, b) => Number(b.plan || 0) - Number(a.plan || 0) || a.name.localeCompare(b.name, "ru"));
+  list.innerHTML = rows.map((row) => `<div class="trt-card-ng-row"><strong title="${escapeHtml(row.name)}">${escapeHtml(row.name)}</strong><span>${row.plan === null ? "—" : Math.round(row.plan).toLocaleString("ru-RU")}</span><span>${row.fact === null ? "—" : Math.round(row.fact).toLocaleString("ru-RU")}</span><span class="${row.completion === null ? "" : row.completion >= 100 ? "good" : "bad"}">${row.completion === null ? "—" : `${row.completion.toFixed(0)}%`}</span></div>`).join("");
+}
+
+
 function renderTrtCardSalesChart(point) {
   if (trtCardSalesChart) {
     trtCardSalesChart.destroy();
@@ -2847,24 +2980,27 @@ function renderTrtCardSalesChart(point) {
   if (!preview || !empty || !canvas) return;
 
   const data = trtSalesData(point, trtCardFdiySalesMode);
-  preview.hidden = !data.hasSales;
-  empty.hidden = data.hasSales;
+  const planDataset = tilePlanDataset(point, true);
+  const hasChartData = data.hasSales || Boolean(planDataset);
+  preview.hidden = !hasChartData;
+  empty.hidden = hasChartData;
   empty.textContent = data.isFdiy
     ? `${data.salesModeLabel} по этой ТРТ пока не загружены.`
-    : "Продажи по этой ТРТ пока не загружены.";
-  preview.setAttribute("aria-disabled", data.hasSales ? "false" : "true");
-  preview.setAttribute("aria-label", data.isFdiy ? `Увеличить график: ${data.salesModeLabel}` : "Увеличить график продаж");
+    : "Продажи и план по этой ТРТ пока не загружены.";
+  preview.setAttribute("aria-disabled", hasChartData ? "false" : "true");
+  preview.setAttribute("aria-label", data.isFdiy ? `Увеличить график: ${data.salesModeLabel}` : "Увеличить график продаж и плана");
   updateTrtFdiySalesControl(point);
-  if (!data.hasSales) return;
+  if (!hasChartData) return;
 
   trtCardSalesChart = new Chart(canvas, {
     type: "bar",
     data: {
       labels: analyticsMonthLabels(),
       datasets: [
-        { label: "2025", data: data.sales2025, backgroundColor: "#c9deef", borderColor: "#a9c7df", borderWidth: 1, borderRadius: 5, maxBarThickness: 18 },
-        { label: "2026", data: data.sales2026, backgroundColor: "#384E86", borderColor: "#2b3f71", borderWidth: 1, borderRadius: 5, maxBarThickness: 18 },
-      ],
+        { label: "2025", data: data.sales2025, backgroundColor: "#c9deef", borderColor: "#a9c7df", borderWidth: 1, borderRadius: 5, maxBarThickness: 18, order: 2 },
+        { label: "2026", data: data.sales2026, backgroundColor: "#384E86", borderColor: "#2b3f71", borderWidth: 1, borderRadius: 5, maxBarThickness: 18, order: 2 },
+        planDataset,
+      ].filter(Boolean),
     },
     options: {
       responsive: true,
@@ -2977,10 +3113,10 @@ function openTrtCard(pointId, focusMap = true) {
 
   renderTrtAverageSales(point);
 
+  renderTrtTilePlan(point);
   window.requestAnimationFrame(() => renderTrtCardSalesChart(point));
-  if (isFdiyTrtPoint(point)) {
-    loadFdiyCardSeries(point, true);
-  }
+  if (isFdiyTrtPoint(point)) loadFdiyCardSeries(point, true);
+  if (isTileTrtPoint(point)) loadTilePlanCard(point, true);
 
   if (focusMap && trtMap && Number.isFinite(Number(point.lat)) && Number.isFinite(Number(point.lon))) {
     setTrtMainView("map");
@@ -3931,20 +4067,154 @@ async function loadTrtMap() {
   }
 }
 
+let tileDashboardTrendChart = null;
+let tileDashboardBreakdownChart = null;
+let tileDashboardFilterOptionsReady = false;
+let tileDashboardLoading = false;
+
+function tileDashboardMonthName(month) {
+  return ["Янв","Фев","Мар","Апр","Май","Июн","Июл","Авг","Сен","Окт","Ноя","Дек"][Number(month) - 1] || String(month || "");
+}
+
+function initializeTileDashboardControls() {
+  const start = $("tile-dashboard-start"), end = $("tile-dashboard-end");
+  if (start && !start.options.length) {
+    for (let month = 1; month <= 12; month += 1) {
+      start.add(new Option(tileDashboardMonthName(month), String(month)));
+      end?.add(new Option(tileDashboardMonthName(month), String(month)));
+    }
+    start.value = "1";
+    const last = Math.max(1, Math.min(12, analyticsLastCompleteMonthIndex() + 1));
+    if (end) end.value = String(last);
+  }
+}
+
+function tileDashboardFilters() {
+  return {
+    territoryScope: $("tile-dashboard-scope")?.value || "vog",
+    startMonth: Number($("tile-dashboard-start")?.value || 1),
+    endMonth: Number($("tile-dashboard-end")?.value || 12),
+    groupBy: $("tile-dashboard-groupby")?.value || "region",
+    region: $("tile-dashboard-region")?.value || "",
+    city: $("tile-dashboard-city")?.value || "",
+    manager: $("tile-dashboard-manager")?.value || "",
+    client: $("tile-dashboard-client")?.value || "",
+    groupId: $("tile-dashboard-ng")?.value || "",
+  };
+}
+
+function tileDashboardSetOptions(id, rows, valueKey = null, labelKey = null) {
+  const select = $(id); if (!select) return;
+  const previous = select.value;
+  const first = select.options[0]?.textContent || "Все";
+  select.innerHTML = `<option value="">${escapeHtml(first)}</option>`;
+  (rows || []).forEach((row) => {
+    const value = valueKey ? row?.[valueKey] : row;
+    const label = labelKey ? row?.[labelKey] : row;
+    if (value === null || value === undefined || value === "") return;
+    select.add(new Option(String(label), String(value)));
+  });
+  if ([...select.options].some((option) => option.value === previous)) select.value = previous;
+}
+
+function tileDashboardFormat(value) {
+  return Math.round(Number(value || 0)).toLocaleString("ru-RU");
+}
+
+function renderTileDashboard(payload) {
+  const summary = payload?.summary || {};
+  $("tile-kpi-plan").textContent = `${tileDashboardFormat(summary.plan)} м²`;
+  $("tile-kpi-fact").textContent = `${tileDashboardFormat(summary.fact)} м²`;
+  $("tile-kpi-completion").textContent = summary.completion === null || summary.completion === undefined ? "—" : `${Number(summary.completion).toFixed(1).replace(".", ",")}%`;
+  $("tile-kpi-gap").textContent = `${tileDashboardFormat(summary.gap)} м²`;
+  $("tile-kpi-trt").textContent = Number(summary.trtCount || 0).toLocaleString("ru-RU");
+  $("tile-kpi-ng").textContent = Number(summary.groupCount || 0).toLocaleString("ru-RU");
+  $("tile-dashboard-status").textContent = payload?.available ? `${payload.sourceYear} · ${payload.fileName || "активная сценарка"}` : "Сценарка ещё не загружена";
+
+  if (!tileDashboardFilterOptionsReady && payload?.filters) {
+    tileDashboardSetOptions("tile-dashboard-region", payload.filters.regions);
+    tileDashboardSetOptions("tile-dashboard-city", payload.filters.cities);
+    tileDashboardSetOptions("tile-dashboard-manager", payload.filters.managers);
+    tileDashboardSetOptions("tile-dashboard-client", payload.filters.clients);
+    tileDashboardSetOptions("tile-dashboard-ng", payload.filters.groups, "groupId", "name");
+    tileDashboardFilterOptionsReady = true;
+  }
+
+  const audit = payload?.factAudit || {};
+  const warning = $("tile-dashboard-warning");
+  if (warning) {
+    if (Number(audit.mismatchMonths || 0) > 0) {
+      warning.hidden = false;
+      warning.textContent = `Контроль факта: ${Number(audit.mismatchMonths).toLocaleString("ru-RU")} из ${Number(audit.comparedMonths || 0).toLocaleString("ru-RU")} сопоставленных ТРТ-месяцев отличаются от факта по НГ в сценарке. В KPI и динамике сохранён текущий факт из базы.`;
+    } else if (Number(audit.comparedMonths || 0) > 0) {
+      warning.hidden = false;
+      warning.textContent = `Контроль факта: проверено ${Number(audit.comparedMonths).toLocaleString("ru-RU")} ТРТ-месяцев, существенных расхождений не найдено.`;
+    } else {
+      warning.hidden = true; warning.textContent = "";
+    }
+  }
+
+  if (tileDashboardTrendChart) tileDashboardTrendChart.destroy();
+  const trendCanvas = $("tile-dashboard-trend");
+  if (trendCanvas) {
+    const monthly = payload?.monthly || [];
+    tileDashboardTrendChart = new Chart(trendCanvas, {
+      type: "bar",
+      data: {
+        labels: monthly.map((row) => tileDashboardMonthName(row.month)),
+        datasets: [
+          { label: "Факт", data: monthly.map((row) => row.fact), backgroundColor: "#384E86", borderColor: "#2b3f71", borderWidth: 1, borderRadius: 5, order: 2 },
+          { type: "line", label: "План", data: monthly.map((row) => row.plan), borderColor: "#d97706", backgroundColor: "rgba(217,119,6,.08)", borderWidth: 3, pointRadius: 3, tension: .25, order: 1 },
+        ],
+      },
+      options: { responsive:true, maintainAspectRatio:false, interaction:{mode:"index",intersect:false}, plugins:{legend:{position:"top"}}, scales:{y:{beginAtZero:true,ticks:{callback:(value)=>Math.round(Number(value)).toLocaleString("ru-RU")}},x:{grid:{display:false}}} },
+    });
+  }
+
+  if (tileDashboardBreakdownChart) tileDashboardBreakdownChart.destroy();
+  const breakdownCanvas = $("tile-dashboard-breakdown");
+  const breakdown = (payload?.breakdown || []).filter((row) => Number(row.plan || 0) > 0).slice(0, 12);
+  if (breakdownCanvas) {
+    tileDashboardBreakdownChart = new Chart(breakdownCanvas, {
+      type: "doughnut",
+      data: { labels: breakdown.map((row) => row.label), datasets:[{ data: breakdown.map((row) => row.plan), backgroundColor: analyticsPalette(Math.max(1, breakdown.length)), borderColor:"#fff", borderWidth:2 }] },
+      options: { responsive:true, maintainAspectRatio:false, cutout:"58%", plugins:{legend:{position:"right",labels:{boxWidth:11,font:{size:10}}},tooltip:{callbacks:{label(context){ const row=breakdown[context.dataIndex]; return `${row.label}: ${tileDashboardFormat(row.plan)} м² · ${Number(row.planShare || 0).toFixed(1).replace(".",",")}%`; }}}} },
+    });
+  }
+  const groupLabels = {region:"региону",city:"городу",manager:"менеджеру",client:"клиенту",trt:"ТРТ",ng:"номенклатурной группе"};
+  if ($("tile-dashboard-breakdown-caption")) $("tile-dashboard-breakdown-caption").textContent = `Доля плана по ${groupLabels[$("tile-dashboard-groupby")?.value] || "разрезу"}.`;
+
+  const problems = payload?.topProblems || [];
+  $("tile-dashboard-problems").innerHTML = problems.length ? problems.map((row) => `<tr data-point-id="${escapeHtml(row.pointId || "")}" class="${row.pointId ? "tile-problem-clickable" : ""}"><td><strong>${escapeHtml(row.trt || "—")}</strong><br><small>${escapeHtml(row.client || "")}</small></td><td>${escapeHtml(row.region || "—")}</td><td>${escapeHtml(shortPersonName(row.manager) || "—")}</td><td>${tileDashboardFormat(row.plan)}</td><td>${tileDashboardFormat(row.fact)}</td><td>${row.completion === null || row.completion === undefined ? "—" : `${Number(row.completion).toFixed(0)}%`}</td><td>${tileDashboardFormat(row.gap)}</td></tr>`).join("") : '<tr><td colspan="7">Проблемных ТРТ по выбранным фильтрам нет.</td></tr>';
+}
+
+async function loadTileDashboard() {
+  if (!isSystemAdmin() || tileDashboardLoading) return;
+  initializeTileDashboardControls();
+  tileDashboardLoading = true;
+  $("tile-dashboard-status").textContent = "Расчёт…";
+  try {
+    const payload = await api("/admin/sales-import", { method:"POST", timeout:120000, body:JSON.stringify({ scope:"tile_scenario", operation:"analytics", filters:tileDashboardFilters() }) });
+    renderTileDashboard(payload);
+  } catch (error) {
+    $("tile-dashboard-status").textContent = error?.message || String(error);
+  } finally { tileDashboardLoading = false; }
+}
+
+
 function setTrtMainView(view) {
-  trtMainView = view === "analytics" ? "analytics" : "map";
+  const requestedAnalytics = view === "analytics";
+  trtMainView = requestedAnalytics && isSystemAdmin() ? "analytics" : "map";
   const mapView = trtMainView === "map";
   const trtAddPointControl = $("trt-add-point-control");
   if (trtAddPointControl) trtAddPointControl.hidden = !mapView || !isSystemAdmin();
 
   $("view-map-button").classList.toggle("active", mapView);
   $("view-analytics-button").classList.toggle("active", !mapView);
+  $("view-analytics-button").hidden = !isSystemAdmin();
   syncSidebarNavigation("trt");
-
-  document.querySelectorAll(".legacy-map-only").forEach((element) => {
-    element.hidden = !mapView;
-  });
-  $("trt-analytics-sidebar").hidden = mapView;
+  document.querySelectorAll(".legacy-map-only").forEach((element) => { element.hidden = !mapView; });
+  if ($("trt-analytics-sidebar")) $("trt-analytics-sidebar").hidden = true;
   $("trt-map").hidden = !mapView;
   $("trt-analytics-view").hidden = mapView;
   $("trt-analytics-view").setAttribute("aria-hidden", mapView ? "true" : "false");
@@ -3952,21 +4222,14 @@ function setTrtMainView(view) {
   const displayControl = document.querySelector(".trt-display-control");
   if (displayControl) displayControl.hidden = !mapView;
   if (!mapView) {
-    closeTrtSmartSuggestions();
-    setTrtDisplayPanel(false);
-    if (trtInspectorMode) closeMapInspector();
+    closeTrtSmartSuggestions(); setTrtDisplayPanel(false); if (trtInspectorMode) closeMapInspector();
   }
-
   closeAnalyticsFormatMenu();
-
   if (mapView) {
-    window.setTimeout(() => {
-      trtMap?.invalidateSize();
-      renderTrtMap();
-    }, 40);
+    window.setTimeout(() => { trtMap?.invalidateSize(); renderTrtMap(); }, 40);
   } else {
-    populateAnalyticsFilters(true);
-    setTrtAnalyticsTab(trtAnalyticsTab);
+    initializeTileDashboardControls();
+    loadTileDashboard();
   }
 }
 
@@ -4431,7 +4694,8 @@ function openTrtSales(sourceElement = $("trt-card-sales-preview")) {
   const point = selectedTrtPoint();
   if (!point) return;
   const data = trtSalesData(point, trtCardFdiySalesMode);
-  if (!data.hasSales) return;
+  const modalPlanDataset = tilePlanDataset(point, false);
+  if (!data.hasSales && !modalPlanDataset) return;
 
   const modal = $("trt-sales-modal");
   const dialog = modal?.querySelector(".sales-modal");
@@ -4478,9 +4742,10 @@ function openTrtSales(sourceElement = $("trt-card-sales-preview")) {
       data: {
         labels: analyticsMonthLabels(),
         datasets: [
-          { label: "2025", data: data.sales2025, backgroundColor: "#c9deef", borderColor: "#a9c7df", borderWidth: 1, borderRadius: 6, maxBarThickness: 30 },
-          { label: "2026", data: data.sales2026, backgroundColor: "#384E86", borderColor: "#2b3f71", borderWidth: 1, borderRadius: 6, maxBarThickness: 30 },
-        ],
+          { label: "2025", data: data.sales2025, backgroundColor: "#c9deef", borderColor: "#a9c7df", borderWidth: 1, borderRadius: 6, maxBarThickness: 30, order: 2 },
+          { label: "2026", data: data.sales2026, backgroundColor: "#384E86", borderColor: "#2b3f71", borderWidth: 1, borderRadius: 6, maxBarThickness: 30, order: 2 },
+          modalPlanDataset,
+        ].filter(Boolean),
       },
       options: {
         responsive: true,
@@ -5294,7 +5559,7 @@ function analysisFindColumn(headers, aliases) {
 
 
 // ---------------------------------------------------------------------------
-// Плитка · сценарка v1 — структурный импорт и контроль TRT Master
+// Плитка · сценарка v2 — структура + план/факт по номенклатурным группам
 // ---------------------------------------------------------------------------
 let tileScenarioState = {
   fileName: "",
@@ -5305,14 +5570,36 @@ let tileScenarioState = {
   previewReady: false,
 };
 
+const TILE_PLAN_COLUMNS = Object.freeze(["BN","BO","BP","BQ","BR","BS","BT","BU","BV","BW","BX","BY"]);
+const TILE_FACT_COLUMNS = Object.freeze(["CI","CJ","CK","CM","CN","CO","CQ","CR","CS","CU","CV","CW"]);
+const TILE_SCENARIO_COLUMNS = new Set(["A","B","C","D","E", ...TILE_PLAN_COLUMNS, ...TILE_FACT_COLUMNS]);
+
 function tileScenarioText(value) {
   return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function tileScenarioNumber(value) {
+  if (value === null || value === undefined || String(value).trim() === "") return null;
+  const normalized = String(value).replace(/\s/g, "").replace(",", ".");
+  const number = Number(normalized);
+  return Number.isFinite(number) ? number : null;
 }
 
 function tileScenarioChunk(items, size) {
   const chunks = [];
   for (let index = 0; index < items.length; index += size) chunks.push(items.slice(index, index + size));
   return chunks;
+}
+
+async function tileScenarioRunPool(items, concurrency, worker) {
+  let cursor = 0;
+  const runners = Array.from({ length: Math.min(concurrency, items.length || 1) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor++;
+      await worker(items[index], index);
+    }
+  });
+  await Promise.all(runners);
 }
 
 function tileScenarioSharedStrings(xmlText) {
@@ -5347,16 +5634,18 @@ function tileScenarioParseRows(sheetXml, sharedStrings) {
     const rowNumber = Number((rowAttrs.match(/\br="(\d+)"/) || [])[1] || 0);
     if (!rowNumber) continue;
     const result = { rowNumber, A: "", B: "", C: "", D: "", E: "", styleA: "" };
-    const cellRegex = /<c\b([^>]*\br="([A-E])(\d+)"[^>]*)>([\s\S]*?)<\/c>|<c\b([^>]*\br="([A-E])(\d+)"[^>]*)\/>/g;
+    const cellRegex = /<c\b([^>]*\br="([A-Z]+)(\d+)"[^>]*)>([\s\S]*?)<\/c>|<c\b([^>]*\br="([A-Z]+)(\d+)"[^>]*)\/>/g;
     let cellMatch;
     while ((cellMatch = cellRegex.exec(rowBody))) {
       const attrs = cellMatch[1] || cellMatch[5] || "";
       const column = cellMatch[2] || cellMatch[6];
+      if (!TILE_SCENARIO_COLUMNS.has(column)) continue;
       const body = cellMatch[4] || "";
       result[column] = tileScenarioCellValue(attrs, body, sharedStrings);
       if (column === "A") result.styleA = (attrs.match(/\bs="(\d+)"/) || [])[1] || "";
     }
-    if (rowNumber <= 10 || result.A || result.B || result.C || result.D || result.E) rows.push(result);
+    const hasUseful = rowNumber <= 10 || [...TILE_SCENARIO_COLUMNS].some((column) => result[column] !== undefined && result[column] !== "");
+    if (hasUseful) rows.push(result);
   }
   return rows;
 }
@@ -5370,30 +5659,29 @@ async function readTileScenarioFile(file) {
   const sharedStrings = sharedEntry ? tileScenarioSharedStrings(await sharedEntry.async("string")) : [];
   const rows = tileScenarioParseRows(await sheetEntry.async("string"), sharedStrings);
   const byRow = new Map(rows.map((row) => [row.rowNumber, row]));
-  const expected = [[1,"Регион"],[2,"Город"],[3,"Клиент"],[4,"Торговая точка"],[5,"Бренд"]];
+  const expected = [[1,"Регион"],[2,"Город"],[3,"Клиент"],[4,"Торговая точка"]];
   for (const [rowNumber, label] of expected) {
     if (normalizeText(byRow.get(rowNumber)?.A || "") !== normalizeText(label)) {
       throw new Error(`Структура файла отличается от сценарки плитки: в A${rowNumber} ожидается «${label}».`);
     }
   }
+  const level5 = normalizeText(byRow.get(5)?.A || "");
+  if (![normalizeText("Номенклатурная группа"), normalizeText("Бренд")].includes(level5)) {
+    throw new Error("В A5 ожидается «Номенклатурная группа» (старый вариант «Бренд» тоже поддерживается).");
+  }
   const styleMap = {
-    region: String(byRow.get(6)?.styleA || ""),
-    city: String(byRow.get(7)?.styleA || ""),
-    client: String(byRow.get(8)?.styleA || ""),
-    trt: String(byRow.get(9)?.styleA || ""),
-    group: String(byRow.get(10)?.styleA || ""),
+    region: String(byRow.get(6)?.styleA || ""), city: String(byRow.get(7)?.styleA || ""),
+    client: String(byRow.get(8)?.styleA || ""), trt: String(byRow.get(9)?.styleA || ""), group: String(byRow.get(10)?.styleA || ""),
   };
   if (Object.values(styleMap).some((value) => !value) || new Set(Object.values(styleMap)).size < 5) {
-    throw new Error("Не удалось определить уровни Регион → Город → Клиент → ТРТ → Бренд. Проверь шаблон файла.");
+    throw new Error("Не удалось определить уровни Регион → Город → Клиент → ТРТ → Номенклатурная группа.");
   }
 
-  const trtRows = [];
-  const groupRows = [];
-  const regionNames = new Set();
-  const clientNames = new Set();
-  const groupNames = new Set();
-  let cityCount = 0;
+  const trtRows = [], groupRows = [];
+  const regionNames = new Set(), clientNames = new Set(), groupNames = new Set();
+  let cityCount = 0, planValueCount = 0, sourceFactValueCount = 0, negativePlanCount = 0;
   const context = { region: "", cityGroup: "", client: "", trtRowNumber: 0 };
+  const trtByRow = new Map();
 
   rows.forEach((row) => {
     if (row.rowNumber <= 5) return;
@@ -5402,8 +5690,7 @@ async function readTileScenarioFile(file) {
     if (row.styleA === styleMap.region) {
       if (!value) return;
       context.region = value; context.cityGroup = ""; context.client = ""; context.trtRowNumber = 0;
-      regionNames.add(normalizeText(value));
-      return;
+      regionNames.add(normalizeText(value)); return;
     }
     if (row.styleA === styleMap.city) {
       if (!value) return;
@@ -5416,36 +5703,46 @@ async function readTileScenarioFile(file) {
     if (row.styleA === styleMap.trt) {
       if (!value) return;
       context.trtRowNumber = row.rowNumber;
-      trtRows.push({
-        rowNumber: row.rowNumber,
-        region: context.region,
-        cityGroup: context.cityGroup,
-        client: context.client,
-        trtName: value,
-        city: tileScenarioText(row.B),
-        entityKind: tileScenarioText(row.C),
-        trtFormat: tileScenarioText(row.D),
-        trtStatus: tileScenarioText(row.E),
-      });
-      return;
+      const item = {
+        rowNumber: row.rowNumber, region: context.region, cityGroup: context.cityGroup, client: context.client,
+        trtName: value, city: tileScenarioText(row.B), entityKind: tileScenarioText(row.C),
+        trtFormat: tileScenarioText(row.D), trtStatus: tileScenarioText(row.E), sourceFactTotals: Array(12).fill(null),
+      };
+      trtRows.push(item); trtByRow.set(row.rowNumber, item); return;
     }
     if (row.styleA === styleMap.group && value) {
       groupNames.add(normalizeText(value));
-      groupRows.push({ rowNumber: row.rowNumber, trtRowNumber: context.trtRowNumber, groupName: value });
+      const plan = TILE_PLAN_COLUMNS.map((column) => {
+        const raw = tileScenarioNumber(row[column]);
+        if (raw === null) return null;
+        planValueCount += 1;
+        if (raw < 0) { negativePlanCount += 1; return 0; }
+        return raw;
+      });
+      const sourceFact = TILE_FACT_COLUMNS.map((column) => {
+        const raw = tileScenarioNumber(row[column]);
+        if (raw !== null) sourceFactValueCount += 1;
+        return raw;
+      });
+      const trt = trtByRow.get(context.trtRowNumber);
+      if (trt) sourceFact.forEach((amount, index) => {
+        if (amount === null) return;
+        trt.sourceFactTotals[index] = Number(trt.sourceFactTotals[index] || 0) + amount;
+      });
+      groupRows.push({
+        rowNumber: row.rowNumber, trtRowNumber: context.trtRowNumber, groupName: value,
+        plan: plan.some((item) => item !== null) ? plan : [],
+        sourceFact: sourceFact.some((item) => item !== null) ? sourceFact : [],
+      });
     }
   });
 
   if (!trtRows.length) throw new Error("В сценарке не найдены строки ТРТ.");
   return {
-    trtRows,
-    groupRows,
+    trtRows, groupRows,
     summary: {
-      regionCount: regionNames.size,
-      cityCount,
-      clientCount: clientNames.size,
-      trtCount: trtRows.length,
-      groupCount: groupRows.length,
-      uniqueGroupCount: groupNames.size,
+      regionCount: regionNames.size, cityCount, clientCount: clientNames.size, trtCount: trtRows.length,
+      groupCount: groupRows.length, uniqueGroupCount: groupNames.size, planValueCount, sourceFactValueCount, negativePlanCount,
     },
   };
 }
@@ -5473,47 +5770,35 @@ function renderTileScenario() {
   const rows = tileScenarioState.trtRows;
   const summary = tileScenarioState.summary || {};
   const set = (id, value) => { if ($(id)) $(id).textContent = Number(value || 0).toLocaleString("ru-RU"); };
-  set("tile-scenario-regions", summary.regionCount);
-  set("tile-scenario-vog", summary.vogTrtCount);
-  set("tile-scenario-other", summary.otherTrtCount);
-  set("tile-scenario-clients", summary.clientCount);
-  set("tile-scenario-trt", summary.trtCount);
-  set("tile-scenario-groups", summary.groupCount);
-  set("tile-scenario-master", summary.tileMasterCount);
-  set("tile-scenario-direction-issues", summary.directionMismatchCount);
-  set("tile-scenario-missing", summary.missingMasterCount);
-  set("tile-scenario-point", summary.pointLinkedCount);
+  set("tile-scenario-regions", summary.regionCount); set("tile-scenario-vog", summary.vogTrtCount); set("tile-scenario-other", summary.otherTrtCount);
+  set("tile-scenario-clients", summary.clientCount); set("tile-scenario-trt", summary.trtCount); set("tile-scenario-groups", summary.groupCount);
+  set("tile-scenario-master", summary.tileMasterCount); set("tile-scenario-direction-issues", summary.directionMismatchCount); set("tile-scenario-missing", summary.missingMasterCount);
+  set("tile-scenario-point", summary.pointLinkedCount); set("tile-scenario-unique-ng", summary.uniqueGroupCount); set("tile-scenario-plan-values", summary.planValueCount);
+  set("tile-scenario-fact-values", summary.sourceFactValueCount);
+  const metricsNote = $("tile-scenario-metrics-note");
+  if (metricsNote) {
+    const emptyMetrics = !Number(summary.planValueCount || 0) && !Number(summary.sourceFactValueCount || 0);
+    metricsNote.className = emptyMetrics ? "sales-import-warning" : "market-import-help";
+    metricsNote.textContent = emptyMetrics
+      ? "В этом файле числовые план/факт ячейки пусты. Сохраним структуру и 85 НГ; планы появятся после загрузки заполненной сценарки."
+      : `Плановых значений: ${Number(summary.planValueCount || 0).toLocaleString("ru-RU")} · исходных фактов по НГ: ${Number(summary.sourceFactValueCount || 0).toLocaleString("ru-RU")}. Факт ТРТ из сценарки не заменяет факт в базе.`;
+    metricsNote.hidden = false;
+  }
 
   const filter = $("tile-scenario-filter")?.value || "problems";
   let visible = rows.filter((row) => {
-    if (filter === "all") return true;
     if (filter === "problems") return tileScenarioResultIsProblem(row);
-    if (filter === "other") return row.territoryScope === "other";
-    if (filter === "vog") return row.territoryScope === "vog";
-    if (filter === "no-point") return !row.pointId;
     if (filter === "missing") return row.masterStatus === "missing";
+    if (filter === "direction") return row.masterStatus === "direction_mismatch";
+    if (filter === "master-only") return row.masterStatus === "master_only";
+    if (filter === "other") return row.territoryScope === "other";
     return true;
   });
-  const totalVisible = visible.length;
-  visible = visible.slice(0, 500);
+  const totalVisible = visible.length; visible = visible.slice(0, 500);
   if ($("tile-scenario-visible")) $("tile-scenario-visible").textContent = `Показано: ${visible.length.toLocaleString("ru-RU")}${totalVisible > visible.length ? ` из ${totalVisible.toLocaleString("ru-RU")}` : ""}`;
   if ($("tile-scenario-table-body")) $("tile-scenario-table-body").innerHTML = visible.map((row) => {
-    const scope = row.territoryScope === "vog" ? "ВОГ" : "Другие";
-    const statusLabels = {
-      matched: "Master + point_id", master_only: "Master без point_id", point_conflict: "Несколько point_id",
-      ambiguous: "Несколько Master", direction_mismatch: "Не Плитка в Master", missing: "Нет в Master",
-    };
-    const statusClass = ["matched"].includes(row.masterStatus) ? "success" : ["master_only"].includes(row.masterStatus) ? "muted" : "danger";
-    const clientNote = row.clientExists ? "" : '<small class="danger-text">Клиент не найден в Master</small>';
-    return `<tr>
-      <td>${row.rowNumber}</td><td><span class="badge ${row.territoryScope === "vog" ? "success" : "muted"}">${scope}</span></td>
-      <td>${escapeHtml(row.region || "—")}<small>${escapeHtml(row.cityGroup || "")}</small></td>
-      <td><strong>${escapeHtml(row.client || "—")}</strong>${clientNote}</td>
-      <td><strong>${escapeHtml(row.trtName || "—")}</strong><small>${escapeHtml(row.city || "")}</small></td>
-      <td>${escapeHtml(row.entityKind || "—")}</td><td>${escapeHtml(row.trtFormat || "—")}</td><td>${escapeHtml(row.trtStatus || "—")}</td>
-      <td><span class="badge ${statusClass}">${escapeHtml(statusLabels[row.masterStatus] || row.masterStatus || "—")}</span><small>${escapeHtml(row.matchMethod || "")}</small></td>
-      <td>${escapeHtml(row.masterId || "—")}</td><td>${escapeHtml(row.pointId || "—")}</td>
-    </tr>`;
+    const masterLabel = row.masterStatus === "matched" ? "Сопоставлено" : row.masterStatus === "master_only" ? "Master найден" : row.masterStatus === "direction_mismatch" ? "Не Плитка" : row.masterStatus === "missing" ? "Не найдено" : "Проверить";
+    return `<tr><td>${row.rowNumber}</td><td>${row.territoryScope === "vog" ? "ВОГ" : "Другие"}</td><td><strong>${escapeHtml(row.region)}</strong><br><small>${escapeHtml(row.cityGroup || "")}</small></td><td>${escapeHtml(row.client || "—")}</td><td><strong>${escapeHtml(row.trtName || "—")}</strong><br><small>${escapeHtml(row.city || "")}</small></td><td>${escapeHtml(row.entityKind || "—")}</td><td>${escapeHtml(row.trtFormat || "—")}</td><td>${escapeHtml(row.trtStatus || "—")}</td><td><strong>${escapeHtml(masterLabel)}</strong><br><small>${escapeHtml(row.matchMethod || "")}</small></td><td>${escapeHtml(row.masterId || "—")}</td><td>${escapeHtml(row.pointId || "—")}</td></tr>`;
   }).join("");
   if ($("tile-scenario-result")) $("tile-scenario-result").hidden = false;
   if ($("tile-scenario-commit")) $("tile-scenario-commit").disabled = !isSystemAdmin() || !tileScenarioState.previewReady;
@@ -5523,34 +5808,17 @@ async function previewTileScenario() {
   const file = $("tile-scenario-file")?.files?.[0];
   if (!file || !isSystemAdmin()) return;
   const error = $("tile-scenario-error"), progress = $("tile-scenario-progress"), button = $("tile-scenario-preview");
-  error.hidden = true; progress.hidden = false; button.disabled = true;
+  error.hidden = true; progress.hidden = false; progress.textContent = "Чтение 109 столбцов сценарки…"; button.disabled = true;
   try {
-    progress.textContent = "Читаю структуру сценарки…";
     const parsed = await readTileScenarioFile(file);
-    tileScenarioState = {
-      fileName: file.name,
-      sourceYear: Number($("tile-scenario-year")?.value || 2026),
-      trtRows: parsed.trtRows,
-      groupRows: parsed.groupRows,
-      summary: parsed.summary,
-      previewReady: false,
-    };
-    const chunks = tileScenarioChunk(tileScenarioState.trtRows, 200);
-    const matches = new Map();
-    for (let index = 0; index < chunks.length; index += 1) {
-      progress.textContent = `Проверяю TRT Master… ${index + 1} / ${chunks.length}`;
-      const payload = await api("/admin/sales-import", {
-        method: "POST", timeout: 90000,
-        body: JSON.stringify({
-          scope: "tile_scenario", operation: "preview",
-          rows: chunks[index].map((row) => ({
-            rowNumber: row.rowNumber, region: row.region, city: row.city,
-            client: row.client, trt: row.trtName, format: row.trtFormat,
-          })),
-        }),
-      });
-      (payload.rows || []).forEach((item) => matches.set(Number(item.rowNumber), item));
-    }
+    tileScenarioState = { fileName: file.name, sourceYear: Number($("tile-scenario-year")?.value || 2026), trtRows: parsed.trtRows, groupRows: parsed.groupRows, summary: parsed.summary, previewReady: false };
+    const chunks = tileScenarioChunk(tileScenarioState.trtRows, 300);
+    const matches = new Map(); let finished = 0;
+    await tileScenarioRunPool(chunks, 4, async (chunk) => {
+      const result = await api("/admin/sales-import", { method: "POST", timeout: 90000, body: JSON.stringify({ scope: "tile_scenario", operation: "preview", rows: chunk }) });
+      (result.rows || []).forEach((row) => matches.set(Number(row.rowNumber), row));
+      finished += 1; progress.textContent = `Проверка TRT Master: ${finished}/${chunks.length}…`;
+    });
     tileScenarioState.trtRows = tileScenarioState.trtRows.map((row) => ({ ...row, ...(matches.get(row.rowNumber) || {}) }));
     const summary = tileScenarioState.summary;
     summary.vogTrtCount = tileScenarioState.trtRows.filter((row) => row.territoryScope === "vog").length;
@@ -5561,56 +5829,37 @@ async function previewTileScenario() {
     summary.pointLinkedCount = tileScenarioState.trtRows.filter((row) => Boolean(row.pointId)).length;
     summary.missingClientCount = new Set(tileScenarioState.trtRows.filter((row) => !row.clientExists && row.client).map((row) => normalizeText(row.client))).size;
     tileScenarioState.previewReady = true;
-    renderTileScenario();
-    progress.textContent = `Проверка завершена: ${summary.trtCount.toLocaleString("ru-RU")} ТРТ.`;
-    window.setTimeout(() => { if (progress) progress.hidden = true; }, 900);
+    progress.hidden = true; renderTileScenario();
   } catch (exc) {
     error.textContent = exc?.message || String(exc); error.hidden = false; progress.hidden = true;
-  } finally {
-    updateTileScenarioPreviewButton();
-  }
+  } finally { updateTileScenarioPreviewButton(); }
 }
 
 async function commitTileScenario() {
   if (!tileScenarioState.previewReady || !isSystemAdmin()) return;
   const button = $("tile-scenario-commit"), error = $("tile-scenario-error"), progress = $("tile-scenario-progress");
-  button.disabled = true; error.hidden = true; progress.hidden = false;
-  const random = (globalThis.crypto?.getRandomValues ? Array.from(crypto.getRandomValues(new Uint8Array(4))).map((value) => value.toString(16).padStart(2,"0")).join("") : Math.random().toString(16).slice(2,10));
-  const importId = `tile-scenario-${Date.now()}-${random}`;
+  error.hidden = true; progress.hidden = false; button.disabled = true;
+  const random = Math.random().toString(36).slice(2, 8), importId = `tile-scenario-${Date.now()}-${random}`;
   try {
-    const trtChunks = tileScenarioChunk(tileScenarioState.trtRows, 100);
-    for (let index = 0; index < trtChunks.length; index += 1) {
-      progress.textContent = `Сохраняю ТРТ… ${index + 1} / ${trtChunks.length}`;
-      await api("/admin/sales-import", {
-        method: "POST", timeout: 90000,
-        body: JSON.stringify({ scope: "tile_scenario", operation: "commit_trt", importId, rows: trtChunks[index] }),
-      });
-    }
-    const groupChunks = tileScenarioChunk(tileScenarioState.groupRows.filter((row) => row.trtRowNumber), 200);
-    for (let index = 0; index < groupChunks.length; index += 1) {
-      progress.textContent = `Сохраняю группы… ${index + 1} / ${groupChunks.length}`;
-      await api("/admin/sales-import", {
-        method: "POST", timeout: 90000,
-        body: JSON.stringify({ scope: "tile_scenario", operation: "commit_groups", importId, rows: groupChunks[index] }),
-      });
-    }
-    progress.textContent = "Активирую новую структуру сценарки…";
-    await api("/admin/sales-import", {
-      method: "POST", timeout: 90000,
-      body: JSON.stringify({
-        scope: "tile_scenario", operation: "finalize", importId,
-        fileName: tileScenarioState.fileName, sourceYear: tileScenarioState.sourceYear,
-        summary: tileScenarioState.summary,
-      }),
+    const trtChunks = tileScenarioChunk(tileScenarioState.trtRows, 500); let doneTrt = 0;
+    await tileScenarioRunPool(trtChunks, 3, async (chunk) => {
+      await api("/admin/sales-import", { method: "POST", timeout: 120000, body: JSON.stringify({ scope: "tile_scenario", operation: "commit_trt", importId, rows: chunk }) });
+      doneTrt += chunk.length; progress.textContent = `Сохраняем ТРТ: ${doneTrt.toLocaleString("ru-RU")} / ${tileScenarioState.trtRows.length.toLocaleString("ru-RU")}…`;
     });
-    progress.textContent = `Готово. Сохранено ${tileScenarioState.summary.trtCount.toLocaleString("ru-RU")} ТРТ и ${tileScenarioState.summary.groupCount.toLocaleString("ru-RU")} строк групп.`;
+    const groupRows = tileScenarioState.groupRows.filter((row) => row.trtRowNumber);
+    const groupChunks = tileScenarioChunk(groupRows, 1000); let doneGroups = 0;
+    await tileScenarioRunPool(groupChunks, 3, async (chunk) => {
+      await api("/admin/sales-import", { method: "POST", timeout: 120000, body: JSON.stringify({ scope: "tile_scenario", operation: "commit_groups", importId, rows: chunk }) });
+      doneGroups += chunk.length; progress.textContent = `Сохраняем НГ и планы: ${doneGroups.toLocaleString("ru-RU")} / ${groupRows.length.toLocaleString("ru-RU")}…`;
+    });
+    await api("/admin/sales-import", { method: "POST", timeout: 90000, body: JSON.stringify({ scope: "tile_scenario", operation: "finalize", importId, fileName: tileScenarioState.fileName, sourceYear: tileScenarioState.sourceYear, summary: tileScenarioState.summary }) });
+    progress.textContent = `Готово. ${tileScenarioState.summary.trtCount.toLocaleString("ru-RU")} ТРТ · ${tileScenarioState.summary.groupCount.toLocaleString("ru-RU")} строк НГ · плановых значений ${Number(tileScenarioState.summary.planValueCount || 0).toLocaleString("ru-RU")}.`;
     showToast("Сценарка плитки сохранена");
   } catch (exc) {
     error.textContent = exc?.message || String(exc); error.hidden = false; progress.hidden = true;
-  } finally {
-    button.disabled = !tileScenarioState.previewReady;
-  }
+  } finally { button.disabled = !tileScenarioState.previewReady; }
 }
+
 
 // ---------------------------------------------------------------------------
 // FDIY v1 — федеральные DIY-сети: справочник источника продаж и загрузка.
@@ -7041,7 +7290,7 @@ document.addEventListener("click", (event) => {
 });
 
 $("view-map-button").addEventListener("click", () => setTrtMainView("map"));
-$("view-analytics-button").addEventListener("click", () => setTrtMainView("analytics"));
+$("view-analytics-button").addEventListener("click", () => { if (isSystemAdmin()) setTrtMainView("analytics"); });
 
 document.querySelectorAll(".legacy-analytics-tab").forEach((button) => {
   button.addEventListener("click", () => setTrtAnalyticsTab(button.dataset.analyticsTab));
@@ -8056,6 +8305,18 @@ $("vehicle-save")?.addEventListener("click",saveVehicle);
 $("trt-master-audit-search")?.addEventListener("input", renderTrtMasterAudit);
 $("trt-master-audit-filter")?.addEventListener("change", renderTrtMasterAudit);
 $("trt-master-audit-refresh")?.addEventListener("click", () => loadTrtMasterAudit(true));
+
+$("trt-card-tile-month")?.addEventListener("change", () => { const point = selectedTrtPoint(); if (point) renderTrtTilePlan(point); });
+["tile-dashboard-scope","tile-dashboard-start","tile-dashboard-end","tile-dashboard-groupby","tile-dashboard-region","tile-dashboard-city","tile-dashboard-manager","tile-dashboard-client","tile-dashboard-ng"].forEach((id) => {
+  $(id)?.addEventListener("change", () => { if (trtMainView === "analytics" && isSystemAdmin()) loadTileDashboard(); });
+});
+$("tile-dashboard-problems")?.addEventListener("click", (event) => {
+  const row = event.target.closest?.("tr[data-point-id]");
+  const pointId = row?.dataset?.pointId;
+  if (!pointId) return;
+  setTrtMainView("map");
+  window.setTimeout(() => openTrtCard(pointId, true), 60);
+});
 
 window.addEventListener("hashchange", () => {
   const page = location.hash.slice(1);

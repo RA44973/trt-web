@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#384e86">
-  <meta name="vog-web-version" content="8.41">
+  <meta name="vog-web-version" content="8.42">
   <title>ТК ВОГ Офис</title>
   <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=20260810-gdebenz-v8-0">
   <link rel="apple-touch-icon" sizes="192x192" href="icon-192.png?v=20260810-gdebenz-v8-0">
@@ -43,6 +43,15 @@
   
     .trt-card-average-value-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
     .trt-card-average-period { color:#94a3b8; font-size:11px; line-height:1.2; font-weight:600; }
+
+    .trt-card-tile-plan{margin-top:14px;padding:14px;border:1px solid #e1e7f0;border-radius:16px;background:#fff}.trt-card-tile-plan[hidden]{display:none!important}
+    .trt-card-tile-plan-head{display:flex;align-items:end;justify-content:space-between;gap:10px;margin-bottom:10px}.trt-card-tile-plan-head strong{display:block;font-size:14px;color:#1f2e50}.trt-card-tile-plan-head span{display:block;font-size:11px;color:#7b879d;margin-top:2px}.trt-card-tile-plan-head select{max-width:118px;border:1px solid #d9e1ee;border-radius:9px;padding:7px 8px;background:#fff;color:#243658;font-weight:700}
+    .trt-card-tile-kpis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin:8px 0}.trt-card-tile-kpis div{padding:8px;border-radius:10px;background:#f6f8fc}.trt-card-tile-kpis span{display:block;font-size:10px;color:#7b879d}.trt-card-tile-kpis strong{display:block;margin-top:2px;font-size:14px;color:#233861}.trt-card-tile-audit{font-size:10px;line-height:1.35;color:#9a5a00;background:#fff7e8;border-radius:9px;padding:7px 8px;margin:8px 0}.trt-card-tile-audit[hidden]{display:none!important}
+    .trt-card-ng-list{display:grid;gap:6px;max-height:230px;overflow:auto}.trt-card-ng-row{display:grid;grid-template-columns:minmax(0,1fr) 62px 62px 52px;gap:6px;align-items:center;padding:7px 8px;border:1px solid #edf1f6;border-radius:9px;font-size:10px}.trt-card-ng-row strong{font-size:11px;color:#243658;overflow:hidden;text-overflow:ellipsis}.trt-card-ng-row span{text-align:right;color:#59677f}.trt-card-ng-row .good{color:#14804a;font-weight:800}.trt-card-ng-row .bad{color:#c93b2d;font-weight:800}.trt-card-ng-empty{font-size:11px;color:#7b879d;padding:8px 0}
+    .tile-dashboard{padding:18px;display:grid;gap:14px}.tile-dashboard[hidden]{display:none!important}.tile-dashboard-header{display:flex;justify-content:space-between;gap:18px;align-items:flex-start}.tile-dashboard-header h2{margin:0;font-size:24px;color:#1f2e50}.tile-dashboard-header p{margin:5px 0 0;color:#6e7b92;font-size:12px}.tile-dashboard-filters{display:grid;grid-template-columns:repeat(4,minmax(140px,1fr));gap:8px;background:#fff;padding:12px;border-radius:16px;border:1px solid #e4e9f1}.tile-dashboard-filters label{display:grid;gap:4px;font-size:10px;color:#71809a;font-weight:700}.tile-dashboard-filters select{min-width:0;border:1px solid #dbe2ed;border-radius:9px;padding:7px 8px;background:#fff;color:#243658}
+    .tile-dashboard-kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:9px}.tile-dashboard-kpis article{background:#fff;border:1px solid #e4e9f1;border-radius:14px;padding:12px}.tile-dashboard-kpis span{font-size:10px;color:#7b879d}.tile-dashboard-kpis strong{display:block;margin-top:5px;font-size:22px;color:#21345e}.tile-dashboard-grid{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(320px,.8fr);gap:12px}.tile-dashboard-card{background:#fff;border:1px solid #e4e9f1;border-radius:16px;padding:14px;min-width:0}.tile-dashboard-card h3{margin:0 0 4px;color:#243658;font-size:15px}.tile-dashboard-card p{margin:0 0 10px;color:#7b879d;font-size:11px}.tile-dashboard-chart{height:290px}.tile-dashboard-table{width:100%;border-collapse:collapse;font-size:11px}.tile-dashboard-table th,.tile-dashboard-table td{padding:8px 6px;border-bottom:1px solid #edf1f6;text-align:right}.tile-dashboard-table th:first-child,.tile-dashboard-table td:first-child{text-align:left}.tile-dashboard-table th{color:#74819a;font-size:9px;text-transform:uppercase}.tile-dashboard-status{font-size:11px;color:#6b7890}.tile-dashboard-warning{font-size:11px;color:#9a5a00;background:#fff7e8;border:1px solid #f6d79d;border-radius:10px;padding:8px 10px}.tile-dashboard-warning[hidden]{display:none!important}
+    @media(max-width:1100px){.tile-dashboard-filters{grid-template-columns:repeat(2,minmax(140px,1fr))}.tile-dashboard-kpis{grid-template-columns:repeat(3,minmax(0,1fr))}.tile-dashboard-grid{grid-template-columns:1fr}}
+
 </style>
 </head>
 <body>
@@ -723,7 +732,7 @@
             <div class="section-heading market-import-heading">
               <div>
                 <h2>Плитка · сценарка</h2>
-                <p>Структурная загрузка: Регион → Город → Клиент → ТРТ → номенклатурная группа. Реальный регион сохраняется всегда; дополнительно ставится зона <strong>ВОГ</strong> или <strong>Другие</strong>.</p>
+                <p>Загрузка структуры и плана: Регион → Город → Клиент → ТРТ → номенклатурная группа. План хранится на уровне <strong>ТРТ × НГ × месяц</strong>; регион, город, клиент и менеджер рассчитываются автоматически.</p>
               </div>
             </div>
             <div class="sales-import-period-grid">
@@ -731,8 +740,8 @@
               <label class="sales-import-file-field">Excel-файл<input id="tile-scenario-file" type="file" accept=".xlsx"></label>
               <button id="tile-scenario-preview" class="primary-button sales-import-preview-button" type="button" disabled>Проверить структуру</button>
             </div>
-            <div class="sales-import-help"><strong>Сейчас берём:</strong><span>Регион</span><span>Город</span><span>Клиент</span><span>Торговая точка</span><span>Город ТРТ</span><span>Вид ТТ</span><span>Формат ТРТ</span><span>Статус ТТ</span><span>Бренд → временная номенклатурная группа</span></div>
-            <div class="sales-import-warning"><strong>Важно:</strong> «Другие» — это отдельный признак зоны ответственности, а не замена региона. Краснодарский край, Татарстан, Севастополь и т. д. сохраняются под своими названиями. Числовые колонки в этой версии не записываются: текущий файл «без цифр» используется как структура.</div>
+            <div class="sales-import-help"><strong>Берём в работу:</strong><span>A:E — структура</span><span>BN:BY — план Янв–Дек</span><span>CI,CJ,CK,CM,CN,CO,CQ,CR,CS,CU,CV,CW — факт по НГ для детализации</span><span>BM и CG — только контрольные итоги</span></div>
+            <div class="sales-import-warning"><strong>Факт ТРТ не перезаписывается.</strong> Если факт сценарки расходится с текущими продажами в базе, в аналитике остаётся факт из базы. Факт из сценарки хранится отдельно только для разреза по НГ и контроля.</div>
             <div id="tile-scenario-error" class="form-error" hidden></div>
             <div id="tile-scenario-progress" class="loading-state" hidden>Проверка сценарки…</div>
             <section id="tile-scenario-result" class="sales-import-result" hidden>
@@ -747,16 +756,19 @@
                 <article><span>Направление не Плитка</span><strong id="tile-scenario-direction-issues">0</strong></article>
                 <article><span>Нет в Master</span><strong id="tile-scenario-missing">0</strong></article>
                 <article><span>Есть point_id</span><strong id="tile-scenario-point">0</strong></article>
+                <article><span>Уникальных НГ</span><strong id="tile-scenario-unique-ng">0</strong></article>
+                <article><span>Плановых значений</span><strong id="tile-scenario-plan-values">0</strong></article>
+                <article><span>Фактов по НГ</span><strong id="tile-scenario-fact-values">0</strong></article>
               </div>
 
               <div class="market-import-help">
-                <strong>Столбцы в работе</strong>
-                <span>Структура: A:E</span>
-                <span>Следующий этап: план по месяцам BN:BY</span>
-                <span>Следующий этап: факт по месяцам CI,CJ,CK,CM,CN,CO,CQ,CR,CS,CU,CV,CW</span>
-                <em>BM (годовой утверждённый план) и CG (факт года) будем использовать как контрольные итоги. Кварталы и проценты считаем сами, а не храним как первичный факт.</em>
+                <strong>Архитектура плана</strong>
+                <span>Первичный план: ТРТ × НГ × год × месяц</span>
+                <span>Регион / город / клиент / менеджер: сумма прикреплённых ТРТ</span>
+                <span>НГ автоматически пополняют отдельный справочник</span>
+                <em>Это исключает двойное хранение плана и позволяет пересчитывать менеджера при смене закрепления ТРТ.</em>
               </div>
-              <div class="sales-import-warning">Справочник номенклатурных групп будет отдельным и редко меняющимся. Пока 22 значения из строки «Бренд» сохраняются только как исходные группы сценарки — мы не закрепляем их в коде.</div>
+              <div id="tile-scenario-metrics-note" class="sales-import-warning" hidden></div>
 
               <div class="table-toolbar">
                 <span id="tile-scenario-visible">Показано: 0</span>
@@ -770,7 +782,7 @@
                 </select>
               </div>
               <div class="table-wrap sales-import-table-wrap"><table class="sales-import-table"><thead><tr><th>Строка</th><th>Зона</th><th>Регион / группа города</th><th>Клиент</th><th>ТРТ / город</th><th>Вид</th><th>Формат</th><th>Статус</th><th>TRT Master</th><th>master_id</th><th>point_id</th></tr></thead><tbody id="tile-scenario-table-body"></tbody></table></div>
-              <div class="sales-import-actions"><button id="tile-scenario-reset" class="secondary-button" type="button">Выбрать другой файл</button><button id="tile-scenario-commit" class="primary-button" type="button" disabled>Сохранить структуру сценарки</button></div>
+              <div class="sales-import-actions"><button id="tile-scenario-reset" class="secondary-button" type="button">Выбрать другой файл</button><button id="tile-scenario-commit" class="primary-button" type="button" disabled>Сохранить сценарку</button></div>
             </section>
           </section>
         </section>
@@ -1018,6 +1030,19 @@
                       </div>
                     </div>
                   </section>
+                  <section id="trt-card-tile-plan" class="trt-card-tile-plan" hidden>
+                    <div class="trt-card-tile-plan-head">
+                      <div><strong>Плитка · план по НГ</strong><span id="trt-card-tile-plan-period">—</span></div>
+                      <select id="trt-card-tile-month" aria-label="Месяц плана"></select>
+                    </div>
+                    <div class="trt-card-tile-kpis">
+                      <div><span>План</span><strong id="trt-card-tile-plan-value">—</strong></div>
+                      <div><span>Факт ТРТ</span><strong id="trt-card-tile-fact-value">—</strong></div>
+                      <div><span>Выполнение</span><strong id="trt-card-tile-completion">—</strong></div>
+                    </div>
+                    <div id="trt-card-tile-audit" class="trt-card-tile-audit" hidden></div>
+                    <div id="trt-card-ng-list" class="trt-card-ng-list"></div>
+                  </section>
                 </div>
               </section>
             </div>
@@ -1139,12 +1164,30 @@
             </div>
 
             <section id="trt-analytics-view" class="legacy-analytics-view" hidden aria-hidden="true">
-              <div id="analytics-report-content" class="legacy-chart-host">
-                <div class="legacy-analytics-empty">Выберите направление, чтобы построить динамику продаж.</div>
+              <div id="tile-plan-dashboard" class="tile-dashboard">
+                <div class="tile-dashboard-header"><div><h2>Плитка · план-факт</h2><p>План из сценарки; общий факт ТРТ всегда берётся из текущей базы продаж.</p></div><span id="tile-dashboard-status" class="tile-dashboard-status">—</span></div>
+                <div class="tile-dashboard-filters">
+                  <label>Зона<select id="tile-dashboard-scope"><option value="vog" selected>ВОГ</option><option value="other">Другие</option><option value="all">Все</option></select></label>
+                  <label>С<select id="tile-dashboard-start"></select></label><label>По<select id="tile-dashboard-end"></select></label>
+                  <label>Разрез<select id="tile-dashboard-groupby"><option value="region">Регион</option><option value="city">Город</option><option value="manager">Менеджер</option><option value="client">Клиент</option><option value="trt">ТРТ</option><option value="ng">Номенклатурная группа</option></select></label>
+                  <label>Регион<select id="tile-dashboard-region"><option value="">Все</option></select></label>
+                  <label>Город<select id="tile-dashboard-city"><option value="">Все</option></select></label>
+                  <label>Менеджер<select id="tile-dashboard-manager"><option value="">Все</option></select></label>
+                  <label>Клиент<select id="tile-dashboard-client"><option value="">Все</option></select></label>
+                  <label>НГ<select id="tile-dashboard-ng"><option value="">Все</option></select></label>
+                </div>
+                <div class="tile-dashboard-kpis">
+                  <article><span>План</span><strong id="tile-kpi-plan">—</strong></article><article><span>Факт</span><strong id="tile-kpi-fact">—</strong></article><article><span>Выполнение</span><strong id="tile-kpi-completion">—</strong></article><article><span>Дефицит</span><strong id="tile-kpi-gap">—</strong></article><article><span>ТРТ</span><strong id="tile-kpi-trt">—</strong></article><article><span>НГ</span><strong id="tile-kpi-ng">—</strong></article>
+                </div>
+                <div id="tile-dashboard-warning" class="tile-dashboard-warning" hidden></div>
+                <div class="tile-dashboard-grid">
+                  <section class="tile-dashboard-card"><h3>Динамика план / факт</h3><p>По месяцам выбранного года.</p><div class="tile-dashboard-chart"><canvas id="tile-dashboard-trend"></canvas></div></section>
+                  <section class="tile-dashboard-card"><h3>Структура плана</h3><p id="tile-dashboard-breakdown-caption">Доля плана по выбранному разрезу.</p><div class="tile-dashboard-chart"><canvas id="tile-dashboard-breakdown"></canvas></div></section>
+                </div>
+                <section class="tile-dashboard-card"><h3>Проблемные ТРТ / точки роста</h3><p>Сортировка по максимальному недобору к плану.</p><div class="table-wrap"><table class="tile-dashboard-table"><thead><tr><th>ТРТ</th><th>Регион</th><th>Менеджер</th><th>План</th><th>Факт</th><th>%</th><th>Дефицит</th></tr></thead><tbody id="tile-dashboard-problems"></tbody></table></div></section>
               </div>
-              <div id="analytics-structure-content" class="legacy-chart-host" hidden>
-                <div class="legacy-analytics-empty">Выберите направление, чтобы построить структуру продаж.</div>
-              </div>
+              <div id="analytics-report-content" class="legacy-chart-host" hidden></div>
+              <div id="analytics-structure-content" class="legacy-chart-host" hidden></div>
             </section>
             <div id="trt-map-error" class="map-error legacy-map-error" hidden></div>
           </div>
@@ -1444,6 +1487,6 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-  <script src="app.js?v=8.40"></script>
+  <script src="app.js?v=8.42"></script>
 </body>
 </html>
