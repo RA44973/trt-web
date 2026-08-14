@@ -1,6 +1,6 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.35";
+const VOG_WEB_VERSION = "8.37";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
@@ -2659,6 +2659,52 @@ function isFdiyTrtPoint(point) {
     || Boolean(point?.fdiyNetworkId);
 }
 
+async function loadFdiyCardSeries(point, force = false) {
+  if (!point || !isFdiyTrtPoint(point)) return null;
+  if (point._fdiyCardLoading) return point._fdiyCardLoading;
+  if (point._fdiyCardLoaded && !force) return point.fdiySales || null;
+
+  const selectedId = String(point.id || "");
+  const empty = $("trt-card-sales-empty");
+  if (empty && state.trtSelectedId === selectedId) {
+    empty.hidden = false;
+    empty.textContent = "Загрузка продаж FDIY…";
+  }
+
+  point._fdiyCardLoading = (async () => {
+    try {
+      const payload = await api(`/trt-map-data?view=fdiy_card&point_id=${encodeURIComponent(selectedId)}`, { timeout: 90000 });
+      point._fdiyCardLoaded = true;
+      point.fdiySales = payload?.fdiySales || { vog: {}, total: {} };
+      if (payload?.network) point.fdiyNetwork = payload.network;
+      if (payload?.networkId) point.fdiyNetworkId = payload.networkId;
+      if (payload?.storeCode) point.fdiyStoreCode = payload.storeCode;
+      if (payload?.masterId) point.fdiyMasterId = payload.masterId;
+      point.fdiyCardMatchedRows = Number(payload?.matchedRows || 0);
+      point.fdiyCardActivePeriods = Number(payload?.activePeriods || 0);
+      if (state.trtSelectedId === selectedId) {
+        renderTrtFdiyShare(point);
+        updateTrtFdiySalesControl(point);
+        renderTrtCardSalesChart(point);
+      }
+      return point.fdiySales;
+    } catch (error) {
+      point._fdiyCardLoaded = false;
+      if (state.trtSelectedId === selectedId) {
+        const target = $("trt-card-sales-empty");
+        if (target) {
+          target.hidden = false;
+          target.textContent = `Не удалось загрузить продажи FDIY: ${error?.message || error}`;
+        }
+      }
+      return null;
+    } finally {
+      point._fdiyCardLoading = null;
+    }
+  })();
+  return point._fdiyCardLoading;
+}
+
 function trtFdiySeries(point, mode, year) {
   const source = point?.fdiySales?.[mode] || {};
   return (Array.isArray(source?.[year]) ? source[year] : [])
@@ -2853,6 +2899,9 @@ function openTrtCard(pointId, focusMap = true) {
   badge.style.background = trtColor(point.size);
 
   window.requestAnimationFrame(() => renderTrtCardSalesChart(point));
+  if (isFdiyTrtPoint(point)) {
+    loadFdiyCardSeries(point, true);
+  }
 
   if (focusMap && trtMap && Number.isFinite(Number(point.lat)) && Number.isFinite(Number(point.lon))) {
     setTrtMainView("map");
@@ -5880,6 +5929,51 @@ async function fdiyCommitPeriodWithRetry(payload, progress, position, total) {
   throw lastError || new Error("Не удалось сохранить период FDIY");
 }
 
+async function fdiyCommitBatchWithRetry(entriesChunk, basePayload, progress, batchPosition, batchTotal, periodsDone, periodsTotal) {
+  const rows = entriesChunk.flatMap(([, groupRows]) => groupRows);
+  let lastError = null;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      if (progress) progress.textContent = attempt === 1
+        ? `Быстрая загрузка FDIY: пакет ${batchPosition} / ${batchTotal} · периодов ${periodsDone} / ${periodsTotal}…`
+        : `Быстрая загрузка FDIY: пакет ${batchPosition} / ${batchTotal} · повтор…`;
+      return await api("/admin/sales-import", {
+        method: "POST", timeout: 90000,
+        body: JSON.stringify({ ...basePayload, rows }),
+      });
+    } catch (exc) {
+      lastError = exc;
+      if (attempt < 2) await fdiySleep(900);
+    }
+  }
+  throw lastError || new Error("Не удалось сохранить пакет FDIY");
+}
+
+async function fdiyCommitBatchAdaptive(entriesChunk, basePayload, progress, stats, batchLabel) {
+  try {
+    const result = await fdiyCommitBatchWithRetry(
+      entriesChunk, basePayload, progress,
+      batchLabel.position, batchLabel.total,
+      stats.periodsProcessed + entriesChunk.length, stats.periodsTotal,
+    );
+    stats.stored += Number(result?.storedValues || 0);
+    stats.uploadedPeriods += Number(result?.periodCount || 0);
+    stats.skippedDuringRetry += Number(result?.skippedExistingPeriods || 0);
+    stats.periodsProcessed += entriesChunk.length;
+    return;
+  } catch (exc) {
+    // If a larger packet hits a transient timeout, split it automatically instead of
+    // forcing the user to restart the whole historical import.
+    if (entriesChunk.length <= 1) throw exc;
+    const mid = Math.ceil(entriesChunk.length / 2);
+    const left = entriesChunk.slice(0, mid);
+    const right = entriesChunk.slice(mid);
+    if (progress) progress.textContent = `Пакет ответа не дождался — делю его на части (${left.length} + ${right.length})…`;
+    await fdiyCommitBatchAdaptive(left, { ...basePayload, requestId: `${basePayload.requestId}-a` }, progress, stats, batchLabel);
+    await fdiyCommitBatchAdaptive(right, { ...basePayload, requestId: `${basePayload.requestId}-b` }, progress, stats, batchLabel);
+  }
+}
+
 async function commitFdiyImport() {
   const preview = fdiyImportState.preview || {};
   const conflicts = preview.periodsExisting || [];
@@ -5901,7 +5995,6 @@ async function commitFdiyImport() {
 
   if (conflicts.length) {
     if (isHistorical && conflicts.length < allEntries.length) {
-      // Safe resume: an interrupted historical upload continues from missing periods.
       entries = allEntries.filter(([key]) => !conflictKeys.has(key));
       skippedAlready = allEntries.length - entries.length;
     } else {
@@ -5933,25 +6026,55 @@ async function commitFdiyImport() {
   const sessionId = `fdiy-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
   let stored = 0, uploadedPeriods = 0, skippedDuringRetry = 0;
   try {
-    for (let i = 0; i < entries.length; i += 1) {
-      const [key, rows] = entries[i];
-      const requestId = `${sessionId}-p${String(i + 1).padStart(3, "0")}`;
-      const result = await fdiyCommitPeriodWithRetry({
-        scope: "fdiy",
-        operation: "commit_resumable",
-        fileName: fdiyImportState.fileName,
-        rows,
-        replace: replaceExisting && conflictKeys.has(key),
-        skipExisting: isHistorical && !replaceExisting,
-        requestId,
-      }, progress, i + 1, entries.length);
-      if (result?.skippedExisting) skippedDuringRetry += 1;
-      else {
-        stored += Number(result?.storedValues || 0);
-        uploadedPeriods += 1;
+    if (isHistorical && !replaceExisting) {
+      // Historical data is compact enough to upload several periods per HTTP request.
+      // Six periods keeps each Cloud Function call comfortably bounded while reducing
+      // dozens of sequential Gateway round-trips to only a handful.
+      const chunkSize = 6;
+      const chunks = [];
+      for (let i = 0; i < entries.length; i += chunkSize) chunks.push(entries.slice(i, i + chunkSize));
+      const stats = {
+        stored: 0, uploadedPeriods: 0, skippedDuringRetry: 0,
+        periodsProcessed: 0, periodsTotal: entries.length,
+      };
+      for (let i = 0; i < chunks.length; i += 1) {
+        if (button) button.textContent = `Загрузка пакета ${i + 1} / ${chunks.length}`;
+        await fdiyCommitBatchAdaptive(chunks[i], {
+          scope: "fdiy",
+          operation: "commit_batch_resumable",
+          fileName: fdiyImportState.fileName,
+          replace: false,
+          skipExisting: true,
+          requestId: `${sessionId}-b${String(i + 1).padStart(2, "0")}`,
+        }, progress, stats, { position: i + 1, total: chunks.length });
       }
-      if (button) button.textContent = `Загрузка ${i + 1} / ${entries.length}`;
+      stored = stats.stored;
+      uploadedPeriods = stats.uploadedPeriods;
+      skippedDuringRetry = stats.skippedDuringRetry;
+    } else {
+      // Monthly corrections remain deliberately one period per request so the overwrite
+      // confirmation semantics stay precise.
+      for (let i = 0; i < entries.length; i += 1) {
+        const [key, rows] = entries[i];
+        const requestId = `${sessionId}-p${String(i + 1).padStart(3, "0")}`;
+        const result = await fdiyCommitPeriodWithRetry({
+          scope: "fdiy",
+          operation: "commit_resumable",
+          fileName: fdiyImportState.fileName,
+          rows,
+          replace: replaceExisting && conflictKeys.has(key),
+          skipExisting: isHistorical && !replaceExisting,
+          requestId,
+        }, progress, i + 1, entries.length);
+        if (result?.skippedExisting) skippedDuringRetry += 1;
+        else {
+          stored += Number(result?.storedValues || 0);
+          uploadedPeriods += 1;
+        }
+        if (button) button.textContent = `Загрузка ${i + 1} / ${entries.length}`;
+      }
     }
+
     const totalSkipped = skippedAlready + skippedDuringRetry;
     if (progress) progress.textContent = `Готово. Добавлено периодов: ${uploadedPeriods}; уже было загружено: ${totalSkipped}; сохранено значений: ${stored.toLocaleString("ru-RU")}.`;
     if (button) { button.textContent = "Загрузка завершена"; button.disabled = true; }
@@ -5963,7 +6086,7 @@ async function commitFdiyImport() {
       error.textContent = `${exc?.message || String(exc)} Загрузка остановлена. Уже сохранённые периоды не потеряны — нажмите «Продолжить загрузку» ещё раз.`;
       error.hidden = false;
     }
-    if (progress) progress.textContent = `Загрузка приостановлена после ${uploadedPeriods} новых периодов. Повторный запуск продолжит с оставшихся.`;
+    if (progress) progress.textContent = `Загрузка приостановлена. Повторный запуск продолжит с оставшихся периодов.`;
     if (button) { button.disabled = false; button.textContent = "Продолжить загрузку"; }
   }
 }
