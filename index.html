@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#384e86">
-  <meta name="vog-web-version" content="8.32">
+  <meta name="vog-web-version" content="8.33">
   <title>ТК ВОГ Офис</title>
   <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=20260810-gdebenz-v8-0">
   <link rel="apple-touch-icon" sizes="192x192" href="icon-192.png?v=20260810-gdebenz-v8-0">
@@ -36,6 +36,10 @@
     .trt-add-point-status{min-height:18px;margin:0;color:#65718b;font-size:12px;line-height:1.35}.trt-add-point-status.error{color:#b42318}
     .trt-add-point-actions{display:flex;justify-content:flex-end;gap:10px;padding:15px 24px 20px;background:#fff;border-top:1px solid #e7ebf3}
     @media(max-width:850px){.trt-add-point-body{grid-template-columns:1fr}.trt-add-point-control{left:14px;top:72px}#trt-add-point-map{height:310px;min-height:280px}}
+
+    .trt-card-fdiy-share{margin:14px 0 4px;padding:14px 15px;border:1px solid #e2e7f0;border-radius:16px;background:linear-gradient(135deg,#f7f9fd,#fff)}
+    .trt-card-fdiy-share[hidden]{display:none!important}.trt-card-fdiy-share-grid{display:grid;grid-template-columns:minmax(0,1fr) 104px;align-items:center;gap:12px}.trt-card-fdiy-share-copy{display:grid;gap:4px}.trt-card-fdiy-share-copy .legacy-label{margin:0}.trt-card-fdiy-share-value{font-size:30px;line-height:1;font-weight:800;color:#273b70}.trt-card-fdiy-share-period{font-size:12px;font-weight:700;color:#56647f}.trt-card-fdiy-share-detail{font-size:11px;line-height:1.35;color:#7a869d}.trt-card-fdiy-share-chart-wrap{height:92px;min-width:92px}
+    .trt-card-fdiy-sales-control{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:9px 0 4px}.trt-card-fdiy-sales-control[hidden]{display:none!important}.trt-card-fdiy-sales-shown{font-size:11px;color:#69768f}.trt-card-fdiy-sales-toggle{border:1px solid #cfd8e7;border-radius:10px;background:#fff;color:#334b83;font:700 12px/1 inherit;padding:8px 11px;cursor:pointer;white-space:nowrap}.trt-card-fdiy-sales-toggle:hover{background:#f3f6fb}
   </style>
 </head>
 <body>
@@ -978,6 +982,18 @@
                     </div>
                   </div>
 
+                  <section id="trt-card-fdiy-share" class="trt-card-fdiy-share" hidden>
+                    <div class="trt-card-fdiy-share-grid">
+                      <div class="trt-card-fdiy-share-copy">
+                        <div class="legacy-label">Доля ВОГ</div>
+                        <strong id="trt-card-fdiy-share-value" class="trt-card-fdiy-share-value">—</strong>
+                        <span id="trt-card-fdiy-share-period" class="trt-card-fdiy-share-period">—</span>
+                        <span id="trt-card-fdiy-share-detail" class="trt-card-fdiy-share-detail">—</span>
+                      </div>
+                      <div class="trt-card-fdiy-share-chart-wrap"><canvas id="trt-card-fdiy-share-chart"></canvas></div>
+                    </div>
+                  </section>
+
                   <section id="trt-card-sales-block" class="trt-card-sales-block">
                     <div id="trt-card-sales-preview" class="trt-card-sales-preview" role="button" tabindex="0" aria-label="Увеличить график продаж">
                       <canvas id="trt-card-sales-chart"></canvas>
@@ -986,6 +1002,10 @@
                       </span>
                     </div>
                     <div id="trt-card-sales-empty" class="trt-card-sales-empty" hidden>Продажи по этой ТРТ пока не загружены.</div>
+                    <div id="trt-card-fdiy-sales-control" class="trt-card-fdiy-sales-control" hidden>
+                      <span id="trt-card-fdiy-sales-shown" class="trt-card-fdiy-sales-shown">Показано: продажи ВОГ</span>
+                      <button id="trt-card-fdiy-sales-toggle" class="trt-card-fdiy-sales-toggle" type="button" aria-pressed="false">Общие продажи</button>
+                    </div>
 
                     <div class="legacy-field trt-card-average-sales">
                       <div class="legacy-label">Среднемесячные продажи</div>
@@ -1418,6 +1438,6 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-  <script src="app.js?v=20260814-fdiy-master-fallback-v8-32"></script>
+  <script src="app.js?v=20260814-fdiy-map-card-v8-33"></script>
 </body>
 </html>

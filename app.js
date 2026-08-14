@@ -1,6 +1,6 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.32";
+const VOG_WEB_VERSION = "8.33";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
@@ -51,6 +51,8 @@ let trtSmartSuggestions = [];
 let trtSmartSuggestionIndex = -1;
 let trtSalesChart = null;
 let trtCardSalesChart = null;
+let trtCardFdiyShareChart = null;
+let trtCardFdiySalesMode = "vog";
 let trtAnalyticsChart = null;
 let trtStructureChart = null;
 let trtMainView = "map";
@@ -2625,17 +2627,122 @@ function trtMarkerIcon(point) {
   });
 }
 
-function trtSalesData(point) {
-  const sales2025 = (Array.isArray(point?.sales?.["2025"]) ? point.sales["2025"] : [])
+function isFdiyTrtPoint(point) {
+  return String(point?.salesSource || "").toUpperCase() === "FDIY"
+    || Boolean(point?.fdiySales)
+    || Boolean(point?.fdiyNetworkId);
+}
+
+function trtFdiySeries(point, mode, year) {
+  const source = point?.fdiySales?.[mode] || {};
+  return (Array.isArray(source?.[year]) ? source[year] : [])
     .concat(Array(12).fill(null)).slice(0, 12);
-  const sales2026 = (Array.isArray(point?.sales?.["2026"]) ? point.sales["2026"] : [])
-    .concat(Array(12).fill(null)).slice(0, 12);
+}
+
+function trtSalesData(point, mode = null) {
+  const isFdiy = isFdiyTrtPoint(point);
+  const salesMode = isFdiy ? (mode === "total" ? "total" : "vog") : "vog";
+  const sales2025 = isFdiy
+    ? trtFdiySeries(point, salesMode, "2025")
+    : (Array.isArray(point?.sales?.["2025"]) ? point.sales["2025"] : []).concat(Array(12).fill(null)).slice(0, 12);
+  const sales2026 = isFdiy
+    ? trtFdiySeries(point, salesMode, "2026")
+    : (Array.isArray(point?.sales?.["2026"]) ? point.sales["2026"] : []).concat(Array(12).fill(null)).slice(0, 12);
   const unit = trtUnit(point);
   const ytd2025 = sumSales(sales2025, 6);
   const ytd2026 = sumSales(sales2026, 6);
   const yoy = ytd2025 ? ((ytd2026 - ytd2025) / ytd2025) * 100 : null;
   const hasSales = [...sales2025, ...sales2026].some((value) => value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value)));
-  return { sales2025, sales2026, unit, ytd2025, ytd2026, yoy, hasSales };
+  return {
+    sales2025, sales2026, unit, ytd2025, ytd2026, yoy, hasSales, isFdiy, salesMode,
+    salesModeLabel: isFdiy ? (salesMode === "total" ? "Общие продажи" : "Продажи ВОГ") : "Продажи",
+  };
+}
+
+function trtFdiyLatestShare(point) {
+  if (!isFdiyTrtPoint(point)) return null;
+  const totalByYear = point?.fdiySales?.total || {};
+  const vogByYear = point?.fdiySales?.vog || {};
+  const years = [...new Set([...Object.keys(totalByYear), ...Object.keys(vogByYear)])]
+    .map(Number).filter(Number.isFinite).sort((a, b) => a - b);
+  let latest = null;
+  years.forEach((year) => {
+    const total = (Array.isArray(totalByYear[String(year)]) ? totalByYear[String(year)] : []).concat(Array(12).fill(null)).slice(0, 12);
+    const vog = (Array.isArray(vogByYear[String(year)]) ? vogByYear[String(year)] : []).concat(Array(12).fill(null)).slice(0, 12);
+    for (let monthIndex = 0; monthIndex < 12; monthIndex += 1) {
+      const totalRaw = total[monthIndex], vogRaw = vog[monthIndex];
+      if (totalRaw === null || totalRaw === undefined || totalRaw === "" || vogRaw === null || vogRaw === undefined || vogRaw === "") continue;
+      const totalValue = Number(totalRaw), vogValue = Number(vogRaw);
+      // A pie chart is meaningful only for a normal positive sales month. Negative
+      // corrections remain visible in the bar chart but are not converted to a share.
+      if (!Number.isFinite(totalValue) || !Number.isFinite(vogValue) || totalValue <= 0 || vogValue < 0 || vogValue > totalValue) continue;
+      latest = { year, month: monthIndex + 1, total: totalValue, vog: vogValue, other: totalValue - vogValue, share: totalValue ? (vogValue / totalValue) * 100 : null };
+    }
+  });
+  return latest;
+}
+
+function renderTrtFdiyShare(point) {
+  if (trtCardFdiyShareChart) {
+    trtCardFdiyShareChart.destroy();
+    trtCardFdiyShareChart = null;
+  }
+  const block = $("trt-card-fdiy-share");
+  const canvas = $("trt-card-fdiy-share-chart");
+  const value = $("trt-card-fdiy-share-value");
+  const period = $("trt-card-fdiy-share-period");
+  const detail = $("trt-card-fdiy-share-detail");
+  if (!block || !canvas || !value || !period || !detail) return;
+
+  const isFdiy = isFdiyTrtPoint(point);
+  block.hidden = !isFdiy;
+  if (!isFdiy) return;
+
+  const share = trtFdiyLatestShare(point);
+  if (!share) {
+    value.textContent = "—";
+    period.textContent = "Нет периода для корректного расчёта доли";
+    detail.textContent = "Доля рассчитывается для последнего месяца, где есть и общие продажи, и продажи ВОГ.";
+    return;
+  }
+
+  const labels = analyticsMonthLabels();
+  const unit = trtUnit(point);
+  value.textContent = `${share.share.toFixed(1).replace(".", ",")}%`;
+  period.textContent = `${labels[share.month - 1]} ${share.year}`;
+  detail.textContent = `ВОГ ${Math.round(share.vog).toLocaleString("ru-RU")} из ${Math.round(share.total).toLocaleString("ru-RU")} ${unit}`;
+
+  trtCardFdiyShareChart = new Chart(canvas, {
+    type: "doughnut",
+    data: {
+      labels: ["ВОГ", "Остальные продажи"],
+      datasets: [{ data: [share.vog, share.other], backgroundColor: ["#384E86", "#dce2eb"], borderWidth: 0, hoverOffset: 2 }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      cutout: "68%",
+      animation: { duration: 220, easing: "easeOutQuart" },
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label(context) { return `${context.label}: ${Math.round(numberOrZero(context.raw)).toLocaleString("ru-RU")} ${unit}`; } } },
+      },
+    },
+  });
+}
+
+function updateTrtFdiySalesControl(point) {
+  const control = $("trt-card-fdiy-sales-control");
+  const shown = $("trt-card-fdiy-sales-shown");
+  const button = $("trt-card-fdiy-sales-toggle");
+  if (!control || !shown || !button) return;
+  const isFdiy = isFdiyTrtPoint(point);
+  control.hidden = !isFdiy;
+  if (!isFdiy) return;
+  const showingTotal = trtCardFdiySalesMode === "total";
+  shown.textContent = showingTotal ? "Показано: общие продажи" : "Показано: продажи ВОГ";
+  button.textContent = showingTotal ? "Продажи ВОГ" : "Общие продажи";
+  button.setAttribute("aria-pressed", showingTotal ? "true" : "false");
 }
 
 function renderTrtCardSalesChart(point) {
@@ -2648,10 +2755,15 @@ function renderTrtCardSalesChart(point) {
   const canvas = $("trt-card-sales-chart");
   if (!preview || !empty || !canvas) return;
 
-  const data = trtSalesData(point);
+  const data = trtSalesData(point, trtCardFdiySalesMode);
   preview.hidden = !data.hasSales;
   empty.hidden = data.hasSales;
+  empty.textContent = data.isFdiy
+    ? `${data.salesModeLabel} по этой ТРТ пока не загружены.`
+    : "Продажи по этой ТРТ пока не загружены.";
   preview.setAttribute("aria-disabled", data.hasSales ? "false" : "true");
+  preview.setAttribute("aria-label", data.isFdiy ? `Увеличить график: ${data.salesModeLabel}` : "Увеличить график продаж");
+  updateTrtFdiySalesControl(point);
   if (!data.hasSales) return;
 
   trtCardSalesChart = new Chart(canvas, {
@@ -2705,6 +2817,10 @@ function openTrtCard(pointId, focusMap = true) {
     : `${trtStatusLabel(point)} · ${trtOriginLabel(origin)}`;
   $("trt-card-address").textContent = point.address || "—";
   renderTrtFourP(point);
+
+  trtCardFdiySalesMode = "vog";
+  renderTrtFdiyShare(point);
+  updateTrtFdiySalesControl(point);
 
   const badge = $("trt-card-size-badge");
   badge.textContent = formatTrtSize(point);
@@ -4160,7 +4276,7 @@ function setTrtAnalyticsTab(tab) {
 function openTrtSales(sourceElement = $("trt-card-sales-preview")) {
   const point = selectedTrtPoint();
   if (!point) return;
-  const data = trtSalesData(point);
+  const data = trtSalesData(point, trtCardFdiySalesMode);
   if (!data.hasSales) return;
 
   const modal = $("trt-sales-modal");
@@ -4169,7 +4285,7 @@ function openTrtSales(sourceElement = $("trt-card-sales-preview")) {
   const sourceRect = sourceElement?.getBoundingClientRect?.();
 
   $("trt-sales-modal-title").textContent = trtDisplayName(point);
-  $("trt-sales-modal-subtitle").textContent = `Сравнение 2025 и 2026 годов · ${data.unit}`;
+  $("trt-sales-modal-subtitle").textContent = `${data.isFdiy ? `${data.salesModeLabel} · ` : ""}Сравнение 2025 и 2026 годов · ${data.unit}`;
   $("trt-sales-ytd-2025").textContent = formatSales(data.ytd2025, data.unit);
   $("trt-sales-ytd-2026").textContent = formatSales(data.ytd2026, data.unit);
   $("trt-sales-yoy").textContent = data.yoy === null ? "—" : `${data.yoy >= 0 ? "+" : ""}${data.yoy.toFixed(1).replace(".", ",")}%`;
@@ -6543,6 +6659,13 @@ $("trt-card-sales-preview")?.addEventListener("keydown", (event) => {
   if (event.key !== "Enter" && event.key !== " ") return;
   event.preventDefault();
   openTrtSales(event.currentTarget);
+});
+$("trt-card-fdiy-sales-toggle")?.addEventListener("click", () => {
+  const point = selectedTrtPoint();
+  if (!point || !isFdiyTrtPoint(point)) return;
+  trtCardFdiySalesMode = trtCardFdiySalesMode === "total" ? "vog" : "total";
+  updateTrtFdiySalesControl(point);
+  renderTrtCardSalesChart(point);
 });
 $("trt-sales-modal-close").addEventListener("click", closeTrtSales);
 $("trt-sales-modal").addEventListener("click", (event) => {
