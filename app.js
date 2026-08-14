@@ -1,6 +1,6 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.45";
+const VOG_WEB_VERSION = "8.46";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
@@ -5777,14 +5777,17 @@ function updateTileScenarioPreviewButton() {
 }
 
 function tileScenarioResultIsProblem(row) {
-  // Only rows that cannot be tied safely to a single Tile TRT are blocking.
-  // Missing client reference and missing point_id are warnings, not blockers,
-  // because tile plans are stored by master_id + NG + year/month.
-  return ["missing", "direction_mismatch", "ambiguous", "point_conflict"].includes(row.masterStatus);
+  // Zone “Other” is never a blocker for the VOG plan: its plan remains attached
+  // to its original region/city even when a Master link is not yet resolved.
+  if (row?.territoryScope === "other") return false;
+  // Plan is stored by master_id + NG + year/month, therefore missing or multiple
+  // point_id values are warnings. Only absence/ambiguity of master_id blocks VOG.
+  return ["missing", "direction_mismatch", "ambiguous"].includes(row?.masterStatus);
 }
 
 function tileScenarioResultIsLoadable(row) {
-  return ["matched", "master_only"].includes(row.masterStatus);
+  if (row?.territoryScope === "other") return true;
+  return ["matched", "master_only", "point_conflict"].includes(row?.masterStatus);
 }
 
 function tileScenarioResultIsAmbiguous(row) {
@@ -5800,6 +5803,103 @@ function tileScenarioPlanMonthsLabel(row) {
   return (row?.planMonths || []).map((month) => labels[Number(month) - 1] || String(month)).join(", ") || "—";
 }
 
+function tileScenarioRecalculateSummary() {
+  const summary = tileScenarioState.summary || {};
+  const rows = tileScenarioState.trtRows || [];
+  summary.vogTrtCount = rows.filter((row) => row.territoryScope === "vog").length;
+  summary.otherTrtCount = rows.filter((row) => row.territoryScope === "other").length;
+  summary.loadableCount = rows.filter(tileScenarioResultIsLoadable).length;
+  summary.noPointCount = rows.filter((row) => row.masterStatus === "master_only").length;
+  summary.directionMismatchCount = rows.filter((row) => row.masterStatus === "direction_mismatch").length;
+  summary.missingMasterCount = rows.filter((row) => row.masterStatus === "missing").length;
+  summary.ambiguousCount = rows.filter(tileScenarioResultIsAmbiguous).length;
+  summary.pointLinkedCount = rows.filter((row) => Boolean(row.pointId)).length;
+  summary.missingClientCount = new Set(rows.filter((row) => !row.clientExists && row.client).map((row) => normalizeText(row.client))).size;
+  summary.clientWarningCount = rows.filter((row) => !row.clientExists && tileScenarioResultIsLoadable(row)).length;
+  summary.otherUnresolvedCount = rows.filter((row) => row.territoryScope === "other" && ["missing", "direction_mismatch", "ambiguous"].includes(row.masterStatus)).length;
+  summary.blockingCount = rows.filter(tileScenarioResultIsProblem).length;
+  summary.blockingWithPlanCount = rows.filter((row) => tileScenarioResultIsProblem(row) && tileScenarioResultHasPlan(row)).length;
+  summary.blockingWithoutPlanCount = Math.max(0, Number(summary.blockingCount || 0) - Number(summary.blockingWithPlanCount || 0));
+  tileScenarioState.summary = summary;
+  return summary;
+}
+
+let tileScenarioMatchRowNumber = 0;
+
+function tileScenarioRowForMatch(rowNumber) {
+  return (tileScenarioState.trtRows || []).find((row) => Number(row.rowNumber) === Number(rowNumber)) || null;
+}
+
+function closeTileScenarioMatchDialog() {
+  const modal = $("tile-scenario-match-modal");
+  if (modal) modal.hidden = true;
+  tileScenarioMatchRowNumber = 0;
+}
+
+function openTileScenarioMatchDialog(rowNumber) {
+  const row = tileScenarioRowForMatch(rowNumber);
+  const modal = $("tile-scenario-match-modal");
+  const list = $("tile-scenario-match-list");
+  if (!row || !modal || !list) return;
+  tileScenarioMatchRowNumber = Number(rowNumber);
+  $("tile-scenario-match-title").textContent = row.trtName || "ТРТ";
+  $("tile-scenario-match-subtitle").textContent = `${row.client || "—"} · ${row.region || "—"}${row.city ? ` · ${row.city}` : ""}`;
+  const candidates = Array.isArray(row.masterCandidates) ? row.masterCandidates : [];
+  list.innerHTML = candidates.length ? candidates.map((candidate) => {
+    const pointLabel = (candidate.pointIds || []).length ? `point_id: ${(candidate.pointIds || []).join(", ")}` : "point_id пока нет";
+    return `<article class="tile-master-candidate">
+      <div class="tile-master-candidate-main">
+        <strong>${escapeHtml(candidate.trtName || row.trtName || "ТРТ")}</strong>
+        <span>${escapeHtml(candidate.client || "—")}</span>
+        <span>${escapeHtml([candidate.region, candidate.city].filter(Boolean).join(" · ") || "—")}</span>
+        <span>${escapeHtml(candidate.address || "Адрес не указан")}</span>
+        <small>${escapeHtml(candidate.format || "Формат не указан")} · ${escapeHtml(pointLabel)}</small>
+        <small class="tile-master-id">${escapeHtml(candidate.masterId || "")}</small>
+      </div>
+      <button class="primary-button tile-master-candidate-select" type="button" data-master-id="${escapeHtml(candidate.masterId || "")}">Выбрать</button>
+    </article>`;
+  }).join("") : '<div class="empty-state">Для этой строки нет кандидатов, которые можно подтвердить вручную.</div>';
+  $("tile-scenario-match-error").hidden = true;
+  modal.hidden = false;
+}
+
+async function saveTileScenarioManualMatch(masterId) {
+  const row = tileScenarioRowForMatch(tileScenarioMatchRowNumber);
+  const error = $("tile-scenario-match-error");
+  if (!row || !masterId) return;
+  const buttons = Array.from(document.querySelectorAll(".tile-master-candidate-select"));
+  buttons.forEach((button) => { button.disabled = true; });
+  if (error) error.hidden = true;
+  try {
+    const result = await api("/admin/sales-import", {
+      method: "POST",
+      timeout: 90000,
+      body: JSON.stringify({
+        scope: "tile_scenario",
+        operation: "save_match",
+        masterId,
+        row: {
+          rowNumber: row.rowNumber,
+          region: row.region,
+          city: row.city,
+          client: row.client,
+          trtName: row.trtName,
+          trtFormat: row.trtFormat,
+        },
+      }),
+    });
+    const resolved = result?.row || {};
+    tileScenarioState.trtRows = tileScenarioState.trtRows.map((item) => Number(item.rowNumber) === Number(row.rowNumber) ? { ...item, ...resolved } : item);
+    tileScenarioRecalculateSummary();
+    closeTileScenarioMatchDialog();
+    renderTileScenario();
+    showToast(`Сопоставление сохранено: ${row.trtName}`);
+  } catch (exc) {
+    if (error) { error.textContent = exc?.message || String(exc); error.hidden = false; }
+    buttons.forEach((button) => { button.disabled = false; });
+  }
+}
+
 function renderTileScenario() {
   const rows = tileScenarioState.trtRows;
   const summary = tileScenarioState.summary || {};
@@ -5811,6 +5911,7 @@ function renderTileScenario() {
   set("tile-scenario-ambiguous", summary.ambiguousCount); set("tile-scenario-client-warning", summary.clientWarningCount);
   set("tile-scenario-point", summary.pointLinkedCount); set("tile-scenario-unique-ng", summary.uniqueGroupCount); set("tile-scenario-plan-values", summary.planValueCount);
   set("tile-scenario-fact-values", summary.sourceFactValueCount);
+  set("tile-scenario-other-unresolved", summary.otherUnresolvedCount);
   set("tile-scenario-blocking", summary.blockingCount);
   set("tile-scenario-blocking-plan", summary.blockingWithPlanCount);
   set("tile-scenario-blocking-no-plan", summary.blockingWithoutPlanCount);
@@ -5842,14 +5943,17 @@ function renderTileScenario() {
   const totalVisible = visible.length; visible = visible.slice(0, 500);
   if ($("tile-scenario-visible")) $("tile-scenario-visible").textContent = `Показано: ${visible.length.toLocaleString("ru-RU")}${totalVisible > visible.length ? ` из ${totalVisible.toLocaleString("ru-RU")}` : ""}`;
   if ($("tile-scenario-table-body")) $("tile-scenario-table-body").innerHTML = visible.map((row) => {
-    const masterLabel = row.masterStatus === "matched" ? "Готово" : row.masterStatus === "master_only" ? "Master найден · без point_id" : row.masterStatus === "direction_mismatch" ? "Не Плитка" : row.masterStatus === "missing" ? "Не найдено" : row.masterStatus === "point_conflict" ? "Несколько point_id" : row.masterStatus === "ambiguous" ? "Неоднозначно" : "Проверить";
-    const clientWarning = !row.clientExists && tileScenarioResultIsLoadable(row) ? '<br><small>Клиент не найден в справочнике — план по master_id загрузке не мешает</small>' : '';
+    const baseMasterLabel = row.masterStatus === "matched" ? "Готово" : row.masterStatus === "master_only" ? "Master найден · без point_id" : row.masterStatus === "direction_mismatch" ? "Не Плитка" : row.masterStatus === "missing" ? "Не найдено" : row.masterStatus === "point_conflict" ? "Master найден · несколько point_id" : row.masterStatus === "ambiguous" ? "Неоднозначно" : "Проверить";
+    const masterLabel = row.territoryScope === "other" && ["missing", "direction_mismatch", "ambiguous"].includes(row.masterStatus) ? `${baseMasterLabel} · Другие, не блокирует` : baseMasterLabel;
+    const clientWarning = !row.clientExists && tileScenarioResultIsLoadable(row) ? '<br><small>Клиент не найден в справочнике — загрузке не мешает</small>' : '';
     const annualPlan = Math.round(Number(row.annualPlan || 0)).toLocaleString("ru-RU");
     const planMonths = tileScenarioPlanMonthsLabel(row);
-    return `<tr><td>${row.rowNumber}</td><td>${row.territoryScope === "vog" ? "ВОГ" : "Другие"}</td><td><strong>${escapeHtml(row.region)}</strong><br><small>${escapeHtml(row.cityGroup || "")}</small></td><td>${escapeHtml(row.client || "—")}</td><td><strong>${escapeHtml(row.trtName || "—")}</strong><br><small>${escapeHtml(row.city || "")}</small></td><td>${escapeHtml(row.entityKind || "—")}</td><td>${escapeHtml(row.trtFormat || "—")}</td><td>${escapeHtml(row.trtStatus || "—")}</td><td><strong>${annualPlan}</strong></td><td><small>${escapeHtml(planMonths)}</small></td><td><strong>${escapeHtml(masterLabel)}</strong><br><small>${escapeHtml(row.matchMethod || "")}</small>${clientWarning}</td><td>${escapeHtml(row.masterId || "—")}</td><td>${escapeHtml(row.pointId || "—")}</td></tr>`;
+    const canChoose = isSystemAdmin() && Array.isArray(row.masterCandidates) && row.masterCandidates.length && ["ambiguous", "direction_mismatch"].includes(row.masterStatus);
+    const action = canChoose ? `<button class="secondary-button tile-scenario-choose-match" type="button" data-row-number="${row.rowNumber}">Выбрать ТРТ</button>` : "—";
+    return `<tr><td>${row.rowNumber}</td><td>${row.territoryScope === "vog" ? "ВОГ" : "Другие"}</td><td><strong>${escapeHtml(row.region)}</strong><br><small>${escapeHtml(row.cityGroup || "")}</small></td><td>${escapeHtml(row.client || "—")}</td><td><strong>${escapeHtml(row.trtName || "—")}</strong><br><small>${escapeHtml(row.city || "")}</small></td><td>${escapeHtml(row.entityKind || "—")}</td><td>${escapeHtml(row.trtFormat || "—")}</td><td>${escapeHtml(row.trtStatus || "—")}</td><td><strong>${annualPlan}</strong></td><td><small>${escapeHtml(planMonths)}</small></td><td><strong>${escapeHtml(masterLabel)}</strong><br><small>${escapeHtml(row.matchMethod || "")}</small>${clientWarning}</td><td>${escapeHtml(row.masterId || "—")}</td><td>${escapeHtml(row.pointId || "—")}</td><td>${action}</td></tr>`;
   }).join("");
   if ($("tile-scenario-result")) $("tile-scenario-result").hidden = false;
-  if ($("tile-scenario-commit")) $("tile-scenario-commit").disabled = !isSystemAdmin() || !tileScenarioState.previewReady;
+  if ($("tile-scenario-commit")) $("tile-scenario-commit").disabled = !isSystemAdmin() || !tileScenarioState.previewReady || Number(summary.blockingWithPlanCount || 0) > 0;
 }
 
 async function previewTileScenario() {
@@ -5891,20 +5995,7 @@ async function previewTileScenario() {
       progress.textContent = `Проверка TRT Master: ${finished}/${chunks.length}…`;
     }
     tileScenarioState.trtRows = tileScenarioState.trtRows.map((row) => ({ ...row, ...(matches.get(row.rowNumber) || {}) }));
-    const summary = tileScenarioState.summary;
-    summary.vogTrtCount = tileScenarioState.trtRows.filter((row) => row.territoryScope === "vog").length;
-    summary.otherTrtCount = tileScenarioState.trtRows.filter((row) => row.territoryScope === "other").length;
-    summary.loadableCount = tileScenarioState.trtRows.filter(tileScenarioResultIsLoadable).length;
-    summary.noPointCount = tileScenarioState.trtRows.filter((row) => row.masterStatus === "master_only").length;
-    summary.directionMismatchCount = tileScenarioState.trtRows.filter((row) => row.masterStatus === "direction_mismatch").length;
-    summary.missingMasterCount = tileScenarioState.trtRows.filter((row) => row.masterStatus === "missing").length;
-    summary.ambiguousCount = tileScenarioState.trtRows.filter(tileScenarioResultIsAmbiguous).length;
-    summary.pointLinkedCount = tileScenarioState.trtRows.filter((row) => Boolean(row.pointId)).length;
-    summary.missingClientCount = new Set(tileScenarioState.trtRows.filter((row) => !row.clientExists && row.client).map((row) => normalizeText(row.client))).size;
-    summary.clientWarningCount = tileScenarioState.trtRows.filter((row) => !row.clientExists && tileScenarioResultIsLoadable(row)).length;
-    summary.blockingCount = tileScenarioState.trtRows.filter(tileScenarioResultIsProblem).length;
-    summary.blockingWithPlanCount = tileScenarioState.trtRows.filter((row) => tileScenarioResultIsProblem(row) && tileScenarioResultHasPlan(row)).length;
-    summary.blockingWithoutPlanCount = Math.max(0, Number(summary.blockingCount || 0) - Number(summary.blockingWithPlanCount || 0));
+    tileScenarioRecalculateSummary();
     tileScenarioState.previewReady = true;
     progress.hidden = true; renderTileScenario();
   } catch (exc) {
@@ -5934,7 +6025,7 @@ async function commitTileScenario() {
     showToast("Сценарка плитки сохранена");
   } catch (exc) {
     error.textContent = exc?.message || String(exc); error.hidden = false; progress.hidden = true;
-  } finally { button.disabled = !tileScenarioState.previewReady; }
+  } finally { button.disabled = !tileScenarioState.previewReady || Number(tileScenarioState.summary?.blockingWithPlanCount || 0) > 0; }
 }
 
 
@@ -8301,6 +8392,17 @@ $("tile-scenario-preview")?.addEventListener("click", previewTileScenario);
 $("tile-scenario-reset")?.addEventListener("click", () => resetTileScenario(true));
 $("tile-scenario-commit")?.addEventListener("click", commitTileScenario);
 $("tile-scenario-filter")?.addEventListener("change", renderTileScenario);
+$("tile-scenario-table-body")?.addEventListener("click", (event) => {
+  const button = event.target.closest(".tile-scenario-choose-match");
+  if (button) openTileScenarioMatchDialog(Number(button.dataset.rowNumber));
+});
+$("tile-scenario-match-list")?.addEventListener("click", (event) => {
+  const button = event.target.closest(".tile-master-candidate-select");
+  if (button) saveTileScenarioManualMatch(button.dataset.masterId || "");
+});
+$("tile-scenario-match-close")?.addEventListener("click", closeTileScenarioMatchDialog);
+$("tile-scenario-match-cancel")?.addEventListener("click", closeTileScenarioMatchDialog);
+$("tile-scenario-match-modal")?.addEventListener("click", (event) => { if (event.target === $("tile-scenario-match-modal")) closeTileScenarioMatchDialog(); });
 
 $("fdiy-directory-refresh")?.addEventListener("click", () => loadFdiyDirectory(true));
 $("fdiy-directory-search")?.addEventListener("input", renderFdiyDirectory);
