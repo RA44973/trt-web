@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#384e86">
-  <meta name="vog-web-version" content="8.46">
+  <meta name="vog-web-version" content="8.47">
   <title>ТК ВОГ Офис</title>
   <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=20260810-gdebenz-v8-0">
   <link rel="apple-touch-icon" sizes="192x192" href="icon-192.png?v=20260810-gdebenz-v8-0">
@@ -60,6 +60,7 @@
     .tile-scenario-match-list{overflow:auto;padding:14px 18px;display:grid;gap:10px;background:#f7f9fc}
     .tile-master-candidate{display:grid;grid-template-columns:1fr auto;gap:16px;align-items:center;padding:14px 15px;border:1px solid #e0e6ef;border-radius:14px;background:#fff}.tile-master-candidate-main{display:grid;gap:3px;min-width:0}.tile-master-candidate-main strong{font-size:15px}.tile-master-candidate-main span{font-size:12px;color:#47536d}.tile-master-candidate-main small{font-size:11px;color:#7a8599}.tile-master-id{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all}
     .tile-scenario-match-footer{display:flex;justify-content:flex-end;padding:14px 18px;border-top:1px solid #e7ebf3;background:#fff}.tile-scenario-match-error{margin:0 18px 12px;color:#b42318;font-size:12px}
+.tile-scenario-success{margin-top:12px;padding:13px 15px;border:1px solid #b7dfc8;border-radius:12px;background:#eefaf3;color:#17643a;font-weight:700}.tile-scenario-success[hidden]{display:none!important}
 </style>
 </head>
 <body>
@@ -810,7 +811,7 @@
                 </select>
               </div>
               <div class="table-wrap sales-import-table-wrap"><table class="sales-import-table"><thead><tr><th>Строка</th><th>Зона</th><th>Регион / группа города</th><th>Клиент</th><th>ТРТ / город</th><th>Вид</th><th>Формат</th><th>Статус</th><th>План года</th><th>Месяцы с планом</th><th>TRT Master</th><th>master_id</th><th>point_id</th><th>Действие</th></tr></thead><tbody id="tile-scenario-table-body"></tbody></table></div>
-              <div class="sales-import-actions"><button id="tile-scenario-reset" class="secondary-button" type="button">Выбрать другой файл</button><button id="tile-scenario-commit" class="primary-button" type="button" disabled>Сохранить сценарку</button></div>
+              <div id="tile-scenario-success" class="tile-scenario-success" hidden></div><div class="sales-import-actions"><button id="tile-scenario-reset" class="secondary-button" type="button">Выбрать другой файл</button><button id="tile-scenario-commit" class="primary-button" type="button" disabled>Сохранить сценарку</button></div>
             </section>
           </section>
         </section>
@@ -1528,6 +1529,6 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-  <script src="app.js?v=8.45"></script>
+  <script src="app.js?v=8.47"></script>
 </body>
 </html>

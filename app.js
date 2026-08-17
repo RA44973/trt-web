@@ -1,6 +1,6 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.46";
+const VOG_WEB_VERSION = "8.47";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
@@ -2927,9 +2927,10 @@ function renderTrtTilePlan(point) {
     return;
   }
   if (!card.available) {
-    $("trt-card-tile-plan-period").textContent = "ТРТ пока не найдена в активной сценарке";
+    const noActive = card.reason === "no_active_scenario";
+    $("trt-card-tile-plan-period").textContent = noActive ? "Активная сценарка ещё не загружена" : "ТРТ пока не найдена в активной сценарке";
     $("trt-card-tile-plan-value").textContent = "—"; $("trt-card-tile-fact-value").textContent = "—"; $("trt-card-tile-completion").textContent = "—";
-    if (list) list.innerHTML = '<div class="trt-card-ng-empty">Для этой ТРТ нет структуры НГ в активной сценарке.</div>';
+    if (list) list.innerHTML = `<div class="trt-card-ng-empty">${noActive ? "Завершите сохранение сценарки в Настройки → Загрузка → Плитка · сценарка. После успешной загрузки здесь появятся план и НГ." : "Для этой ТРТ нет структуры НГ в активной сценарке."}</div>`;
     return;
   }
   const select = $("trt-card-tile-month");
@@ -5568,6 +5569,8 @@ let tileScenarioState = {
   groupRows: [],
   summary: null,
   previewReady: false,
+  importId: "",
+  saved: false,
 };
 
 const TILE_PLAN_COLUMNS = Object.freeze(["BN","BO","BP","BQ","BR","BS","BT","BU","BV","BW","BX","BY"]);
@@ -5600,6 +5603,28 @@ async function tileScenarioRunPool(items, concurrency, worker) {
     }
   });
   await Promise.all(runners);
+}
+
+function tileScenarioStableImportId() {
+  const summary = tileScenarioState.summary || {};
+  const seed = `${tileScenarioState.sourceYear}|${tileScenarioState.fileName}|${summary.trtCount || 0}|${summary.groupCount || 0}|${summary.planValueCount || 0}`;
+  let hash = 2166136261;
+  for (let i = 0; i < seed.length; i += 1) { hash ^= seed.charCodeAt(i); hash = Math.imul(hash, 16777619); }
+  return `tile-scenario-${tileScenarioState.sourceYear}-${(hash >>> 0).toString(16)}`;
+}
+
+async function tileScenarioApiRetry(payload, timeout = 120000, attempts = 3) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await api("/admin/sales-import", { method: "POST", timeout, body: JSON.stringify(payload) });
+    } catch (error) {
+      lastError = error;
+      if (attempt >= attempts) break;
+      await new Promise((resolve) => setTimeout(resolve, 800 * attempt));
+    }
+  }
+  throw lastError || new Error("Не удалось сохранить пакет сценарки.");
 }
 
 function tileScenarioSharedStrings(xmlText) {
@@ -5762,11 +5787,12 @@ async function readTileScenarioFile(file) {
 }
 
 function resetTileScenario(clearFile = true) {
-  tileScenarioState = { fileName: "", sourceYear: Number($("tile-scenario-year")?.value || 2026), trtRows: [], groupRows: [], summary: null, previewReady: false };
+  tileScenarioState = { fileName: "", sourceYear: Number($("tile-scenario-year")?.value || 2026), trtRows: [], groupRows: [], summary: null, previewReady: false, importId: "", saved: false };
   if ($("tile-scenario-result")) $("tile-scenario-result").hidden = true;
   if ($("tile-scenario-error")) $("tile-scenario-error").hidden = true;
   if ($("tile-scenario-progress")) $("tile-scenario-progress").hidden = true;
-  if ($("tile-scenario-commit")) $("tile-scenario-commit").disabled = true;
+  if ($("tile-scenario-success")) $("tile-scenario-success").hidden = true;
+  if ($("tile-scenario-commit")) { $("tile-scenario-commit").disabled = true; $("tile-scenario-commit").textContent = "Сохранить сценарку"; }
   if (clearFile && $("tile-scenario-file")) $("tile-scenario-file").value = "";
   updateTileScenarioPreviewButton();
 }
@@ -5953,7 +5979,10 @@ function renderTileScenario() {
     return `<tr><td>${row.rowNumber}</td><td>${row.territoryScope === "vog" ? "ВОГ" : "Другие"}</td><td><strong>${escapeHtml(row.region)}</strong><br><small>${escapeHtml(row.cityGroup || "")}</small></td><td>${escapeHtml(row.client || "—")}</td><td><strong>${escapeHtml(row.trtName || "—")}</strong><br><small>${escapeHtml(row.city || "")}</small></td><td>${escapeHtml(row.entityKind || "—")}</td><td>${escapeHtml(row.trtFormat || "—")}</td><td>${escapeHtml(row.trtStatus || "—")}</td><td><strong>${annualPlan}</strong></td><td><small>${escapeHtml(planMonths)}</small></td><td><strong>${escapeHtml(masterLabel)}</strong><br><small>${escapeHtml(row.matchMethod || "")}</small>${clientWarning}</td><td>${escapeHtml(row.masterId || "—")}</td><td>${escapeHtml(row.pointId || "—")}</td><td>${action}</td></tr>`;
   }).join("");
   if ($("tile-scenario-result")) $("tile-scenario-result").hidden = false;
-  if ($("tile-scenario-commit")) $("tile-scenario-commit").disabled = !isSystemAdmin() || !tileScenarioState.previewReady || Number(summary.blockingWithPlanCount || 0) > 0;
+  if ($("tile-scenario-commit")) {
+    $("tile-scenario-commit").disabled = tileScenarioState.saved || !isSystemAdmin() || !tileScenarioState.previewReady || Number(summary.blockingWithPlanCount || 0) > 0;
+    if (!tileScenarioState.saved && $("tile-scenario-commit").textContent === "Загружено ✓") $("tile-scenario-commit").textContent = "Сохранить сценарку";
+  }
 }
 
 async function previewTileScenario() {
@@ -5963,7 +5992,7 @@ async function previewTileScenario() {
   error.hidden = true; progress.hidden = false; progress.textContent = "Чтение 109 столбцов сценарки…"; button.disabled = true;
   try {
     const parsed = await readTileScenarioFile(file);
-    tileScenarioState = { fileName: file.name, sourceYear: Number($("tile-scenario-year")?.value || 2026), trtRows: parsed.trtRows, groupRows: parsed.groupRows, summary: parsed.summary, previewReady: false };
+    tileScenarioState = { fileName: file.name, sourceYear: Number($("tile-scenario-year")?.value || 2026), trtRows: parsed.trtRows, groupRows: parsed.groupRows, summary: parsed.summary, previewReady: false, importId: "", saved: false };
     // Large scenario previews are intentionally sequential. Parallel requests forced
     // several Cloud Function instances to cold-start at once and occasionally surfaced
     // as a browser-level network/CORS failure. A single warm instance is both faster
@@ -6005,28 +6034,67 @@ async function previewTileScenario() {
 
 async function commitTileScenario() {
   if (!tileScenarioState.previewReady || !isSystemAdmin()) return;
-  const button = $("tile-scenario-commit"), error = $("tile-scenario-error"), progress = $("tile-scenario-progress");
-  error.hidden = true; progress.hidden = false; button.disabled = true;
-  const random = Math.random().toString(36).slice(2, 8), importId = `tile-scenario-${Date.now()}-${random}`;
+  const button = $("tile-scenario-commit"), error = $("tile-scenario-error"), progress = $("tile-scenario-progress"), success = $("tile-scenario-success");
+  error.hidden = true;
+  if (success) success.hidden = true;
+  progress.hidden = false;
+  button.disabled = true;
+  button.dataset.originalText = button.dataset.originalText || "Сохранить сценарку";
+  const importId = tileScenarioState.importId || tileScenarioStableImportId();
+  tileScenarioState.importId = importId;
+  tileScenarioState.saved = false;
+  const setProgress = (text, buttonText = text) => {
+    progress.textContent = text;
+    progress.hidden = false;
+    button.textContent = buttonText;
+  };
   try {
-    const trtChunks = tileScenarioChunk(tileScenarioState.trtRows, 500); let doneTrt = 0;
-    await tileScenarioRunPool(trtChunks, 3, async (chunk) => {
-      await api("/admin/sales-import", { method: "POST", timeout: 120000, body: JSON.stringify({ scope: "tile_scenario", operation: "commit_trt", importId, rows: chunk }) });
-      doneTrt += chunk.length; progress.textContent = `Сохраняем ТРТ: ${doneTrt.toLocaleString("ru-RU")} / ${tileScenarioState.trtRows.length.toLocaleString("ru-RU")}…`;
+    const trtChunks = tileScenarioChunk(tileScenarioState.trtRows, 500);
+    let doneTrt = 0;
+    setProgress(`Подготовка загрузки сценарки…`, "Загрузка…");
+    await tileScenarioRunPool(trtChunks, 2, async (chunk) => {
+      await tileScenarioApiRetry({ scope: "tile_scenario", operation: "commit_trt", importId, rows: chunk }, 120000, 3);
+      doneTrt += chunk.length;
+      setProgress(`Сохраняем ТРТ: ${doneTrt.toLocaleString("ru-RU")} / ${tileScenarioState.trtRows.length.toLocaleString("ru-RU")}…`, `ТРТ ${doneTrt}/${tileScenarioState.trtRows.length}`);
     });
+
     const groupRows = tileScenarioState.groupRows.filter((row) => row.trtRowNumber);
-    const groupChunks = tileScenarioChunk(groupRows, 1000); let doneGroups = 0;
-    await tileScenarioRunPool(groupChunks, 3, async (chunk) => {
-      await api("/admin/sales-import", { method: "POST", timeout: 120000, body: JSON.stringify({ scope: "tile_scenario", operation: "commit_groups", importId, rows: chunk }) });
-      doneGroups += chunk.length; progress.textContent = `Сохраняем НГ и планы: ${doneGroups.toLocaleString("ru-RU")} / ${groupRows.length.toLocaleString("ru-RU")}…`;
+    const groupChunks = tileScenarioChunk(groupRows, 1000);
+    let doneGroups = 0;
+    await tileScenarioRunPool(groupChunks, 2, async (chunk) => {
+      await tileScenarioApiRetry({ scope: "tile_scenario", operation: "commit_groups", importId, rows: chunk }, 120000, 3);
+      doneGroups += chunk.length;
+      const pct = groupRows.length ? Math.min(100, Math.round(doneGroups / groupRows.length * 100)) : 100;
+      setProgress(`Сохраняем НГ и планы: ${doneGroups.toLocaleString("ru-RU")} / ${groupRows.length.toLocaleString("ru-RU")}…`, `Загрузка ${pct}%`);
     });
-    await api("/admin/sales-import", { method: "POST", timeout: 90000, body: JSON.stringify({ scope: "tile_scenario", operation: "finalize", importId, fileName: tileScenarioState.fileName, sourceYear: tileScenarioState.sourceYear, summary: tileScenarioState.summary }) });
-    progress.textContent = `Готово. ${tileScenarioState.summary.trtCount.toLocaleString("ru-RU")} ТРТ · ${tileScenarioState.summary.groupCount.toLocaleString("ru-RU")} строк НГ · плановых значений ${Number(tileScenarioState.summary.planValueCount || 0).toLocaleString("ru-RU")}.`;
-    showToast("Сценарка плитки сохранена");
+
+    setProgress("Фиксируем сценарку как активную…", "Завершаем…");
+    const finalResult = await tileScenarioApiRetry({ scope: "tile_scenario", operation: "finalize", importId, fileName: tileScenarioState.fileName, sourceYear: tileScenarioState.sourceYear, summary: tileScenarioState.summary }, 90000, 3);
+    tileScenarioState.saved = true;
+    const finalText = `Загружено ✓ ${tileScenarioState.summary.trtCount.toLocaleString("ru-RU")} ТРТ · ${tileScenarioState.summary.groupCount.toLocaleString("ru-RU")} строк НГ · ${Number(tileScenarioState.summary.planValueCount || 0).toLocaleString("ru-RU")} плановых значений.`;
+    progress.textContent = finalText;
+    progress.hidden = false;
+    button.textContent = "Загружено ✓";
+    button.disabled = true;
+    if (success) { success.textContent = `${finalText} Сценарка ${tileScenarioState.sourceYear} активна. Карточки ТРТ и аналитика используют этот план.`; success.hidden = false; }
+    showToast("Сценарка плитки загружена и активирована");
+    // Force card data to refresh after a successful import without a full reload.
+    (state.trtPoints || []).forEach((point) => { point._tilePlanLoaded = false; point._tilePlanCard = null; });
+    return finalResult;
   } catch (exc) {
-    error.textContent = exc?.message || String(exc); error.hidden = false; progress.hidden = true;
-  } finally { button.disabled = !tileScenarioState.previewReady || Number(tileScenarioState.summary?.blockingWithPlanCount || 0) > 0; }
+    const message = exc?.message || String(exc);
+    error.textContent = `Загрузка не завершена: ${message}. Уже записанные пакеты не потеряны — нажмите «Продолжить загрузку».`;
+    error.hidden = false;
+    progress.textContent = "Загрузка остановлена. Можно продолжить с тем же файлом.";
+    progress.hidden = false;
+    button.textContent = "Продолжить загрузку";
+    button.disabled = false;
+  } finally {
+    if (tileScenarioState.saved) return;
+    button.disabled = !tileScenarioState.previewReady || Number(tileScenarioState.summary?.blockingWithPlanCount || 0) > 0;
+  }
 }
+
 
 
 // ---------------------------------------------------------------------------
