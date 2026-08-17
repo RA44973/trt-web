@@ -1,6 +1,6 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.47";
+const VOG_WEB_VERSION = "8.48";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
@@ -6032,6 +6032,35 @@ async function previewTileScenario() {
   } finally { updateTileScenarioPreviewButton(); }
 }
 
+async function tileScenarioCommitAdaptive(rows, { operation, importId, initialSize, minSize, timeout, onProgress }) {
+  const queue = tileScenarioChunk(rows, initialSize);
+  let done = 0;
+  while (queue.length) {
+    const chunk = queue.shift();
+    try {
+      // One attempt for a large package: if it is too heavy or the request stalls,
+      // split it immediately instead of making the user wait through several long retries.
+      const attempts = chunk.length <= minSize ? 4 : 1;
+      await tileScenarioApiRetry({ scope: "tile_scenario", operation, importId, rows: chunk }, timeout, attempts);
+      done += chunk.length;
+      if (onProgress) onProgress(done, rows.length, chunk.length);
+    } catch (error) {
+      if (chunk.length > minSize) {
+        const middle = Math.ceil(chunk.length / 2);
+        const left = chunk.slice(0, middle);
+        const right = chunk.slice(middle);
+        // Retry the problematic range as two smaller packages. UPSERT makes this safe
+        // even when the server committed the original package but the response was lost.
+        if (right.length) queue.unshift(right);
+        if (left.length) queue.unshift(left);
+        continue;
+      }
+      throw error;
+    }
+  }
+  return done;
+}
+
 async function commitTileScenario() {
   if (!tileScenarioState.previewReady || !isSystemAdmin()) return;
   const button = $("tile-scenario-commit"), error = $("tile-scenario-error"), progress = $("tile-scenario-progress"), success = $("tile-scenario-success");
@@ -6049,27 +6078,32 @@ async function commitTileScenario() {
     button.textContent = buttonText;
   };
   try {
-    const trtChunks = tileScenarioChunk(tileScenarioState.trtRows, 500);
-    let doneTrt = 0;
-    setProgress(`Подготовка загрузки сценарки…`, "Загрузка…");
-    await tileScenarioRunPool(trtChunks, 2, async (chunk) => {
-      await tileScenarioApiRetry({ scope: "tile_scenario", operation: "commit_trt", importId, rows: chunk }, 120000, 3);
-      doneTrt += chunk.length;
-      setProgress(`Сохраняем ТРТ: ${doneTrt.toLocaleString("ru-RU")} / ${tileScenarioState.trtRows.length.toLocaleString("ru-RU")}…`, `ТРТ ${doneTrt}/${tileScenarioState.trtRows.length}`);
+    setProgress("Подготовка надёжной загрузки сценарки…", "Загрузка…");
+
+    // Send only small serial packages. API v6.45 already splits each request into
+    // YDB-safe chunks; keeping the HTTP package small prevents Cloud Function timeouts.
+    await tileScenarioCommitAdaptive(tileScenarioState.trtRows, {
+      operation: "commit_trt", importId, initialSize: 200, minSize: 50, timeout: 75000,
+      onProgress: (done, total) => setProgress(
+        `Сохраняем ТРТ: ${done.toLocaleString("ru-RU")} / ${total.toLocaleString("ru-RU")}…`,
+        `ТРТ ${done}/${total}`
+      ),
     });
 
     const groupRows = tileScenarioState.groupRows.filter((row) => row.trtRowNumber);
-    const groupChunks = tileScenarioChunk(groupRows, 1000);
-    let doneGroups = 0;
-    await tileScenarioRunPool(groupChunks, 2, async (chunk) => {
-      await tileScenarioApiRetry({ scope: "tile_scenario", operation: "commit_groups", importId, rows: chunk }, 120000, 3);
-      doneGroups += chunk.length;
-      const pct = groupRows.length ? Math.min(100, Math.round(doneGroups / groupRows.length * 100)) : 100;
-      setProgress(`Сохраняем НГ и планы: ${doneGroups.toLocaleString("ru-RU")} / ${groupRows.length.toLocaleString("ru-RU")}…`, `Загрузка ${pct}%`);
+    await tileScenarioCommitAdaptive(groupRows, {
+      operation: "commit_groups", importId, initialSize: 360, minSize: 90, timeout: 75000,
+      onProgress: (done, total) => {
+        const pct = total ? Math.min(100, Math.round(done / total * 100)) : 100;
+        setProgress(
+          `Сохраняем НГ и планы: ${done.toLocaleString("ru-RU")} / ${total.toLocaleString("ru-RU")}…`,
+          `Загрузка ${pct}%`
+        );
+      },
     });
 
     setProgress("Фиксируем сценарку как активную…", "Завершаем…");
-    const finalResult = await tileScenarioApiRetry({ scope: "tile_scenario", operation: "finalize", importId, fileName: tileScenarioState.fileName, sourceYear: tileScenarioState.sourceYear, summary: tileScenarioState.summary }, 90000, 3);
+    const finalResult = await tileScenarioApiRetry({ scope: "tile_scenario", operation: "finalize", importId, fileName: tileScenarioState.fileName, sourceYear: tileScenarioState.sourceYear, summary: tileScenarioState.summary }, 90000, 4);
     tileScenarioState.saved = true;
     const finalText = `Загружено ✓ ${tileScenarioState.summary.trtCount.toLocaleString("ru-RU")} ТРТ · ${tileScenarioState.summary.groupCount.toLocaleString("ru-RU")} строк НГ · ${Number(tileScenarioState.summary.planValueCount || 0).toLocaleString("ru-RU")} плановых значений.`;
     progress.textContent = finalText;
@@ -6078,14 +6112,13 @@ async function commitTileScenario() {
     button.disabled = true;
     if (success) { success.textContent = `${finalText} Сценарка ${tileScenarioState.sourceYear} активна. Карточки ТРТ и аналитика используют этот план.`; success.hidden = false; }
     showToast("Сценарка плитки загружена и активирована");
-    // Force card data to refresh after a successful import without a full reload.
     (state.trtPoints || []).forEach((point) => { point._tilePlanLoaded = false; point._tilePlanCard = null; });
     return finalResult;
   } catch (exc) {
     const message = exc?.message || String(exc);
-    error.textContent = `Загрузка не завершена: ${message}. Уже записанные пакеты не потеряны — нажмите «Продолжить загрузку».`;
+    error.textContent = `Загрузка остановлена: ${message}. Записанные данные сохранены. После восстановления связи нажмите «Продолжить загрузку».`;
     error.hidden = false;
-    progress.textContent = "Загрузка остановлена. Можно продолжить с тем же файлом.";
+    progress.textContent = "Не загружено полностью. Можно безопасно продолжить с тем же файлом.";
     progress.hidden = false;
     button.textContent = "Продолжить загрузку";
     button.disabled = false;
