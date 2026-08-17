@@ -97,6 +97,7 @@ let trtSmartSuggestions = [];
 let trtSmartSuggestionIndex = -1;
 let trtSalesChart = null;
 let trtCardSalesChart = null;
+let trtCardSalesChartSignature = "";
 let trtCardFdiyShareChart = null;
 let trtCardFdiySalesMode = "vog";
 let trtAnalyticsChart = null;
@@ -536,6 +537,7 @@ function closeMapInspector() {
     trtCardSalesChart.destroy();
     trtCardSalesChart = null;
   }
+  trtCardSalesChartSignature = "";
   if ($("trt-sales-modal") && !$("trt-sales-modal").hidden) closeTrtSales();
   if ($("trt-ng-modal") && !$("trt-ng-modal").hidden) closeTrtNomenclatureGroups();
   trtInspectorRegion = null;
@@ -3001,7 +3003,7 @@ async function loadSelectedTrtSalesPlan(point, force = false) {
     if (cached) {
       point._salesPlanCard = cached;
       point._salesPlanLoaded = true;
-      if (String(state.trtSelectedId || "") === pointId) renderTrtCardSalesChart(point);
+      /* v8.56: main graph is immutable after card open */
       return cached;
     }
   }
@@ -3011,7 +3013,7 @@ async function loadSelectedTrtSalesPlan(point, force = false) {
       point._salesPlanCard = payload || { available:false, plan:[] };
       point._salesPlanLoaded = true;
       writeTrtPlanSessionCache(pointId, point._salesPlanCard);
-      if (String(state.trtSelectedId || "") === pointId) renderTrtCardSalesChart(point);
+      /* v8.56: main graph is immutable after card open */
       return point._salesPlanCard;
     } catch (error) {
       point._salesPlanCard = { available:false, plan:[], error:error?.message || String(error) };
@@ -3041,7 +3043,6 @@ async function loadTilePlanCard(point, force = false) {
       point._tilePlanLoaded = true;
       if (state.trtSelectedId === selectedId) {
         renderTrtTilePlan(point);
-        renderTrtCardSalesChart(point);
       }
       return point._tilePlanCard;
     } catch (error) {
@@ -3135,11 +3136,7 @@ function renderTrtTilePlan(point) {
 }
 
 
-function renderTrtCardSalesChart(point) {
-  if (trtCardSalesChart) {
-    trtCardSalesChart.destroy();
-    trtCardSalesChart = null;
-  }
+function renderTrtCardSalesChart(point, force = false) {
   const preview = $("trt-card-sales-preview");
   const empty = $("trt-card-sales-empty");
   const canvas = $("trt-card-sales-chart");
@@ -3156,7 +3153,38 @@ function renderTrtCardSalesChart(point) {
   preview.setAttribute("aria-disabled", hasChartData ? "false" : "true");
   preview.setAttribute("aria-label", data.isFdiy ? `Увеличить график: ${data.salesModeLabel}` : "Увеличить график продаж и плана");
   updateTrtFdiySalesControl(point);
+
+  const signature = JSON.stringify({
+    pointId: String(point?.id || ""),
+    mode: trtCardFdiySalesMode,
+    sales2025: data.sales2025,
+    sales2026: data.sales2026,
+    plan: planDataset?.data || null,
+    planLabel: planDataset?.label || "",
+    unit: data.unit,
+  });
+
+  // v8.56: never rebuild the main chart when the visible data did not change.
+  // This also protects the chart from late card/NG/FDIY DOM updates.
+  if (!force && trtCardSalesChart && trtCardSalesChartSignature === signature) return;
+
+  if (trtCardSalesChart) {
+    trtCardSalesChart.destroy();
+    trtCardSalesChart = null;
+  }
+  trtCardSalesChartSignature = signature;
   if (!hasChartData) return;
+
+  // Freeze the compact card chart to the current card width. Chart.js responsive
+  // mode reacts to inspector transitions and scrollbar changes and visually
+  // redraws the chart several times even when the datasets are identical.
+  const rect = preview.getBoundingClientRect();
+  const chartWidth = Math.max(360, Math.round(rect.width || preview.clientWidth || 460));
+  const chartHeight = 248;
+  canvas.width = chartWidth;
+  canvas.height = chartHeight;
+  canvas.style.width = `${chartWidth}px`;
+  canvas.style.height = `${chartHeight}px`;
 
   trtCardSalesChart = new Chart(canvas, {
     type: "bar",
@@ -3169,7 +3197,7 @@ function renderTrtCardSalesChart(point) {
       ].filter(Boolean),
     },
     options: {
-      responsive: true,
+      responsive: false,
       maintainAspectRatio: false,
       animation: false,
       interaction: { mode: "index", intersect: false },
@@ -3286,7 +3314,7 @@ function renderSelectedTrtCard(point) {
   renderTrtAverageSales(point);
   const ngAction = $("trt-card-ng-action");
   if (ngAction) ngAction.hidden = !isTileTrtPoint(point);
-  window.requestAnimationFrame(() => renderTrtCardSalesChart(point));
+  renderTrtCardSalesChart(point);
 }
 
 async function refreshSelectedTrtSales(point, force = false) {
@@ -3303,7 +3331,6 @@ async function refreshSelectedTrtSales(point, force = false) {
         point._salesRefreshLoaded = true;
         if (String(state.trtSelectedId || "") === pointId) {
           renderTrtAverageSales(point);
-          renderTrtCardSalesChart(point);
         }
       }
       return payload?.sales || point.sales || null;
