@@ -1,6 +1,6 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.50";
+const VOG_WEB_VERSION = "8.51";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
@@ -188,12 +188,37 @@ function syncSidebarNavigation(page) {
   });
 }
 
+function apiDiagnosticPath(path) {
+  const value = String(path || "");
+  return value.length > 120 ? `${value.slice(0, 117)}…` : value;
+}
+
+function apiDiagnosticError(message, details = {}) {
+  const error = new Error(message);
+  error.apiDiagnostic = details;
+  return error;
+}
+
+function logApiDiagnostic(details) {
+  try {
+    const diagnostics = JSON.parse(sessionStorage.getItem("vog_api_diagnostics") || "[]");
+    diagnostics.unshift({ at: new Date().toISOString(), ...details });
+    sessionStorage.setItem("vog_api_diagnostics", JSON.stringify(diagnostics.slice(0, 20)));
+  } catch (_) {
+    // Diagnostics must never break the application.
+  }
+  console.warn("VOG API diagnostic", details);
+}
+
 async function api(path, options = {}) {
   const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
   if (state.token) headers.Authorization = `Bearer ${state.token}`;
 
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), options.timeout || 30000);
+  const timeoutMs = Number(options.timeout || 30000);
+  const startedAt = performance.now();
+  const endpoint = apiDiagnosticPath(path);
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
   let response;
   try {
     response = await fetch(`${API_BASE}${path}`, {
@@ -203,15 +228,51 @@ async function api(path, options = {}) {
       cache: "no-store",
     });
   } catch (error) {
+    const elapsedMs = Math.round(performance.now() - startedAt);
+    const seconds = (elapsedMs / 1000).toFixed(1).replace(".0", "");
+    const browserOnline = navigator.onLine !== false;
+    const details = {
+      endpoint,
+      elapsedMs,
+      timeoutMs,
+      kind: error?.name === "AbortError" ? "timeout" : "network",
+      browserOnline,
+      browserError: `${error?.name || "Error"}: ${error?.message || "fetch failed"}`,
+    };
+    logApiDiagnostic(details);
     if (error?.name === "AbortError") {
-      throw new Error("Сервер не ответил вовремя. Проверьте интернет и повторите попытку.");
+      throw apiDiagnosticError(
+        `Таймаут API ${endpoint} · ${seconds} с. Сервер не ответил за ${Math.round(timeoutMs / 1000)} с.`,
+        details
+      );
     }
-    throw new Error("Нет связи с сервером. Проверьте интернет и повторите попытку.");
+    throw apiDiagnosticError(
+      `Ошибка сети API ${endpoint} · ${seconds} с · браузер: ${browserOnline ? "online" : "offline"} · ${details.browserError}`,
+      details
+    );
   } finally {
     window.clearTimeout(timeout);
   }
 
-  const responseText = await response.text();
+  const elapsedMs = Math.round(performance.now() - startedAt);
+  let responseText = "";
+  try {
+    responseText = await response.text();
+  } catch (error) {
+    const details = {
+      endpoint,
+      elapsedMs,
+      status: response.status,
+      kind: "response-read",
+      browserError: `${error?.name || "Error"}: ${error?.message || "response read failed"}`,
+    };
+    logApiDiagnostic(details);
+    throw apiDiagnosticError(
+      `Ответ API ${endpoint} получен (HTTP ${response.status}), но браузер не смог его прочитать · ${(elapsedMs / 1000).toFixed(1)} с.`,
+      details
+    );
+  }
+
   let data = {};
   try { data = responseText ? JSON.parse(responseText) : {}; }
   catch { data = { error: responseText || "Некорректный ответ сервера." }; }
@@ -220,7 +281,21 @@ async function api(path, options = {}) {
     clearSession();
     showLogin();
   }
-  if (!response.ok) throw new Error(data.error || `Ошибка сервера: ${response.status}`);
+  if (!response.ok) {
+    const details = {
+      endpoint,
+      elapsedMs,
+      status: response.status,
+      statusText: response.statusText || "",
+      kind: "http",
+      serverError: data.error || "",
+    };
+    logApiDiagnostic(details);
+    throw apiDiagnosticError(
+      `API ${endpoint} · HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ""} · ${(elapsedMs / 1000).toFixed(1)} с${data.error ? ` · ${data.error}` : ""}`,
+      details
+    );
+  }
   return data;
 }
 
@@ -1074,7 +1149,7 @@ function fillTaskAssigneeFilter() {
 
 async function ensureTrtData() {
   if (state.trtLoaded) return;
-  const payload = await api("/trt-map-data");
+  const payload = await api("/trt-map-data", { timeout: 60000 });
   const points = Array.isArray(payload.points) ? payload.points : [];
   state.trtPoints = points.filter((point) => point && point.id != null);
   state.trtLoaded = true;
