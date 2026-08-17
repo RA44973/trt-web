@@ -1,6 +1,6 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.48";
+const VOG_WEB_VERSION = "8.49";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
@@ -2941,7 +2941,8 @@ function renderTrtTilePlan(point) {
   const monthIndex = Number.isInteger(previous) && previous >= 0 && previous <= 11 ? previous : latest;
   if (select) select.value = String(monthIndex);
   const year = Number(card.sourceYear || 2026);
-  $("trt-card-tile-plan-period").textContent = `${year} · ${Array.isArray(card.groups) ? card.groups.length : 0} НГ`;
+  const planMonthCount = Number(card.planValueCount ?? (Array.isArray(card.plan) ? card.plan.filter((value) => value !== null && value !== undefined && value !== "").length : 0));
+  $("trt-card-tile-plan-period").textContent = `${year} · ${Array.isArray(card.groups) ? card.groups.length : 0} НГ${planMonthCount ? ` · план ${planMonthCount} мес.` : " · план не задан"}`;
   const plan = Number(card.plan?.[monthIndex]);
   const fact = Number(card.fact?.[monthIndex]);
   const hasPlan = card.plan?.[monthIndex] !== null && card.plan?.[monthIndex] !== undefined && Number.isFinite(plan);
@@ -2957,6 +2958,9 @@ function renderTrtTilePlan(point) {
   }
   const groups = Array.isArray(card.groups) ? card.groups : [];
   if (!list) return;
+  // Never leave the stale loading placeholder after the server has answered.
+  // Even when a TRT has no numeric plan, its NG structure must still be visible.
+  list.innerHTML = "";
   if (!groups.length) { list.innerHTML = '<div class="trt-card-ng-empty">Номенклатурные группы для ТРТ не указаны.</div>'; return; }
   const rows = groups.map((group) => {
     const gpRaw = group.plan?.[monthIndex], gfRaw = group.sourceFact?.[monthIndex];
@@ -2966,7 +2970,9 @@ function renderTrtTilePlan(point) {
     const completion = hasGp && gp > 0 && hasGf ? gf / gp * 100 : null;
     return { name: group.name || "Без названия", plan: hasGp ? gp : null, fact: hasGf ? gf : null, completion };
   }).sort((a, b) => Number(b.plan || 0) - Number(a.plan || 0) || a.name.localeCompare(b.name, "ru"));
-  list.innerHTML = rows.map((row) => `<div class="trt-card-ng-row"><strong title="${escapeHtml(row.name)}">${escapeHtml(row.name)}</strong><span>${row.plan === null ? "—" : Math.round(row.plan).toLocaleString("ru-RU")}</span><span>${row.fact === null ? "—" : Math.round(row.fact).toLocaleString("ru-RU")}</span><span class="${row.completion === null ? "" : row.completion >= 100 ? "good" : "bad"}">${row.completion === null ? "—" : `${row.completion.toFixed(0)}%`}</span></div>`).join("");
+  const noPlanMetrics = Number(card.groupPlanValueCount || 0) === 0;
+  const notice = noPlanMetrics ? '<div class="trt-card-ng-empty">Для этой ТРТ в активной сценарке НГ найдены, но числовой план не задан. Ниже показан состав НГ.</div>' : "";
+  list.innerHTML = notice + rows.map((row) => `<div class="trt-card-ng-row"><strong title="${escapeHtml(row.name)}">${escapeHtml(row.name)}</strong><span>${row.plan === null ? "—" : Math.round(row.plan).toLocaleString("ru-RU")}</span><span>${row.fact === null ? "—" : Math.round(row.fact).toLocaleString("ru-RU")}</span><span class="${row.completion === null ? "" : row.completion >= 100 ? "good" : "bad"}">${row.completion === null ? "—" : `${row.completion.toFixed(0)}%`}</span></div>`).join("");
 }
 
 
