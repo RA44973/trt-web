@@ -1,13 +1,14 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.52";
+const VOG_WEB_VERSION = "8.53";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
 const SESSION_KEY = "trt_web_session";
 const TRT_MAP_VIEW_KEY = "trt_web_map_view_v3";
 const TRT_MAP_FILTER_KEY = "trt_web_map_filters_v1";
-const TRT_CARD_CACHE_KEY = "vog_trt_card_cache_v1";
+const TRT_CARD_CACHE_KEY = "vog_trt_card_cache_v2";
+const TRT_PLAN_CACHE_KEY = "vog_trt_sales_plan_cache_v1";
 const trtCardSessionCache = new Map();
 
 function readTrtCardSessionCache(pointId) {
@@ -32,6 +33,24 @@ function writeTrtCardSessionCache(pointId, payload) {
     const keys = Object.keys(parsed);
     while (keys.length > 24) delete parsed[keys.shift()];
     sessionStorage.setItem(TRT_CARD_CACHE_KEY, JSON.stringify(parsed));
+  } catch {}
+}
+function readTrtPlanSessionCache(pointId) {
+  const key = String(pointId || "");
+  if (!key) return null;
+  try { return JSON.parse(sessionStorage.getItem(TRT_PLAN_CACHE_KEY) || "{}")?.[key] || null; }
+  catch { return null; }
+}
+
+function writeTrtPlanSessionCache(pointId, payload) {
+  const key = String(pointId || "");
+  if (!key || !payload) return;
+  try {
+    const parsed = JSON.parse(sessionStorage.getItem(TRT_PLAN_CACHE_KEY) || "{}");
+    parsed[key] = payload;
+    const keys = Object.keys(parsed);
+    while (keys.length > 40) delete parsed[keys.shift()];
+    sessionStorage.setItem(TRT_PLAN_CACHE_KEY, JSON.stringify(parsed));
   } catch {}
 }
 const TRT_MAP_MODE_KEY = "trt_web_map_mode_v1";
@@ -518,6 +537,7 @@ function closeMapInspector() {
     trtCardSalesChart = null;
   }
   if ($("trt-sales-modal") && !$("trt-sales-modal").hidden) closeTrtSales();
+  if ($("trt-ng-modal") && !$("trt-ng-modal").hidden) closeTrtNomenclatureGroups();
   trtInspectorRegion = null;
   state.trtSelectedId = "";
   if ($("trt-map-empty")) $("trt-map-empty").hidden = false;
@@ -1408,7 +1428,7 @@ function renderVisitFourP(visit) {
 }
 
 function trtDisplayName(point) {
-  const raw = String(point?.client || point?.holding || "ТРТ").trim();
+  const raw = String(point?.canonicalTrtName || point?.trtName || point?.name || point?.pointName || point?.client || point?.holding || "ТРТ").trim();
   const format = String(point?.format || "").trim();
   if (!format) return raw;
   const escaped = format.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -2946,28 +2966,63 @@ function isTileTrtPoint(point) {
 }
 
 function tilePlanArray(point) {
-  const values = point?._tilePlanCard?.plan;
+  const values = point?._salesPlanCard?.plan;
   return (Array.isArray(values) ? values : []).concat(Array(12).fill(null)).slice(0, 12);
 }
 
 function tilePlanDataset(point, compact = false) {
-  if (!isTileTrtPoint(point) || !point?._tilePlanCard?.available) return null;
+  const card = point?._salesPlanCard;
+  if (!card?.available) return null;
   if (isFdiyTrtPoint(point) && trtCardFdiySalesMode === "total") return null;
   const plan = tilePlanArray(point);
   if (!plan.some((value) => value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value)))) return null;
   return {
     type: "line",
-    label: isFdiyTrtPoint(point) ? `План ВОГ ${point._tilePlanCard.sourceYear || 2026}` : `План ${point._tilePlanCard.sourceYear || 2026}`,
+    label: `План ${card.sourceYear || analyticsCurrentYear()}`,
     data: plan,
     borderColor: "#d97706",
     backgroundColor: "rgba(217,119,6,.08)",
     borderWidth: compact ? 2 : 3,
     pointRadius: compact ? 2 : 3,
-    pointHoverRadius: 4,
+    pointHoverRadius: 5,
     tension: .25,
-    spanGaps: false,
-    order: 0,
+    spanGaps: true,
+    order: 1,
   };
+}
+
+async function loadSelectedTrtSalesPlan(point, force = false) {
+  if (!point) return null;
+  const pointId = String(point.id || "");
+  if (!pointId) return null;
+  if (point._salesPlanLoading) return point._salesPlanLoading;
+  if (!force && point._salesPlanLoaded) return point._salesPlanCard || null;
+  if (!force) {
+    const cached = readTrtPlanSessionCache(pointId);
+    if (cached) {
+      point._salesPlanCard = cached;
+      point._salesPlanLoaded = true;
+      if (String(state.trtSelectedId || "") === pointId) renderTrtCardSalesChart(point);
+      return cached;
+    }
+  }
+  point._salesPlanLoading = (async () => {
+    try {
+      const payload = await api(`/trt-map-data?view=sales_plan&point_id=${encodeURIComponent(pointId)}`, { timeout: 15000 });
+      point._salesPlanCard = payload || { available:false, plan:[] };
+      point._salesPlanLoaded = true;
+      writeTrtPlanSessionCache(pointId, point._salesPlanCard);
+      if (String(state.trtSelectedId || "") === pointId) renderTrtCardSalesChart(point);
+      return point._salesPlanCard;
+    } catch (error) {
+      point._salesPlanCard = { available:false, plan:[], error:error?.message || String(error) };
+      point._salesPlanLoaded = true;
+      return point._salesPlanCard;
+    } finally {
+      point._salesPlanLoading = null;
+    }
+  })();
+  return point._salesPlanLoading;
 }
 
 async function loadTilePlanCard(point, force = false) {
@@ -3200,9 +3255,6 @@ function applySelectedTrtCardPayload(point, payload) {
   if (payload.tilePlanCard !== undefined && payload.tilePlanCard !== null) {
     point._tilePlanCard = payload.tilePlanCard;
     point._tilePlanLoaded = true;
-  } else if (isTileTrtPoint(point)) {
-    point._tilePlanCard = { available:false, reason:"trt_not_in_active_scenario", groups:[], plan:[] };
-    point._tilePlanLoaded = true;
   }
   if (payload.fdiyCard && typeof payload.fdiyCard === "object") {
     const fdiy = payload.fdiyCard;
@@ -3233,7 +3285,8 @@ function renderSelectedTrtCard(point) {
   renderTrtFdiyShare(point);
   updateTrtFdiySalesControl(point);
   renderTrtAverageSales(point);
-  renderTrtTilePlan(point);
+  const ngAction = $("trt-card-ng-action");
+  if (ngAction) ngAction.hidden = !isTileTrtPoint(point);
   window.requestAnimationFrame(() => renderTrtCardSalesChart(point));
 }
 
@@ -3250,22 +3303,15 @@ async function loadSelectedTrtCard(point, force = false) {
       return cached;
     }
   }
-  if (isTileTrtPoint(point)) {
-    point._tilePlanLoaded = false;
-    point._tilePlanCard = null;
-  }
   point._selectedCardLoading = (async () => {
     try {
-      const payload = await api(`/trt-map-data?view=card&point_id=${encodeURIComponent(pointId)}`, { timeout: 45000 });
+      const payload = await api(`/trt-map-data?view=card&point_id=${encodeURIComponent(pointId)}`, { timeout: 20000 });
       applySelectedTrtCardPayload(point, payload);
       writeTrtCardSessionCache(pointId, payload);
       renderSelectedTrtCard(point);
+      if (isFdiyTrtPoint(point) && !point._fdiyCardLoaded) window.setTimeout(() => loadFdiyCardSeries(point), 0);
       return payload;
     } catch (error) {
-      if (isTileTrtPoint(point)) {
-        point._tilePlanCard = { available:false, reason:"load_error", sourceYear:analyticsCurrentYear(), groups:[], plan:[], error:error?.message || String(error) };
-        point._tilePlanLoaded = true;
-      }
       if (String(state.trtSelectedId || "") === pointId) {
         renderSelectedTrtCard(point);
         const target = $("trt-card-sales-empty");
@@ -3300,9 +3346,10 @@ function openTrtCard(pointId, focusMap = true) {
   const cached = readTrtCardSessionCache(point.id);
   if (cached) applySelectedTrtCardPayload(point, cached);
   renderSelectedTrtCard(point);
-  // v8.52: start the only heavy request immediately on TRT selection. Sales,
-  // FDIY and Tile plan/NG are returned for this point only and cached per session.
+  // v8.53: core card and overall monthly plan load independently in parallel.
+  // Nomenclature groups are never requested until the user presses the button.
   if (!cached) loadSelectedTrtCard(point, false);
+  loadSelectedTrtSalesPlan(point, false);
 
   if (focusMap && trtMap && Number.isFinite(Number(point.lat)) && Number.isFinite(Number(point.lon))) {
     setTrtMainView("map");
@@ -4875,6 +4922,30 @@ function setTrtAnalyticsTab(tab) {
   $("analytics-structure-content").hidden = trtAnalyticsTab !== "structure";
   closeAnalyticsFormatMenu();
   renderActiveAnalyticsTab();
+}
+
+function openTrtNomenclatureGroups() {
+  const point = selectedTrtPoint();
+  if (!point || !isTileTrtPoint(point)) return;
+  const modal = $("trt-ng-modal");
+  if (!modal) return;
+  $("trt-ng-modal-title").textContent = trtDisplayName(point);
+  $("trt-ng-modal-subtitle").textContent = `${point.holding || point.client || ""}${point.address ? ` · ${point.address}` : ""}`;
+  modal.hidden = false;
+  const block = $("trt-card-tile-plan");
+  if (block) block.hidden = false;
+  if (!point._tilePlanLoaded) {
+    const list = $("trt-card-ng-list");
+    if (list) list.innerHTML = '<div class="trt-card-ng-empty">Загрузка номенклатурных групп…</div>';
+    loadTilePlanCard(point, false);
+  } else {
+    renderTrtTilePlan(point);
+  }
+}
+
+function closeTrtNomenclatureGroups() {
+  const modal = $("trt-ng-modal");
+  if (modal) modal.hidden = true;
 }
 
 function openTrtSales(sourceElement = $("trt-card-sales-preview")) {
@@ -7780,6 +7851,9 @@ $("analytics-format-clear").addEventListener("click", () => {
 });
 document.addEventListener("click", closeAnalyticsFormatMenu);
 
+$("trt-card-ng-button")?.addEventListener("click", openTrtNomenclatureGroups);
+$("trt-ng-modal-close")?.addEventListener("click", closeTrtNomenclatureGroups);
+$("trt-ng-modal")?.addEventListener("click", (event) => { if (event.target === $("trt-ng-modal")) closeTrtNomenclatureGroups(); });
 $("trt-card-sales-preview")?.addEventListener("click", (event) => openTrtSales(event.currentTarget));
 $("trt-card-sales-preview")?.addEventListener("keydown", (event) => {
   if (event.key !== "Enter" && event.key !== " ") return;

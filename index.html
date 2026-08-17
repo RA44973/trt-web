@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#384e86">
-  <meta name="vog-web-version" content="8.52">
+  <meta name="vog-web-version" content="8.53">
   <title>ТК ВОГ Офис</title>
   <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=20260810-gdebenz-v8-0">
   <link rel="apple-touch-icon" sizes="192x192" href="icon-192.png?v=20260810-gdebenz-v8-0">
@@ -44,7 +44,7 @@
     .trt-card-average-value-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
     .trt-card-average-period { color:#94a3b8; font-size:11px; line-height:1.2; font-weight:600; }
 
-    .trt-card-tile-plan{margin-top:14px;padding:14px;border:1px solid #e1e7f0;border-radius:16px;background:#fff}.trt-card-tile-plan[hidden]{display:none!important}
+    .trt-card-tile-plan{margin-top:14px;padding:14px;border:1px solid #e1e7f0;border-radius:16px;background:#fff}.trt-card-tile-plan[hidden]{display:none!important}.trt-card-ng-action{margin-top:12px;display:flex;justify-content:flex-start}.trt-card-ng-action[hidden]{display:none!important}.trt-card-ng-button{border:1px solid #d5deeb;background:#fff;color:#2d426d;border-radius:10px;padding:9px 13px;font-weight:700;cursor:pointer}.trt-card-ng-button:hover{background:#f6f8fc}.trt-ng-modal .sales-modal{max-width:900px}.trt-ng-modal .trt-card-tile-plan{margin-top:0;border:0;padding:0}.trt-ng-modal .trt-card-ng-list{max-height:min(55vh,560px);overflow:auto;padding-right:4px}
     .trt-card-tile-plan-head{display:flex;align-items:end;justify-content:space-between;gap:10px;margin-bottom:10px}.trt-card-tile-plan-head strong{display:block;font-size:14px;color:#1f2e50}.trt-card-tile-plan-head span{display:block;font-size:11px;color:#7b879d;margin-top:2px}.trt-card-tile-plan-head select{max-width:118px;border:1px solid #d9e1ee;border-radius:9px;padding:7px 8px;background:#fff;color:#243658;font-weight:700}
     .trt-card-tile-kpis{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin:8px 0}.trt-card-tile-kpis div{padding:8px;border-radius:10px;background:#f6f8fc}.trt-card-tile-kpis span{display:block;font-size:10px;color:#7b879d}.trt-card-tile-kpis strong{display:block;margin-top:2px;font-size:14px;color:#233861}.trt-card-tile-audit{font-size:10px;line-height:1.35;color:#9a5a00;background:#fff7e8;border-radius:9px;padding:7px 8px;margin:8px 0}.trt-card-tile-audit[hidden]{display:none!important}
     .trt-card-ng-list{display:grid;gap:6px;max-height:230px;overflow:auto}.trt-card-ng-row{display:grid;grid-template-columns:minmax(0,1fr) 62px 62px 52px;gap:6px;align-items:center;padding:7px 8px;border:1px solid #edf1f6;border-radius:9px;font-size:10px}.trt-card-ng-row strong{font-size:11px;color:#243658;overflow:hidden;text-overflow:ellipsis}.trt-card-ng-row span{text-align:right;color:#59677f}.trt-card-ng-row .good{color:#14804a;font-weight:800}.trt-card-ng-row .bad{color:#c93b2d;font-weight:800}.trt-card-ng-empty{font-size:11px;color:#7b879d;padding:8px 0}
@@ -1059,19 +1059,9 @@
                       </div>
                     </div>
                   </section>
-                  <section id="trt-card-tile-plan" class="trt-card-tile-plan" hidden>
-                    <div class="trt-card-tile-plan-head">
-                      <div><strong>Плитка · план по НГ</strong><span id="trt-card-tile-plan-period">—</span></div>
-                      <select id="trt-card-tile-month" aria-label="Месяц плана"></select>
-                    </div>
-                    <div class="trt-card-tile-kpis">
-                      <div><span>План</span><strong id="trt-card-tile-plan-value">—</strong></div>
-                      <div><span>Факт ТРТ</span><strong id="trt-card-tile-fact-value">—</strong></div>
-                      <div><span>Выполнение</span><strong id="trt-card-tile-completion">—</strong></div>
-                    </div>
-                    <div id="trt-card-tile-audit" class="trt-card-tile-audit" hidden></div>
-                    <div id="trt-card-ng-list" class="trt-card-ng-list"></div>
-                  </section>
+                  <div id="trt-card-ng-action" class="trt-card-ng-action" hidden>
+                    <button id="trt-card-ng-button" class="trt-card-ng-button" type="button">Номенклатурные группы</button>
+                  </div>
                 </div>
               </section>
             </div>
@@ -1504,6 +1494,31 @@
     </section>
   </div>
 
+  <div id="trt-ng-modal" class="sales-modal-backdrop trt-ng-modal" hidden>
+    <section class="sales-modal" role="dialog" aria-modal="true" aria-labelledby="trt-ng-modal-title">
+      <header class="sales-modal-header">
+        <div>
+          <h2 id="trt-ng-modal-title">Номенклатурные группы</h2>
+          <p id="trt-ng-modal-subtitle" class="sales-modal-subtitle"></p>
+        </div>
+        <button id="trt-ng-modal-close" class="icon-button sales-modal-close" type="button" aria-label="Закрыть">×</button>
+      </header>
+      <section id="trt-card-tile-plan" class="trt-card-tile-plan">
+        <div class="trt-card-tile-plan-head">
+          <div><strong>Плитка · план и продажи по НГ</strong><span id="trt-card-tile-plan-period">—</span></div>
+          <select id="trt-card-tile-month" aria-label="Месяц плана"></select>
+        </div>
+        <div class="trt-card-tile-kpis">
+          <div><span>План</span><strong id="trt-card-tile-plan-value">—</strong></div>
+          <div><span>Факт ТРТ</span><strong id="trt-card-tile-fact-value">—</strong></div>
+          <div><span>Выполнение</span><strong id="trt-card-tile-completion">—</strong></div>
+        </div>
+        <div id="trt-card-tile-audit" class="trt-card-tile-audit" hidden></div>
+        <div id="trt-card-ng-list" class="trt-card-ng-list"></div>
+      </section>
+    </section>
+  </div>
+
   <div id="trt-sales-modal" class="sales-modal-backdrop" hidden>
     <section class="sales-modal" role="dialog" aria-modal="true" aria-labelledby="trt-sales-modal-title">
       <header class="sales-modal-header">
@@ -1529,6 +1544,6 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-  <script src="app.js?v=8.52"></script>
+  <script src="app.js?v=8.53"></script>
 </body>
 </html>
