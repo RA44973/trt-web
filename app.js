@@ -1,6 +1,6 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.55";
+const VOG_WEB_VERSION = "8.57";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
@@ -9,6 +9,9 @@ const TRT_MAP_VIEW_KEY = "trt_web_map_view_v3";
 const TRT_MAP_FILTER_KEY = "trt_web_map_filters_v1";
 const TRT_CARD_CACHE_KEY = "vog_trt_card_cache_v3";
 const TRT_PLAN_CACHE_KEY = "vog_trt_sales_plan_cache_v2";
+const FDIY_CARD_PREVIEW_CACHE_KEY = "vog_fdiy_card_preview_v2";
+const FDIY_CARD_PREVIEW_TTL_MS = 10 * 60 * 1000;
+let fdiyCardPreviewPromise = null;
 const trtCardSessionCache = new Map();
 
 function readTrtCardSessionCache(pointId) {
@@ -52,6 +55,80 @@ function writeTrtPlanSessionCache(pointId, payload) {
     while (keys.length > 40) delete parsed[keys.shift()];
     sessionStorage.setItem(TRT_PLAN_CACHE_KEY, JSON.stringify(parsed));
   } catch {}
+}
+
+
+function readFdiyPreviewSession() {
+  try {
+    const payload = JSON.parse(sessionStorage.getItem(FDIY_CARD_PREVIEW_CACHE_KEY) || "null");
+    if (!payload || !Array.isArray(payload.points)) return null;
+    if (Date.now() - Number(payload.savedAt || 0) > FDIY_CARD_PREVIEW_TTL_MS) return null;
+    return payload.points;
+  } catch { return null; }
+}
+
+function writeFdiyPreviewSession(points) {
+  try {
+    sessionStorage.setItem(FDIY_CARD_PREVIEW_CACHE_KEY, JSON.stringify({ savedAt: Date.now(), points: Array.isArray(points) ? points : [] }));
+  } catch {}
+}
+
+function applyFdiyPreviewRows(rows, renderIfEmpty = false) {
+  if (!Array.isArray(rows) || !rows.length || !state?.trtPoints?.length) return;
+  const byId = new Map(state.trtPoints.map((point) => [String(point.id || ""), point]));
+  rows.forEach((row) => {
+    const point = byId.get(String(row?.pointId || ""));
+    if (!point) return;
+    if (row.fdiySales && typeof row.fdiySales === "object") point.fdiySales = row.fdiySales;
+    if (row.network) point.fdiyNetwork = row.network;
+    if (row.networkId) point.fdiyNetworkId = row.networkId;
+    if (row.storeCode) point.fdiyStoreCode = row.storeCode;
+    if (row.masterId) point.fdiyMasterId = row.masterId;
+    point.salesSource = "FDIY";
+    point._fdiyCardLoaded = Boolean(row.fdiySales);
+    const vog = row?.fdiySales?.vog;
+    if (vog && typeof vog === "object") point.sales = vog;
+    if (renderIfEmpty && String(state.trtSelectedId || "") === String(point.id || "") && !trtCardSalesChart) {
+      renderTrtFdiyShare(point);
+      renderTrtAverageSales(point);
+      renderTrtCardSalesChart(point, true);
+    }
+  });
+}
+
+async function preloadFdiyCardPreviews(force = false) {
+  if (!force) {
+    const cached = readFdiyPreviewSession();
+    if (cached?.length) applyFdiyPreviewRows(cached, false);
+  }
+  if (fdiyCardPreviewPromise && !force) return fdiyCardPreviewPromise;
+  fdiyCardPreviewPromise = (async () => {
+    try {
+      const payload = await api("/trt-map-data?view=fdiy_preview", { timeout: 30000 });
+      const rows = Array.isArray(payload?.points) ? payload.points : [];
+      if (rows.length) {
+        writeFdiyPreviewSession(rows);
+        applyFdiyPreviewRows(rows, false);
+      }
+      return rows;
+    } catch (error) {
+      console.warn("FDIY preview preload failed", error);
+      return [];
+    } finally {
+      fdiyCardPreviewPromise = null;
+    }
+  })();
+  return fdiyCardPreviewPromise;
+}
+
+function hydrateFdiyPointFromSession(point) {
+  if (!point || point._fdiyCardLoaded) return Boolean(point?._fdiyCardLoaded);
+  const cached = readFdiyPreviewSession();
+  if (!cached?.length) return false;
+  const row = cached.find((item) => String(item?.pointId || "") === String(point.id || ""));
+  if (!row) return false;
+  applyFdiyPreviewRows([row], false);
+  return Boolean(point._fdiyCardLoaded);
 }
 const TRT_MAP_MODE_KEY = "trt_web_map_mode_v1";
 const DEFAULT_MAP_VIEW = Object.freeze({ center: [58.3, 47.0], zoom: 5 });
@@ -1203,6 +1280,9 @@ async function ensureTrtData() {
   state.trtPoints = points.filter((point) => point && point.id != null);
   state.trtLoaded = true;
   state.trtFitRequested = false;
+  // Start compact FDIY history preload immediately, but never block the map.
+  // A session snapshot is applied synchronously on reload, so network cards open like ordinary TRT cards.
+  void preloadFdiyCardPreviews(false);
   fillTrtFilters();
   populateAnalyticsFilters(true);
 }
@@ -2788,6 +2868,7 @@ function isFdiyTrtPoint(point) {
 
 async function loadFdiyCardSeries(point, force = false) {
   if (!point || !isFdiyTrtPoint(point)) return null;
+  if (!force && hydrateFdiyPointFromSession(point)) return point.fdiySales || null;
   if (point._fdiyCardLoading) return point._fdiyCardLoading;
   if (point._fdiyCardLoaded && !force) return point.fdiySales || null;
 
@@ -2800,7 +2881,7 @@ async function loadFdiyCardSeries(point, force = false) {
 
   point._fdiyCardLoading = (async () => {
     try {
-      const payload = await api(`/trt-map-data?view=fdiy_card&point_id=${encodeURIComponent(selectedId)}`, { timeout: 90000 });
+      const payload = await api(`/trt-map-data?view=fdiy_card&point_id=${encodeURIComponent(selectedId)}`, { timeout: 20000 });
       point._fdiyCardLoaded = true;
       point.fdiySales = payload?.fdiySales || { vog: {}, total: {} };
       if (payload?.network) point.fdiyNetwork = payload.network;
@@ -2813,6 +2894,8 @@ async function loadFdiyCardSeries(point, force = false) {
         renderTrtFdiyShare(point);
         updateTrtFdiySalesControl(point);
         renderTrtAverageSales(point);
+        // Only needed on the rare first click before the background/session preview is ready.
+        if (!trtCardSalesChart) renderTrtCardSalesChart(point, true);
       }
       return point.fdiySales;
     } catch (error) {
@@ -2841,12 +2924,18 @@ function trtFdiySeries(point, mode, year) {
 function trtSalesData(point, mode = null) {
   const isFdiy = isFdiyTrtPoint(point);
   const salesMode = isFdiy ? (mode === "total" ? "total" : "vog") : "vog";
-  const sales2025 = isFdiy
+  let sales2025 = isFdiy
     ? trtFdiySeries(point, salesMode, "2025")
     : (Array.isArray(point?.sales?.["2025"]) ? point.sales["2025"] : []).concat(Array(12).fill(null)).slice(0, 12);
-  const sales2026 = isFdiy
+  let sales2026 = isFdiy
     ? trtFdiySeries(point, salesMode, "2026")
     : (Array.isArray(point?.sales?.["2026"]) ? point.sales["2026"] : []).concat(Array(12).fill(null)).slice(0, 12);
+  // For FDIY default VOG mode, use the embedded/base VOG preview immediately while
+  // the compact FDIY snapshot is preloading. Total sell-out remains explicit/lazy.
+  if (isFdiy && salesMode === "vog" && ![...sales2025, ...sales2026].some((value) => value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value)))) {
+    sales2025 = (Array.isArray(point?.sales?.["2025"]) ? point.sales["2025"] : []).concat(Array(12).fill(null)).slice(0, 12);
+    sales2026 = (Array.isArray(point?.sales?.["2026"]) ? point.sales["2026"] : []).concat(Array(12).fill(null)).slice(0, 12);
+  }
   const unit = trtUnit(point);
   const ytd2025 = sumSales(sales2025, 6);
   const ytd2026 = sumSales(sales2026, 6);
@@ -3003,7 +3092,7 @@ async function loadSelectedTrtSalesPlan(point, force = false) {
     if (cached) {
       point._salesPlanCard = cached;
       point._salesPlanLoaded = true;
-      /* v8.56: main graph is immutable after card open */
+      /* v8.57: main graph is immutable after card open */
       return cached;
     }
   }
@@ -3013,7 +3102,7 @@ async function loadSelectedTrtSalesPlan(point, force = false) {
       point._salesPlanCard = payload || { available:false, plan:[] };
       point._salesPlanLoaded = true;
       writeTrtPlanSessionCache(pointId, point._salesPlanCard);
-      /* v8.56: main graph is immutable after card open */
+      /* v8.57: main graph is immutable after card open */
       return point._salesPlanCard;
     } catch (error) {
       point._salesPlanCard = { available:false, plan:[], error:error?.message || String(error) };
@@ -3164,7 +3253,7 @@ function renderTrtCardSalesChart(point, force = false) {
     unit: data.unit,
   });
 
-  // v8.56: never rebuild the main chart when the visible data did not change.
+  // v8.57: never rebuild the main chart when the visible data did not change.
   // This also protects the chart from late card/NG/FDIY DOM updates.
   if (!force && trtCardSalesChart && trtCardSalesChartSignature === signature) return;
 
@@ -3399,7 +3488,8 @@ function openTrtCard(pointId, focusMap = true) {
   setMapInspectorView("trt");
 
   trtCardFdiySalesMode = "vog";
-  // v8.55: fact + monthly plan are already in the lightweight map payload.
+  if (isFdiyTrtPoint(point)) hydrateFdiyPointFromSession(point);
+  // v8.57: fact + correct monthly plan are already in the lightweight map payload.
   // Attach the plan BEFORE the first card render. No cached core-card payload or
   // background sales/plan refresh is allowed to replace the visible chart.
   if (point.salesPlanCard) {
@@ -4302,6 +4392,9 @@ function renderTrtMap() {
       title: point.client || point.holding || "ТРТ",
     });
     marker.bindTooltip(point.client || point.holding || "ТРТ");
+    marker.on("mouseover", () => {
+      if (isFdiyTrtPoint(point) && !point._fdiyCardLoaded) void preloadFdiyCardPreviews(false);
+    });
     marker.on("click", () => openTrtCard(point.id, false));
     trtMarkerLayer.addLayer(marker);
   });
