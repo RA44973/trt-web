@@ -1,12 +1,39 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.51";
+const VOG_WEB_VERSION = "8.52";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
 const SESSION_KEY = "trt_web_session";
 const TRT_MAP_VIEW_KEY = "trt_web_map_view_v3";
 const TRT_MAP_FILTER_KEY = "trt_web_map_filters_v1";
+const TRT_CARD_CACHE_KEY = "vog_trt_card_cache_v1";
+const trtCardSessionCache = new Map();
+
+function readTrtCardSessionCache(pointId) {
+  const key = String(pointId || "");
+  if (!key) return null;
+  if (trtCardSessionCache.has(key)) return trtCardSessionCache.get(key);
+  try {
+    const parsed = JSON.parse(sessionStorage.getItem(TRT_CARD_CACHE_KEY) || "{}");
+    const payload = parsed?.[key] || null;
+    if (payload) trtCardSessionCache.set(key, payload);
+    return payload;
+  } catch { return null; }
+}
+
+function writeTrtCardSessionCache(pointId, payload) {
+  const key = String(pointId || "");
+  if (!key || !payload) return;
+  trtCardSessionCache.set(key, payload);
+  try {
+    const parsed = JSON.parse(sessionStorage.getItem(TRT_CARD_CACHE_KEY) || "{}");
+    parsed[key] = payload;
+    const keys = Object.keys(parsed);
+    while (keys.length > 24) delete parsed[keys.shift()];
+    sessionStorage.setItem(TRT_CARD_CACHE_KEY, JSON.stringify(parsed));
+  } catch {}
+}
 const TRT_MAP_MODE_KEY = "trt_web_map_mode_v1";
 const DEFAULT_MAP_VIEW = Object.freeze({ center: [58.3, 47.0], zoom: 5 });
 const PAGES = new Set(["employees", "sales-import", "trt-directory", "activity", "tasks", "visits", "trt", "region-analytics", "logistics", "trt-master-audit"]);
@@ -1149,7 +1176,7 @@ function fillTaskAssigneeFilter() {
 
 async function ensureTrtData() {
   if (state.trtLoaded) return;
-  const payload = await api("/trt-map-data", { timeout: 60000 });
+  const payload = await api("/trt-map-data", { timeout: 30000 });
   const points = Array.isArray(payload.points) ? payload.points : [];
   state.trtPoints = points.filter((point) => point && point.id != null);
   state.trtLoaded = true;
@@ -3166,6 +3193,95 @@ function renderTrtAverageSales(point) {
   badge.style.background = trtColor(point.size);
 }
 
+function applySelectedTrtCardPayload(point, payload) {
+  if (!point || !payload) return point;
+  const detail = payload.point && typeof payload.point === "object" ? payload.point : null;
+  if (detail) Object.assign(point, detail, { id: point.id || detail.id });
+  if (payload.tilePlanCard !== undefined && payload.tilePlanCard !== null) {
+    point._tilePlanCard = payload.tilePlanCard;
+    point._tilePlanLoaded = true;
+  } else if (isTileTrtPoint(point)) {
+    point._tilePlanCard = { available:false, reason:"trt_not_in_active_scenario", groups:[], plan:[] };
+    point._tilePlanLoaded = true;
+  }
+  if (payload.fdiyCard && typeof payload.fdiyCard === "object") {
+    const fdiy = payload.fdiyCard;
+    if (fdiy.fdiySales) point.fdiySales = fdiy.fdiySales;
+    if (fdiy.network) point.fdiyNetwork = fdiy.network;
+    if (fdiy.networkId) point.fdiyNetworkId = fdiy.networkId;
+    if (fdiy.storeCode) point.fdiyStoreCode = fdiy.storeCode;
+    if (fdiy.masterId) point.fdiyMasterId = fdiy.masterId;
+    point._fdiyCardLoaded = true;
+  }
+  point._selectedCardLoaded = true;
+  return point;
+}
+
+function renderSelectedTrtCard(point) {
+  if (!point || String(state.trtSelectedId || "") !== String(point.id || "")) return;
+  $("trt-card-name").textContent = trtDisplayName(point);
+  $("trt-card-direction").textContent = point.direction || "—";
+  $("trt-card-manager").textContent = shortPersonName(point.manager) || "—";
+  $("trt-card-holding").textContent = point.holding || point.client || "—";
+  $("trt-card-format").textContent = point.format || "—";
+  const origin = trtOriginKey(point);
+  $("trt-card-status").textContent = origin === "base"
+    ? trtStatusLabel(point)
+    : `${trtStatusLabel(point)} · ${trtOriginLabel(origin)}`;
+  $("trt-card-address").textContent = point.address || "—";
+  renderTrtFourP(point);
+  renderTrtFdiyShare(point);
+  updateTrtFdiySalesControl(point);
+  renderTrtAverageSales(point);
+  renderTrtTilePlan(point);
+  window.requestAnimationFrame(() => renderTrtCardSalesChart(point));
+}
+
+async function loadSelectedTrtCard(point, force = false) {
+  if (!point) return null;
+  const pointId = String(point.id || "");
+  if (!pointId) return null;
+  if (point._selectedCardLoading) return point._selectedCardLoading;
+  if (!force) {
+    const cached = readTrtCardSessionCache(pointId);
+    if (cached) {
+      applySelectedTrtCardPayload(point, cached);
+      renderSelectedTrtCard(point);
+      return cached;
+    }
+  }
+  if (isTileTrtPoint(point)) {
+    point._tilePlanLoaded = false;
+    point._tilePlanCard = null;
+  }
+  point._selectedCardLoading = (async () => {
+    try {
+      const payload = await api(`/trt-map-data?view=card&point_id=${encodeURIComponent(pointId)}`, { timeout: 45000 });
+      applySelectedTrtCardPayload(point, payload);
+      writeTrtCardSessionCache(pointId, payload);
+      renderSelectedTrtCard(point);
+      return payload;
+    } catch (error) {
+      if (isTileTrtPoint(point)) {
+        point._tilePlanCard = { available:false, reason:"load_error", sourceYear:analyticsCurrentYear(), groups:[], plan:[], error:error?.message || String(error) };
+        point._tilePlanLoaded = true;
+      }
+      if (String(state.trtSelectedId || "") === pointId) {
+        renderSelectedTrtCard(point);
+        const target = $("trt-card-sales-empty");
+        if (target && !trtSalesData(point).hasSales) {
+          target.hidden = false;
+          target.textContent = `Не удалось загрузить данные ТРТ: ${error?.message || error}`;
+        }
+      }
+      return null;
+    } finally {
+      point._selectedCardLoading = null;
+    }
+  })();
+  return point._selectedCardLoading;
+}
+
 function openTrtCard(pointId, focusMap = true) {
   const point = state.trtPoints.find((item) => String(item.id) === String(pointId));
   if (!point) return;
@@ -3180,28 +3296,13 @@ function openTrtCard(pointId, focusMap = true) {
   mountTrtCardInInspector();
   setMapInspectorView("trt");
 
-  $("trt-card-name").textContent = trtDisplayName(point);
-  $("trt-card-direction").textContent = point.direction || "—";
-  $("trt-card-manager").textContent = shortPersonName(point.manager) || "—";
-  $("trt-card-holding").textContent = point.holding || point.client || "—";
-  $("trt-card-format").textContent = point.format || "—";
-  const origin = trtOriginKey(point);
-  $("trt-card-status").textContent = origin === "base"
-    ? trtStatusLabel(point)
-    : `${trtStatusLabel(point)} · ${trtOriginLabel(origin)}`;
-  $("trt-card-address").textContent = point.address || "—";
-  renderTrtFourP(point);
-
   trtCardFdiySalesMode = "vog";
-  renderTrtFdiyShare(point);
-  updateTrtFdiySalesControl(point);
-
-  renderTrtAverageSales(point);
-
-  renderTrtTilePlan(point);
-  window.requestAnimationFrame(() => renderTrtCardSalesChart(point));
-  if (isFdiyTrtPoint(point)) loadFdiyCardSeries(point, true);
-  if (isTileTrtPoint(point)) loadTilePlanCard(point, true);
+  const cached = readTrtCardSessionCache(point.id);
+  if (cached) applySelectedTrtCardPayload(point, cached);
+  renderSelectedTrtCard(point);
+  // v8.52: start the only heavy request immediately on TRT selection. Sales,
+  // FDIY and Tile plan/NG are returned for this point only and cached per session.
+  if (!cached) loadSelectedTrtCard(point, false);
 
   if (focusMap && trtMap && Number.isFinite(Number(point.lat)) && Number.isFinite(Number(point.lon))) {
     setTrtMainView("map");
@@ -3212,6 +3313,7 @@ function openTrtCard(pointId, focusMap = true) {
     window.requestAnimationFrame(() => { inspector.scrollTop = previousScrollTop; });
   }
 }
+
 
 function recalculateTrtRegionStats() {
   const stats = {};
