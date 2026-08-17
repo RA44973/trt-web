@@ -1,6 +1,6 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.53";
+const VOG_WEB_VERSION = "8.54";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
@@ -3290,6 +3290,36 @@ function renderSelectedTrtCard(point) {
   window.requestAnimationFrame(() => renderTrtCardSalesChart(point));
 }
 
+async function refreshSelectedTrtSales(point, force = false) {
+  if (!point) return null;
+  const pointId = String(point.id || "");
+  if (!pointId) return null;
+  if (point._salesRefreshLoading) return point._salesRefreshLoading;
+  if (!force && point._salesRefreshLoaded) return point.sales || null;
+  point._salesRefreshLoading = (async () => {
+    try {
+      const payload = await api(`/trt-map-data?view=sales_refresh&point_id=${encodeURIComponent(pointId)}`, { timeout: 20000 });
+      if (payload?.sales && typeof payload.sales === "object") {
+        point.sales = payload.sales;
+        point._salesRefreshLoaded = true;
+        if (String(state.trtSelectedId || "") === pointId) {
+          renderTrtAverageSales(point);
+          renderTrtCardSalesChart(point);
+        }
+      }
+      return payload?.sales || point.sales || null;
+    } catch (error) {
+      // The embedded map preview remains visible. A live refresh failure must
+      // never blank or delay the already rendered chart.
+      point._salesRefreshError = error?.message || String(error);
+      return point.sales || null;
+    } finally {
+      point._salesRefreshLoading = null;
+    }
+  })();
+  return point._salesRefreshLoading;
+}
+
 async function loadSelectedTrtCard(point, force = false) {
   if (!point) return null;
   const pointId = String(point.id || "");
@@ -3346,10 +3376,13 @@ function openTrtCard(pointId, focusMap = true) {
   const cached = readTrtCardSessionCache(point.id);
   if (cached) applySelectedTrtCardPayload(point, cached);
   renderSelectedTrtCard(point);
-  // v8.53: core card and overall monthly plan load independently in parallel.
-  // Nomenclature groups are never requested until the user presses the button.
+  // v8.54: the chart is drawn immediately from the lightweight map sales
+  // preview. Canonical metadata, live sales refresh and monthly plan are all
+  // independent background requests; none is allowed to block the chart.
+  // Nomenclature groups are still requested only after the user presses NG.
   if (!cached) loadSelectedTrtCard(point, false);
   loadSelectedTrtSalesPlan(point, false);
+  refreshSelectedTrtSales(point, false);
 
   if (focusMap && trtMap && Number.isFinite(Number(point.lat)) && Number.isFinite(Number(point.lon))) {
     setTrtMainView("map");
