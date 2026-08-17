@@ -1,6 +1,6 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.49";
+const VOG_WEB_VERSION = "8.50";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
@@ -2880,7 +2880,7 @@ async function loadTilePlanCard(point, force = false) {
   if (block && state.trtSelectedId === selectedId) block.hidden = false;
   point._tilePlanLoading = (async () => {
     try {
-      const payload = await api(`/trt-map-data?view=tile_plan_card&point_id=${encodeURIComponent(selectedId)}`, { timeout: 90000 });
+      const payload = await api(`/trt-map-data?view=tile_plan_card&point_id=${encodeURIComponent(selectedId)}`, { timeout: 30000 });
       point._tilePlanCard = payload || { available: false, groups: [], plan: [] };
       point._tilePlanLoaded = true;
       if (state.trtSelectedId === selectedId) {
@@ -2889,12 +2889,14 @@ async function loadTilePlanCard(point, force = false) {
       }
       return point._tilePlanCard;
     } catch (error) {
-      point._tilePlanLoaded = false;
+      const message = error?.message || String(error);
+      point._tilePlanCard = { available: false, reason: "load_error", sourceYear: analyticsCurrentYear(), groups: [], plan: [], error: message };
+      point._tilePlanLoaded = true;
       if (state.trtSelectedId === selectedId && block) {
         block.hidden = false;
-        $("trt-card-ng-list").innerHTML = `<div class="trt-card-ng-empty">План плитки временно недоступен: ${escapeHtml(error?.message || String(error))}</div>`;
+        renderTrtTilePlan(point);
       }
-      return null;
+      return point._tilePlanCard;
     } finally { point._tilePlanLoading = null; }
   })();
   return point._tilePlanLoading;
@@ -2928,9 +2930,10 @@ function renderTrtTilePlan(point) {
   }
   if (!card.available) {
     const noActive = card.reason === "no_active_scenario";
-    $("trt-card-tile-plan-period").textContent = noActive ? "Активная сценарка ещё не загружена" : "ТРТ пока не найдена в активной сценарке";
+    const loadError = card.reason === "load_error";
+    $("trt-card-tile-plan-period").textContent = loadError ? "Не удалось загрузить план по НГ" : noActive ? "Активная сценарка ещё не загружена" : "ТРТ пока не найдена в активной сценарке";
     $("trt-card-tile-plan-value").textContent = "—"; $("trt-card-tile-fact-value").textContent = "—"; $("trt-card-tile-completion").textContent = "—";
-    if (list) list.innerHTML = `<div class="trt-card-ng-empty">${noActive ? "Завершите сохранение сценарки в Настройки → Загрузка → Плитка · сценарка. После успешной загрузки здесь появятся план и НГ." : "Для этой ТРТ нет структуры НГ в активной сценарке."}</div>`;
+    if (list) list.innerHTML = `<div class="trt-card-ng-empty">${loadError ? `План плитки временно недоступен: ${escapeHtml(card.error || "ошибка сервера")}. Закройте и снова откройте карточку для повторной попытки.` : noActive ? "Завершите сохранение сценарки в Настройки → Загрузка → Плитка · сценарка. После успешной загрузки здесь появятся план и НГ." : "Для этой ТРТ нет структуры НГ в активной сценарке."}</div>`;
     return;
   }
   const select = $("trt-card-tile-month");
