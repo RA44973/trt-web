@@ -1,14 +1,14 @@
 "use strict";
 
-const VOG_WEB_VERSION = "8.54";
+const VOG_WEB_VERSION = "8.55";
 document.documentElement.dataset.vogWebVersion = VOG_WEB_VERSION;
 
 const API_BASE = "https://d5dukure58mpc70n6ftu.uvah0e6r.apigw.yandexcloud.net";
 const SESSION_KEY = "trt_web_session";
 const TRT_MAP_VIEW_KEY = "trt_web_map_view_v3";
 const TRT_MAP_FILTER_KEY = "trt_web_map_filters_v1";
-const TRT_CARD_CACHE_KEY = "vog_trt_card_cache_v2";
-const TRT_PLAN_CACHE_KEY = "vog_trt_sales_plan_cache_v1";
+const TRT_CARD_CACHE_KEY = "vog_trt_card_cache_v3";
+const TRT_PLAN_CACHE_KEY = "vog_trt_sales_plan_cache_v2";
 const trtCardSessionCache = new Map();
 
 function readTrtCardSessionCache(pointId) {
@@ -2810,7 +2810,6 @@ async function loadFdiyCardSeries(point, force = false) {
       if (state.trtSelectedId === selectedId) {
         renderTrtFdiyShare(point);
         updateTrtFdiySalesControl(point);
-        renderTrtCardSalesChart(point);
         renderTrtAverageSales(point);
       }
       return point.fdiySales;
@@ -2966,12 +2965,12 @@ function isTileTrtPoint(point) {
 }
 
 function tilePlanArray(point) {
-  const values = point?._salesPlanCard?.plan;
+  const values = point?._salesPlanCard?.plan || point?.salesPlanCard?.plan;
   return (Array.isArray(values) ? values : []).concat(Array(12).fill(null)).slice(0, 12);
 }
 
 function tilePlanDataset(point, compact = false) {
-  const card = point?._salesPlanCard;
+  const card = point?._salesPlanCard || point?.salesPlanCard;
   if (!card?.available) return null;
   if (isFdiyTrtPoint(point) && trtCardFdiySalesMode === "total") return null;
   const plan = tilePlanArray(point);
@@ -3172,7 +3171,7 @@ function renderTrtCardSalesChart(point) {
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      animation: { duration: 220, easing: "easeOutQuart" },
+      animation: false,
       interaction: { mode: "index", intersect: false },
       plugins: {
         legend: { position: "top", align: "end", labels: { boxWidth: 18, boxHeight: 8, useBorderRadius: true, borderRadius: 3 } },
@@ -3373,16 +3372,19 @@ function openTrtCard(pointId, focusMap = true) {
   setMapInspectorView("trt");
 
   trtCardFdiySalesMode = "vog";
-  const cached = readTrtCardSessionCache(point.id);
-  if (cached) applySelectedTrtCardPayload(point, cached);
+  // v8.55: fact + monthly plan are already in the lightweight map payload.
+  // Attach the plan BEFORE the first card render. No cached core-card payload or
+  // background sales/plan refresh is allowed to replace the visible chart.
+  if (point.salesPlanCard) {
+    point._salesPlanCard = point.salesPlanCard;
+    point._salesPlanLoaded = true;
+  }
   renderSelectedTrtCard(point);
-  // v8.54: the chart is drawn immediately from the lightweight map sales
-  // preview. Canonical metadata, live sales refresh and monthly plan are all
-  // independent background requests; none is allowed to block the chart.
-  // Nomenclature groups are still requested only after the user presses NG.
-  if (!cached) loadSelectedTrtCard(point, false);
-  loadSelectedTrtSalesPlan(point, false);
-  refreshSelectedTrtSales(point, false);
+  // Canonical TRT display fields are already prepared by API before the map
+  // response. NG and FDIY extras remain lazy and do not alter the main graph.
+  if (isFdiyTrtPoint(point) && !point._fdiyCardLoaded) {
+    window.setTimeout(() => loadFdiyCardSeries(point), 0);
+  }
 
   if (focusMap && trtMap && Number.isFinite(Number(point.lat)) && Number.isFinite(Number(point.lon))) {
     setTrtMainView("map");
@@ -7893,10 +7895,12 @@ $("trt-card-sales-preview")?.addEventListener("keydown", (event) => {
   event.preventDefault();
   openTrtSales(event.currentTarget);
 });
-$("trt-card-fdiy-sales-toggle")?.addEventListener("click", () => {
+$("trt-card-fdiy-sales-toggle")?.addEventListener("click", async () => {
   const point = selectedTrtPoint();
   if (!point || !isFdiyTrtPoint(point)) return;
-  trtCardFdiySalesMode = trtCardFdiySalesMode === "total" ? "vog" : "total";
+  const nextMode = trtCardFdiySalesMode === "total" ? "vog" : "total";
+  if (nextMode === "total" && !point._fdiyCardLoaded) await loadFdiyCardSeries(point);
+  trtCardFdiySalesMode = nextMode;
   updateTrtFdiySalesControl(point);
   renderTrtCardSalesChart(point);
 });
